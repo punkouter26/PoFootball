@@ -1,0 +1,77 @@
+# PoFootball — base self-play phase
+#
+# Pairs 1:1 with run-id `football_base01` (UNITY_RULES §1).
+#   mlagents-learn Config/FootballBase01.yaml --run-id=football_base01
+#
+# Offense and defense share one behavior and are separated by TeamId, so the
+# trainer can rate them against each other. Judge this run on ELO in
+# TensorBoard (Self-play/ELO), not on mean reward — reward is zero-sum here and
+# hovers near 0 no matter how good the policy gets (UNITY_RULES §4).
+
+default_settings: null
+
+behaviors:
+  FootballPlayer:
+    trainer_type: ppo
+
+    hyperparameters:
+      batch_size: 2048
+      buffer_size: 20480          # 10x batch_size; PPO wants many batches per update
+      learning_rate: 3.0e-4
+      beta: 5.0e-3                # entropy bonus — keep exploration alive through self-play
+      epsilon: 0.2
+      lambd: 0.95
+      num_epoch: 3
+      learning_rate_schedule: constant   # self-play runs long; a linear decay to 0
+                                         # freezes the policy while opponents keep improving
+      beta_schedule: constant
+      epsilon_schedule: constant
+
+    network_settings:
+      normalize: false            # observations are already normalized to [-1, 1] by the
+                                  # sensors; running normalization on top fights self-play
+                                  # because the input distribution shifts with the opponent
+      hidden_units: 512
+      num_layers: 2
+      vis_encode_type: simple
+
+    reward_signals:
+      extrinsic:
+        gamma: 0.99
+        strength: 1.0
+
+    keep_checkpoints: 40
+    checkpoint_interval: 500000
+    max_steps: 50000000
+    time_horizon: 1000            # a play lasts a few seconds at dt=0.02; keep the whole
+                                  # play inside one horizon so credit reaches the snap
+    summary_freq: 20000
+    threaded: false               # deterministic ordering (UNITY_RULES §2)
+
+    self_play:
+      save_steps: 50000
+      team_change: 250000         # 5x save_steps — the documented default ratio
+      swap_steps: 25000
+      window: 10
+      play_against_latest_model_ratio: 0.5
+      initial_elo: 1200.0
+
+env_settings:
+  # Set per-run on the command line, not here, so this file stays the same
+  # across the headless sweep and the in-editor smoke test:
+  #   --env=Builds/FootballEnv/PoFootball.exe --no-graphics --base-port=5010 --num-envs=6
+  # Envs take CONSECUTIVE ports from --base-port; overlapping ranges hang the
+  # handshake with no error (UNITY_RULES §4).
+  seed: 1
+
+engine_settings:
+  time_scale: 20                  # physics stays at dt=0.02; this only speeds the clock
+  quality_level: 0
+  target_frame_rate: -1
+  capture_frame_rate: 60
+
+torch_settings:
+  device: cuda                    # RTX 2060 present; falls back to cpu if unavailable
+
+checkpoint_settings:
+  results_dir: results

@@ -1,0 +1,37 @@
+# PoFootball — ML-Agents training stack
+#
+# Recreate with:
+#   python -m venv .venv                                   (Python 3.10.x — mlagents pins <=3.10.12)
+#   .venv\Scripts\python -m pip install -r requirements.txt --extra-index-url https://download.pytorch.org/whl/cu121
+#
+# Version contract (UNITY_RULES §4): the Python trainer and the C# package must
+# agree on the communication protocol or the handshake is refused.
+#
+#   com.unity.ml-agents  4.1.0   ->  comms API 1.5.0
+#   mlagents             1.1.0   ->  comms API 1.5.0     <- equal, handshake OK
+#
+# 4.1.0 is newer than the release_23 tag (4.0.0) but did not move the protocol.
+# If you bump either side, re-check Academy.cs `k_ApiVersion` against
+# mlagents_envs.environment.UnityEnvironment.API_VERSION before training.
+
+# --- Trainer -----------------------------------------------------------------
+mlagents==1.1.0
+mlagents-envs==1.1.0
+
+# --- Torch (CUDA 12.1 build for the RTX 2060) --------------------------------
+# Needs the PyTorch index; the plain PyPI wheel is CPU-only.
+torch==2.5.1+cu121
+
+# --- Pins that are load-bearing, not incidental ------------------------------
+# setuptools 81 removed pkg_resources, which mlagents.torch_utils imports at
+# module scope. Anything >=81 breaks `mlagents-learn` on startup.
+setuptools<81
+
+# mlagents hard-pins these; listed so a resolver cannot drift them upward.
+numpy==1.23.5
+protobuf==3.20.3
+grpcio==1.48.2
+onnx==1.15.0
+
+# --- Telemetry ---------------------------------------------------------------
+tensorboard>=2.14

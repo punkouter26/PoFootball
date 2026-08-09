@@ -169,3 +169,19 @@ Packages/packages-lock.json linguist-generated
 
 # Exceptions for .asset files such as lightning pre-baking
 LightingData.asset     binary
+
+# ---------------------------------------------------------------------------
+# ML-Agents
+# ---------------------------------------------------------------------------
+# Trained brains. Binary and rewritten every promotion, so LFS keeps history
+# from ballooning. NOTE: overwrite .onnx in place so the .meta GUID survives.
+*.onnx                  lfs
+*.nn                    lfs
+
+# Trainer configs are hand-edited YAML and must stay diffable.
+*.yaml                  text eol=lf
+*.yml                   text eol=lf
+
+# Python
+*.py                    text eol=lf diff=python
+requirements*.txt       text eol=lf
