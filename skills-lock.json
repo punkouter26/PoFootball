@@ -1,0 +1,71 @@
+{
+  "version": 1,
+  "skills": {
+    "absolute-audit": {
+      "source": "maddhruv/absolute",
+      "sourceType": "github",
+      "skillPath": "skills/absolute-audit/SKILL.md",
+      "computedHash": "33913de3c5519c7dc62f95592a185d602b427010eb787e88357feceb7e9be9fe"
+    },
+    "absolute-debt": {
+      "source": "maddhruv/absolute",
+      "sourceType": "github",
+      "skillPath": "skills/absolute-debt/SKILL.md",
+      "computedHash": "ad9ba12eab9e2dbe846113f07fde5616bbba787e4cdf86625e94291bbcf560d4"
+    },
+    "absolute-deflake": {
+      "source": "maddhruv/absolute",
+      "sourceType": "github",
+      "skillPath": "skills/absolute-deflake/SKILL.md",
+      "computedHash": "211434b5e59d26f2f4fd8fb774929a16c9be4516121bc2ebad601b9126d92bf9"
+    },
+    "absolute-docs": {
+      "source": "maddhruv/absolute",
+      "sourceType": "github",
+      "skillPath": "skills/absolute-docs/SKILL.md",
+      "computedHash": "8882f0907c247575d1e46c5085ff84f65a0cd747347a6bd0144b5ec6863cccf5"
+    },
+    "absolute-init": {
+      "source": "maddhruv/absolute",
+      "sourceType": "github",
+      "skillPath": "skills/absolute-init/SKILL.md",
+      "computedHash": "2c09a0559c0b3890f2fd9bd76206308a5e8e5ed0f20a3d856332d3500fbf05d5"
+    },
+    "absolute-prune": {
+      "source": "maddhruv/absolute",
+      "sourceType": "github",
+      "skillPath": "skills/absolute-prune/SKILL.md",
+      "computedHash": "79f507c88905fc17419d944c027224673c87e06b9145bfe9aac16061147b3b99"
+    },
+    "absolute-simplify": {
+      "source": "maddhruv/absolute",
+      "sourceType": "github",
+      "skillPath": "skills/absolute-simplify/SKILL.md",
+      "computedHash": "ba30e68d54f0c8268bcfbc5e8993104f6b78dec8dc5d3608363c5211b8dcd00c"
+    },
+    "absolute-spec": {
+      "source": "maddhruv/absolute",
+      "sourceType": "github",
+      "skillPath": "skills/absolute-spec/SKILL.md",
+      "computedHash": "6774a68638d04b13f85570f96b8771bd2300acbc539bc05e736a323f543b090f"
+    },
+    "absolute-ui": {
+      "source": "maddhruv/absolute",
+      "sourceType": "github",
+      "skillPath": "skills/absolute-ui/SKILL.md",
+      "computedHash": "1f3e8337149647bd02555ba416ba67aa171205d605b37723b963b7b60a4efc48"
+    },
+    "absolute-upgrade": {
+      "source": "maddhruv/absolute",
+      "sourceType": "github",
+      "skillPath": "skills/absolute-upgrade/SKILL.md",
+      "computedHash": "9f4742d2c49568b1e635c85d41070539e86d08d541700bf2b1b8b4f2646b750f"
+    },
+    "absolute-work": {
+      "source": "maddhruv/absolute",
+      "sourceType": "github",
+      "skillPath": "skills/absolute-work/SKILL.md",
+      "computedHash": "3853b84cdea486e063c0e27a8117449e84fc6e33de9c204132940b8decf226a0"
+    }
+  }
+}
