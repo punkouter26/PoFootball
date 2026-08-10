@@ -1,0 +1,122 @@
+# PoFootball — base self-play phase, run 02 (wrap-up tackle rule)
+#
+# Pairs 1:1 with run-id `football_base02` (UNITY_RULES §1).
+#   mlagents-learn Config/FootballBase02.yaml --run-id=football_base02
+#
+# ---------------------------------------------------------------------------
+# WHY THIS IS A SEPARATE RUN, NOT A RESUME OF football_base01
+# ---------------------------------------------------------------------------
+# The hyperparameters below are IDENTICAL to FootballBase01.yaml. What changed is
+# the simulation itself, so the two runs are not comparable and must not share a
+# run-id or a checkpoint lineage.
+#
+# football_base01 ran 9.9 h / ~11 M steps and the offense ran away with it:
+# mean reward +2.4 offense vs -1.6 defense, implying tens of yards per play.
+# Cause: the tackle rule fired only on `relativeVelocity.magnitude > 1.5 m/s`.
+# Two bodies moving the same direction at similar speed have near-zero relative
+# velocity, so a defender chasing the carrier down from behind could stay in
+# contact indefinitely and never register a tackle. Only head-on hits counted,
+# and the offense learned to exploit exactly that.
+#
+# Fix (Systems_SimConstants.SUSTAINED_TACKLE_TICKS): contact sustained for 10
+# consecutive physics ticks (0.2 s) now ends the play regardless of closing
+# speed — a wrap-up tackle. The impact rule is unchanged and still ends a play
+# instantly on a real hit.
+#
+# Also added this run: Systems_Telemetry writes the outcome distribution to
+# TensorBoard (Play/TackleRate, Play/TouchdownRate, Play/OutOfBoundsRate,
+# Play/TimeExpiredRate, Play/NetYards, Play/LengthTicks). run 01 had none, which
+# is why its failure had to be inferred from mean reward instead of measured.
+#
+# ---------------------------------------------------------------------------
+# WHAT TO LOOK AT
+# ---------------------------------------------------------------------------
+#   Play/TackleRate      should be the dominant outcome. If it stays near 0 the
+#                        wrap-up rule is not firing and the fix failed.
+#   Play/NetYards        should collapse from tens of yards toward single digits.
+#   Play/TimeExpiredRate acceptance criterion #23 — target < 0.20. If it climbs,
+#                        the do-nothing optimum is winning.
+#   Self-play/ELO        four coupled curves; read them against each other.
+#
+# Judge on ELO and the Play/* rates, not mean reward — reward is zero-sum here
+# and hovers near 0 however good the policies get (UNITY_RULES §4).
+
+default_settings: null
+
+behaviors:
+  OffenseLine: &football_brain
+    trainer_type: ppo
+
+    hyperparameters:
+      batch_size: 2048
+      buffer_size: 20480          # 10x batch_size; PPO wants many batches per update
+      learning_rate: 3.0e-4
+      beta: 5.0e-3                # entropy bonus — keep exploration alive through self-play
+      epsilon: 0.2
+      lambd: 0.95
+      num_epoch: 3
+      learning_rate_schedule: constant   # self-play runs long; a linear decay to 0
+                                         # freezes the policy while opponents keep improving
+      beta_schedule: constant
+      epsilon_schedule: constant
+
+    network_settings:
+      normalize: false            # Sensor_FootballState already emits [-1, 1]; running
+                                  # normalization on top fights self-play because the
+                                  # input distribution shifts with the opponent
+      hidden_units: 512
+      num_layers: 2
+      vis_encode_type: simple
+
+    reward_signals:
+      extrinsic:
+        gamma: 0.99
+        strength: 1.0
+
+    keep_checkpoints: 40
+    checkpoint_interval: 500000
+    max_steps: 50000000
+
+    # A play is capped at 750 physics ticks and agents decide every 5th tick
+    # (Systems_PlayModel.MAX_DECISIONS = 150), so 150 keeps an entire play inside
+    # one horizon and lets credit for a touchdown reach back to the snap.
+    time_horizon: 150
+
+    summary_freq: 20000
+    threaded: false               # deterministic ordering (UNITY_RULES §2)
+
+    self_play:
+      save_steps: 50000
+      team_change: 250000         # 5x save_steps — the documented default ratio
+      swap_steps: 25000
+      window: 10
+      play_against_latest_model_ratio: 0.5
+      initial_elo: 1200.0
+
+  OffenseSkill:
+    <<: *football_brain
+
+  DefenseLine:
+    <<: *football_brain
+
+  DefenseCover:
+    <<: *football_brain
+
+env_settings:
+  # Set per-run on the command line, not here:
+  #   --env=Builds/FootballEnv/PoFootball.exe --no-graphics --base-port=5010 --num-envs=4
+  # Envs take CONSECUTIVE ports from --base-port; overlapping ranges hang the
+  # handshake with no error (UNITY_RULES §4).
+  seed: 1
+
+engine_settings:
+  time_scale: 20                  # physics stays at dt=0.02; this only speeds the clock
+  quality_level: 0
+  target_frame_rate: -1
+  capture_frame_rate: 60
+
+torch_settings:
+  device: cuda                    # RTX 2060 present; falls back to cpu if unavailable
+
+checkpoint_settings:
+  results_dir: results

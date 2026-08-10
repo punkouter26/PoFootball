@@ -52,11 +52,66 @@ fi
 
 # ---------------------------------------------------------------------------
 # Check jq
+#
+# jq is not present on a default Windows/Git Bash install, which is where Unity
+# work usually happens, so fall back to Python — every Unity toolchain already has
+# one. The shim covers only the five filters this script uses; anything else is a
+# hard error rather than a silent empty result.
 # ---------------------------------------------------------------------------
 if ! command -v jq &>/dev/null; then
-    echo "${RED}[ERROR]${RESET} jq is required but not installed."
-    echo "  Install with: brew install jq (macOS) or apt-get install jq (Linux)"
-    exit 1
+    # Probe each candidate rather than taking the first on PATH: on Windows,
+    # `python3` is usually the Microsoft Store stub, which exists, resolves, and
+    # then refuses to run anything.
+    PYTHON_BIN=""
+    for candidate in python python3 py; do
+        if command -v "$candidate" &>/dev/null && "$candidate" -c 'pass' &>/dev/null; then
+            PYTHON_BIN=$(command -v "$candidate")
+            break
+        fi
+    done
+    if [[ -z "$PYTHON_BIN" ]]; then
+        echo "${RED}[ERROR]${RESET} Neither jq nor a working python is installed; one is required."
+        echo "  Install jq (https://jqlang.github.io/jq/) or any Python 3."
+        exit 1
+    fi
+
+    jq() {
+        local raw=false
+        while [[ "${1:-}" == -* ]]; do
+            [[ "$1" == "-r" ]] && raw=true
+            shift
+        done
+        "$PYTHON_BIN" - "$1" "$2" "$raw" <<'PYEOF'
+import json, sys
+
+filt, path, _raw = sys.argv[1], sys.argv[2], sys.argv[3]
+try:
+    with open(path, encoding='utf-8-sig') as handle:
+        doc = json.load(handle)
+except Exception:
+    sys.exit(0)
+
+if filt == '.name // empty':
+    name = doc.get('name')
+    if name:
+        print(name)
+elif filt == '(.references // [])[] | select(startswith("GUID:") | not)':
+    for ref in doc.get('references') or []:
+        if not str(ref).startswith('GUID:'):
+            print(ref)
+elif filt == '(.includePlatforms // [])[]':
+    for value in doc.get('includePlatforms') or []:
+        print(value)
+elif filt == '(.overrideReferences // false)':
+    print('true' if doc.get('overrideReferences', False) else 'false')
+elif filt == '(.defineConstraints // [])[]':
+    for value in doc.get('defineConstraints') or []:
+        print(value)
+else:
+    sys.stderr.write('jq shim: unsupported filter %r\n' % filt)
+    sys.exit(2)
+PYEOF
+    }
 fi
 
 # ---------------------------------------------------------------------------
@@ -95,8 +150,8 @@ echo ""
 error_count=0
 warning_count=0
 
-err()  { echo "  ${RED}[ERROR]${RESET} $*"; ((error_count++)); }
-warn_msg() { echo "  ${YELLOW}[WARN]${RESET}  $*"; ((warning_count++)); }
+err()  { echo "  ${RED}[ERROR]${RESET} $*"; error_count=$((error_count + 1)); }
+warn_msg() { echo "  ${YELLOW}[WARN]${RESET}  $*"; warning_count=$((warning_count + 1)); }
 info() { echo "  ${CYAN}[INFO]${RESET}  $*"; }
 
 # ---------------------------------------------------------------------------
@@ -113,7 +168,7 @@ declare -A ASMDEF_TEST_ONLY       # name -> true/false (from JSON)
 asmdef_count=0
 
 while IFS= read -r -d '' asmdef_file; do
-    ((asmdef_count++))
+    asmdef_count=$((asmdef_count + 1))
 
     # Parse JSON
     name=$(jq -r '.name // empty' "$asmdef_file" 2>/dev/null || true)
@@ -310,7 +365,7 @@ while IFS= read -r -d '' csfile; do
         if (( uncovered_count < 20 )); then
             warn_msg "No .asmdef coverage: $rel"
         fi
-        ((uncovered_count++))
+        uncovered_count=$((uncovered_count + 1))
     fi
 done < <(find "$ASSETS_DIR" -name '*.cs' -not -path '*/Editor/*' -print0 2>/dev/null)
 

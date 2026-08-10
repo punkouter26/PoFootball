@@ -2,6 +2,12 @@
   "permissions": {
     "defaultMode": "acceptEdits"
   },
+  "sandbox": {
+    "network": {
+      "allowLocalBinding": true,
+      "allowedDomains": ["localhost", "127.0.0.1"]
+    }
+  },
   "hooks": {
     "PreToolUse": [
       {

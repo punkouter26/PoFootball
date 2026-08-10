@@ -237,7 +237,7 @@ if (( ${#SCENE_LIST[@]} > 0 )); then
     idx=0
     for scene in "${SCENE_LIST[@]}"; do
         echo "$idx. \`$scene\`" >> "$OUTPUT"
-        ((idx++))
+        idx=$((idx + 1))
     done
 else
     echo "_No scenes found in EditorBuildSettings._" >> "$OUTPUT"

@@ -1,0 +1,19 @@
+{
+    "name": "PoFootball.Sensors",
+    "rootNamespace": "PoFootball.Sensors",
+    "references": [
+        "PoFootball.Models",
+        "Unity.ML-Agents",
+        "Unity.Mathematics",
+        "Unity.Collections"
+    ],
+    "includePlatforms": [],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": false,
+    "precompiledReferences": [],
+    "autoReferenced": true,
+    "defineConstraints": [],
+    "versionDefines": [],
+    "noEngineReferences": false
+}

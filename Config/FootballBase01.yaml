@@ -3,15 +3,28 @@
 # Pairs 1:1 with run-id `football_base01` (UNITY_RULES §1).
 #   mlagents-learn Config/FootballBase01.yaml --run-id=football_base01
 #
-# Offense and defense share one behavior and are separated by TeamId, so the
-# trainer can rate them against each other. Judge this run on ELO in
-# TensorBoard (Self-play/ELO), not on mean reward — reward is zero-sum here and
-# hovers near 0 no matter how good the policy gets (UNITY_RULES §4).
+# FOUR behaviors, one per position group, matching Systems_BrainGroup and the
+# strings returned by Systems_RoleTable.BehaviorNameOf. A mismatch between these
+# keys and those literals means the handshake succeeds but the agents in that
+# group never receive actions.
+#
+#   OffenseLine   5 agents  TeamId 0   (OL)
+#   OffenseSkill  6 agents  TeamId 0   (QB, RB, 3x WR, TE)
+#   DefenseLine   4 agents  TeamId 1   (DL)
+#   DefenseCover  7 agents  TeamId 1   (LB, CB, S)
+#
+# This is asymmetric self-play: the two sides have different behaviors rather
+# than one shared behavior split by team. Judge each behavior on its own
+# Self-play/ELO curve in TensorBoard, not on mean reward — reward is zero-sum
+# here and hovers near 0 no matter how good the policies get (UNITY_RULES §4).
+#
+# Read the ELO curves against each other, not in isolation: a rising DefenseLine
+# ELO can mean the defensive line improved OR that the offensive line decayed.
 
 default_settings: null
 
 behaviors:
-  FootballPlayer:
+  OffenseLine: &football_brain
     trainer_type: ppo
 
     hyperparameters:
@@ -28,9 +41,9 @@ behaviors:
       epsilon_schedule: constant
 
     network_settings:
-      normalize: false            # observations are already normalized to [-1, 1] by the
-                                  # sensors; running normalization on top fights self-play
-                                  # because the input distribution shifts with the opponent
+      normalize: false            # Sensor_FootballState already emits [-1, 1]; running
+                                  # normalization on top fights self-play because the
+                                  # input distribution shifts with the opponent
       hidden_units: 512
       num_layers: 2
       vis_encode_type: simple
@@ -43,8 +56,12 @@ behaviors:
     keep_checkpoints: 40
     checkpoint_interval: 500000
     max_steps: 50000000
-    time_horizon: 1000            # a play lasts a few seconds at dt=0.02; keep the whole
-                                  # play inside one horizon so credit reaches the snap
+
+    # A play is capped at 750 physics ticks and agents decide every 5th tick
+    # (Systems_PlayModel.MAX_DECISIONS = 150), so 150 keeps an entire play inside
+    # one horizon and lets credit for a touchdown reach back to the snap.
+    time_horizon: 150
+
     summary_freq: 20000
     threaded: false               # deterministic ordering (UNITY_RULES §2)
 
@@ -55,6 +72,15 @@ behaviors:
       window: 10
       play_against_latest_model_ratio: 0.5
       initial_elo: 1200.0
+
+  OffenseSkill:
+    <<: *football_brain
+
+  DefenseLine:
+    <<: *football_brain
+
+  DefenseCover:
+    <<: *football_brain
 
 env_settings:
   # Set per-run on the command line, not here, so this file stays the same

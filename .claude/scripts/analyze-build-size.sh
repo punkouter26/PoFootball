@@ -178,7 +178,7 @@ while IFS= read -r line; do
         ASSET_LINES+=("$(printf '%012.2f|%s %s|%s%%|%s' "$size_kb" "$size_num" "$size_unit" "$percentage" "$asset_path")")
         ASSET_SIZES_KB+=("$size_kb")
         ASSET_PATHS+=("$asset_path")
-        ((line_count++))
+        line_count=$((line_count + 1))
     fi
 done <<< "$BUILD_REPORT"
 
@@ -248,7 +248,7 @@ for i in "${!ASSET_PATHS[@]}"; do
         if (( $(echo "$size_kb > 2048" | bc 2>/dev/null || echo 0) )); then
             echo "  ${RED}[LARGE TEXTURE]${RESET} $(echo "scale=1; $size_kb / 1024" | bc) MB - $path"
             echo "    ${CYAN}Consider: compress texture, reduce resolution, or use crunch compression.${RESET}"
-            ((issue_count++))
+            issue_count=$((issue_count + 1))
         fi
     fi
 
@@ -257,7 +257,7 @@ for i in "${!ASSET_PATHS[@]}"; do
         if (( $(echo "$size_kb > 1024" | bc 2>/dev/null || echo 0) )); then
             echo "  ${RED}[UNCOMPRESSED AUDIO]${RESET} $(echo "scale=1; $size_kb / 1024" | bc) MB - $path"
             echo "    ${CYAN}Consider: use Vorbis/MP3 compression in the Audio import settings.${RESET}"
-            ((issue_count++))
+            issue_count=$((issue_count + 1))
         fi
     fi
 
@@ -266,7 +266,7 @@ for i in "${!ASSET_PATHS[@]}"; do
         if (( $(echo "$size_kb > 5120" | bc 2>/dev/null || echo 0) )); then
             echo "  ${YELLOW}[LARGE MESH]${RESET} $(echo "scale=1; $size_kb / 1024" | bc) MB - $path"
             echo "    ${CYAN}Consider: reduce polygon count, use LODs, or optimize mesh in DCC tool.${RESET}"
-            ((issue_count++))
+            issue_count=$((issue_count + 1))
         fi
     fi
 
@@ -275,7 +275,7 @@ for i in "${!ASSET_PATHS[@]}"; do
         if (( $(echo "$size_kb > 10240" | bc 2>/dev/null || echo 0) )); then
             echo "  ${YELLOW}[LARGE VIDEO]${RESET} $(echo "scale=1; $size_kb / 1024" | bc) MB - $path"
             echo "    ${CYAN}Consider: reduce resolution/bitrate or stream from a URL instead.${RESET}"
-            ((issue_count++))
+            issue_count=$((issue_count + 1))
         fi
     fi
 done
@@ -285,7 +285,7 @@ for path in "${ASSET_PATHS[@]}"; do
     if echo "$path" | grep -qi '/Editor/'; then
         echo "  ${YELLOW}[EDITOR ASSET IN BUILD]${RESET} $path"
         echo "    ${CYAN}Assets under Editor/ folders should not appear in builds. Check your build settings.${RESET}"
-        ((issue_count++))
+        issue_count=$((issue_count + 1))
     fi
 done
 

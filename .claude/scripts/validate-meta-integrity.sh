@@ -83,8 +83,8 @@ missing_meta=()
 orphaned_meta=()
 declare -A guid_map  # guid -> file path
 
-err()  { echo "  ${RED}[ERROR]${RESET}   $*"; ((error_count++)); }
-warn_msg() { echo "  ${YELLOW}[WARN]${RESET}    $*"; ((warning_count++)); }
+err()  { echo "  ${RED}[ERROR]${RESET}   $*"; error_count=$((error_count + 1)); }
+warn_msg() { echo "  ${YELLOW}[WARN]${RESET}    $*"; warning_count=$((warning_count + 1)); }
 info() { echo "  ${CYAN}[INFO]${RESET}    $*"; }
 
 echo ""

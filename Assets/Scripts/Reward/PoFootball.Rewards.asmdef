@@ -1,0 +1,17 @@
+{
+    "name": "PoFootball.Rewards",
+    "rootNamespace": "PoFootball.Rewards",
+    "references": [
+        "PoFootball.Models",
+        "Unity.Mathematics"
+    ],
+    "includePlatforms": [],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": false,
+    "precompiledReferences": [],
+    "autoReferenced": true,
+    "defineConstraints": [],
+    "versionDefines": [],
+    "noEngineReferences": false
+}

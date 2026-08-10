@@ -1,0 +1,22 @@
+{
+    "name": "PoFootball.Systems",
+    "rootNamespace": "PoFootball.Systems",
+    "references": [
+        "PoFootball.Models",
+        "VContainer",
+        "MessagePipe",
+        "MessagePipe.VContainer",
+        "UniTask",
+        "Unity.Mathematics",
+        "Unity.ML-Agents"
+    ],
+    "includePlatforms": [],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": false,
+    "precompiledReferences": [],
+    "autoReferenced": true,
+    "defineConstraints": [],
+    "versionDefines": [],
+    "noEngineReferences": false
+}

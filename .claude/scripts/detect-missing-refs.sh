@@ -102,15 +102,23 @@ info_msg "Building GUID index from .meta files..."
 declare -A KNOWN_GUIDS
 meta_count=0
 
-while IFS= read -r -d '' meta_file; do
-    guid=$(grep -oP '^guid:\s*\K[0-9a-fA-F]+' "$meta_file" 2>/dev/null | head -1 || true)
-    if [[ -n "$guid" ]]; then
-        KNOWN_GUIDS["$guid"]=1
-    fi
-    ((meta_count++))
-done < <(find "$PROJECT_ROOT/Assets" "$PROJECT_ROOT/Packages" -name '*.meta' -print0 2>/dev/null || find "$PROJECT_ROOT/Assets" -name '*.meta' -print0 2>/dev/null)
+# Library/PackageCache holds the .meta files for every UPM package. Without it,
+# every reference to a package script (URP assets, Pipeline settings, anything from
+# a registry or git package) is reported as a dangling GUID. Packages/ alone only
+# covers embedded packages, which most projects do not have.
+GUID_INDEX_ROOTS=("$PROJECT_ROOT/Assets")
+[[ -d "$PROJECT_ROOT/Packages" ]] && GUID_INDEX_ROOTS+=("$PROJECT_ROOT/Packages")
+[[ -d "$PROJECT_ROOT/Library/PackageCache" ]] && GUID_INDEX_ROOTS+=("$PROJECT_ROOT/Library/PackageCache")
 
-info_msg "Indexed $meta_count .meta files (${#KNOWN_GUIDS[@]} unique GUIDs)."
+# One grep pass over every .meta file, not one grep process per file. The package
+# cache holds tens of thousands of them, and per-file process spawning takes tens
+# of minutes on Windows.
+while IFS= read -r guid; do
+    [[ -n "$guid" ]] && KNOWN_GUIDS["$guid"]=1
+    meta_count=$((meta_count + 1))
+done < <(grep -rhoP '^guid:\s*\K[0-9a-fA-F]+' --include='*.meta' "${GUID_INDEX_ROOTS[@]}" 2>/dev/null || true)
+
+info_msg "Indexed $meta_count .meta entries (${#KNOWN_GUIDS[@]} unique GUIDs)."
 echo ""
 
 # ---------------------------------------------------------------------------
@@ -127,7 +135,7 @@ report() {
     local rel="${file#"$PROJECT_ROOT/"}"
     echo "  ${RED}[$type]${RESET} ${rel}:${lineno}"
     echo "    ${YELLOW}${detail}${RESET}"
-    ((total_issues++))
+    total_issues=$((total_issues + 1))
 }
 
 # ---------------------------------------------------------------------------
@@ -139,15 +147,23 @@ echo ""
 process_file() {
     local filepath="$1"
     local rel="${filepath#"$PROJECT_ROOT/"}"
-    ((files_scanned++))
+    files_scanned=$((files_scanned + 1))
 
     # --- Null/zero GUIDs ---
+    # A Unity GUID is always 32 hex digits, so the old 0{16} alternative matched a
+    # 16-zero PREFIX and flagged Unity's built-in "none" sentinels — the
+    # 0000000000000000e000000000000000 / ...f000000000000000 GUIDs that every scene
+    # carries for m_SpotCookie and m_LightingDataAsset. Require all 32 digits.
+    #
+    # A fully zeroed GUID paired with fileID 0 is also normal: that is simply an
+    # unassigned object reference. Only a zeroed GUID with a non-zero fileID is a
+    # reference that pointed somewhere and no longer resolves.
     while IFS=: read -r lineno line; do
         [[ -z "$lineno" ]] && continue
-        # Match guid: followed by all zeros (either 16 or 32 hex digits)
-        if echo "$line" | grep -qE 'guid:\s*(0{16}|0{32})'; then
+        if echo "$line" | grep -qE 'guid:\s*0{32}([^0-9a-fA-F]|$)' \
+            && ! echo "$line" | grep -qE 'fileID:\s*0[,}]'; then
             report "NULL GUID" "$filepath" "$lineno" "$(echo "$line" | sed 's/^[[:space:]]*//')"
-            ((null_guid_count++))
+            null_guid_count=$((null_guid_count + 1))
         fi
     done < <(grep -n 'guid:' "$filepath" 2>/dev/null || true)
 
@@ -155,7 +171,7 @@ process_file() {
     while IFS=: read -r lineno line; do
         [[ -z "$lineno" ]] && continue
         report "MISSING SCRIPT" "$filepath" "$lineno" "$(echo "$line" | sed 's/^[[:space:]]*//')"
-        ((missing_script_count++))
+        missing_script_count=$((missing_script_count + 1))
     done < <(grep -n 'm_Script:\s*{fileID:\s*0}' "$filepath" 2>/dev/null || true)
 
     # --- Dangling script GUIDs ---
@@ -173,7 +189,7 @@ process_file() {
         # Check if GUID exists in our index
         if [[ -z "${KNOWN_GUIDS[$guid]:-}" ]]; then
             report "DANGLING GUID" "$filepath" "$lineno" "Script GUID $guid not found in any .meta file"
-            ((dangling_guid_count++))
+            dangling_guid_count=$((dangling_guid_count + 1))
         fi
     done < <(grep -n 'm_Script:\s*{fileID:\s*11500000,\s*guid:' "$filepath" 2>/dev/null || true)
 }
