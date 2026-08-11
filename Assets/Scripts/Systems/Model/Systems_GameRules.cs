@@ -15,9 +15,15 @@ namespace PoFootball.Models
         public const int QUARTER_COUNT = 4;
 
         /// <summary>
-        /// Seconds per quarter. Five minutes rather than fifteen: at roughly
-        /// twelve seconds of game clock per play this yields ~25 plays a quarter,
-        /// which is a watchable game in a few minutes rather than an hour.
+        /// Seconds per quarter. Five minutes rather than fifteen, which is what
+        /// makes the final whistle reachable in a sitting.
+        ///
+        /// The arithmetic, since the previous note here had it badly wrong: nearly
+        /// all of a play's cost is HUDDLE_SECONDS, and a play is only live for a
+        /// few seconds on top of that. At roughly 28 s of game clock per down this
+        /// is about eleven plays a quarter and forty-odd in a game — not the
+        /// "~25 a quarter" claimed before, which assumed a huddle less than half
+        /// the length of the one two lines below it.
         /// </summary>
         public const float QUARTER_SECONDS = 300f;
 
@@ -30,6 +36,21 @@ namespace PoFootball.Models
 
         /// <summary>Seconds per physics tick. Mirrors the pinned fixed timestep.</summary>
         public const float SECONDS_PER_TICK = 0.02f;
+
+        /// <summary>
+        /// Physics ticks the ball stays dead between the whistle and the next snap
+        /// — 140 ticks = 2.8 s at the pinned 50 Hz.
+        ///
+        /// Sized to outlast Systems_HudView.BANNER_SECONDS (2.2 s) with room either
+        /// side, because the banner is the only place a viewer is ever told what
+        /// just happened. Shorter and the announcement is cut off; much longer and
+        /// the game stops feeling like it is being played.
+        ///
+        /// The game clock does not run during it. Football charges the interval
+        /// between plays as HUDDLE_SECONDS at the whistle, which is already counted
+        /// — burning this as well would bill the offense twice for the same gap.
+        /// </summary>
+        public const int DEAD_BALL_TICKS = 140;
 
         // --- Downs -----------------------------------------------------------
         public const int DOWNS_PER_SERIES = 4;

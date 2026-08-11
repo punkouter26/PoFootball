@@ -107,7 +107,7 @@ namespace PoFootball.Views
         private void Collect()
         {
             MonoBehaviour[] behaviours = FindObjectsByType<MonoBehaviour>(
-                FindObjectsInactive.Include, FindObjectsSortMode.None);
+                FindObjectsInactive.Include);
 
             int capacity = Systems_PlayerRegistry.CAPACITY;
 

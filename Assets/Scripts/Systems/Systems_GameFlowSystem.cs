@@ -118,6 +118,13 @@ namespace PoFootball.Systems
         public bool HasNextPlay => _game.Phase != Systems_GamePhase.Final;
 
         /// <summary>
+        /// Systems_ISpotProvider. A played game holds the dead ball long enough for
+        /// the HUD to say what just happened; see the interface for why that is
+        /// answered here rather than inside the director.
+        /// </summary>
+        public int DeadBallTicks => Systems_GameRules.DEAD_BALL_TICKS;
+
+        /// <summary>
         /// Systems_ISpotProvider. The director asks; the chains answer.
         ///
         /// There is deliberately no separate "next spot" field. Every branch of

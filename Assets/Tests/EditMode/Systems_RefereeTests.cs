@@ -50,6 +50,10 @@ namespace PoFootball.Tests
             // implement. A referee test has no business knowing about episodes.
 
             public void SetCarrier(bool isCarrier) => IsCarrier = isCarrier;
+
+            public void SetTeamColor(Color color)
+            {
+            }
         }
 
         private Systems_PlayModel _play;

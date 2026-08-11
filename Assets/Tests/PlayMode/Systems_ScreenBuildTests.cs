@@ -41,7 +41,7 @@ namespace PoFootball.Tests
         private static UIDocument FindDocument()
         {
             UIDocument[] documents =
-                Object.FindObjectsByType<UIDocument>(FindObjectsSortMode.None);
+                Object.FindObjectsByType<UIDocument>(FindObjectsInactive.Exclude);
 
             Assert.That(documents, Is.Not.Empty, "no UIDocument in the loaded scene");
             return documents[0];

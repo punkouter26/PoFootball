@@ -44,16 +44,6 @@ namespace PoFootball.Views
         /// <summary>How long a result banner stays up before fading itself out.</summary>
         private const float BANNER_SECONDS = 2.2f;
 
-        /// <summary>
-        /// Wall-clock multipliers the speed button cycles. 8x turns an hour-long
-        /// game into about seven minutes, which is the difference between the end
-        /// state being reachable in a sitting and not.
-        /// </summary>
-        private static readonly float[] SPEEDS = { 1f, 2f, 4f, 8f };
-
-        private Button _speedButton;
-        private int _speedIndex;
-
         private Systems_GameModel _game;
         private Systems_BoxScore _boxScore;
         private ISubscriber<Systems_DownResolvedMessage> _resolvedSubscriber;
@@ -262,13 +252,17 @@ namespace PoFootball.Views
             VisualElement nameRow = Systems_UiTheme.Row();
             nameRow.style.justifyContent = Justify.Center;
 
+            // The team's own colour, not the accent. This dot answers "who has the
+            // ball", so it should be the same colour as that team's shapes on the
+            // field and its column in the box score — and the accent is reserved
+            // for the chains, which this is not.
             possessionDot = new VisualElement();
-            possessionDot.style.width = 16;
-            possessionDot.style.height = 16;
-            possessionDot.style.backgroundColor = Systems_UiTheme.Accent;
+            possessionDot.style.width = Systems_UiTheme.DOT_SIZE;
+            possessionDot.style.height = Systems_UiTheme.DOT_SIZE;
+            possessionDot.style.backgroundColor = Systems_UiTheme.ColorOf(team);
             possessionDot.style.marginRight = Systems_UiTheme.SPACE_XS;
             possessionDot.style.visibility = Visibility.Hidden;
-            Systems_UiTheme.SetRadius(possessionDot, 8);
+            Systems_UiTheme.SetRadius(possessionDot, Systems_UiTheme.DOT_SIZE / 2);
 
             // Was TEXT_CAPTION at 20 px, which is smaller than the muted field
             // position and unreadable at arm's length. A team tag is an identity,
@@ -281,10 +275,10 @@ namespace PoFootball.Views
             nameRow.Add(possessionDot);
             nameRow.Add(name);
 
-            // Down from TEXT_SCORE. Still the second-largest thing on the bar, but
-            // no longer shouting over the down and distance.
+            // Still the second-largest thing on the bar, but no longer shouting over
+            // the down and distance.
             scoreLabel = Systems_UiTheme.Text(
-                "0", 44, Systems_UiTheme.TextPrimary, FontStyle.Bold);
+                "0", Systems_UiTheme.TEXT_SCORE, Systems_UiTheme.TextPrimary, FontStyle.Bold);
 
             block.Add(nameRow);
             block.Add(scoreLabel);
@@ -350,11 +344,16 @@ namespace PoFootball.Views
             // same path PLAY already uses. Resetting each piece by hand would be a
             // second, less-travelled way to reach the same state.
             Button rematchButton = Systems_UiTheme.Button(
-                "REMATCH", Systems_UiTheme.Accent, Systems_SceneRouter.LoadGame);
+                "REMATCH", Systems_UiTheme.Action, Systems_SceneRouter.LoadGame);
             Systems_UiTheme.ApplyPrimaryActionSize(rematchButton);
 
+            // Carries the finished game's numbers to the menu, which outlives this
+            // scene's box score by the width of a scene load. Only this button does
+            // it — the in-game QUIT button leaves a game that has no result yet.
             Button menuButton = Systems_UiTheme.Button(
-                "MENU", Systems_UiTheme.SurfaceRaised, Systems_SceneRouter.LoadMenu);
+                "MENU",
+                Systems_UiTheme.SurfaceRaised,
+                () => Systems_SceneRouter.LoadMenu(Systems_GameSummary.From(_boxScore)));
             menuButton.style.color = Systems_UiTheme.TextPrimary;
             Systems_UiTheme.ApplySecondaryActionSize(menuButton);
 
@@ -495,25 +494,28 @@ namespace PoFootball.Views
         }
 
         /// <summary>
-        /// The only controls available while the ball is live: leave, and change
-        /// how fast the game runs.
+        /// The one control available while the ball is live: leave.
         ///
-        /// WHY IT EXISTS. There was a window in which this screen had no controls
-        /// at all between kickoff and the final whistle — the box-score panel and
-        /// the STATS button that opened it had been removed together, and the only
-        /// two buttons left were inside the final overlay. A viewer who started a
-        /// game was committed to sixty minutes of wall clock with no way back to
-        /// the menu short of killing the app.
+        /// WHY IT EXISTS. There was a window in which this screen had no controls at
+        /// all between kickoff and the final whistle — the box-score panel and the
+        /// STATS button that opened it had been removed together, and the only two
+        /// buttons left were inside the final overlay. A viewer who started a game
+        /// was committed to the whole thing with no way back to the menu short of
+        /// killing the app.
         ///
-        /// SPEED IS Time.timeScale AND NOTHING ELSE. A quarter is fifteen minutes
-        /// of game clock burned at one second per fifty physics ticks, so a full
-        /// game is an hour in real time and the FINAL overlay was effectively
-        /// unreachable — including for whoever is testing it. timeScale changes how
-        /// much wall-clock a physics step costs, not how much simulated time it
-        /// represents: Time.fixedDeltaTime is untouched, every step is still 0.02 s
-        /// to the simulation, and the dynamics each .onnx was fitted against are
-        /// identical at 8x and at 1x. That is the whole reason this is the control
-        /// rather than a shorter quarter, which would change the game itself.
+        /// THE SPEED CYCLE IS GONE, AND ITS JUSTIFICATION WENT WITH IT. It existed
+        /// because "a full game is an hour in real time and the FINAL overlay is
+        /// effectively unreachable" — a claim that was already false when it was
+        /// written and is not close now. Systems_GameRules.QUARTER_SECONDS is 300,
+        /// not 900, and almost all of it is burned in huddles rather than in real
+        /// time, so a full game is a few minutes at 1x. A control that multiplies
+        /// wall-clock by eight is a strange thing to put on the front of a game
+        /// nobody has to wait for, and it invited a viewer to watch the simulation
+        /// at a speed the animation was never composed for.
+        ///
+        /// Nothing writes Time.timeScale anywhere in the project now, which is why
+        /// the OnDisable that used to reset it is gone too rather than left as a
+        /// guard against a writer that no longer exists.
         /// </summary>
         private VisualElement BuildControlBar()
         {
@@ -527,57 +529,11 @@ namespace PoFootball.Views
 
             Button quit = Systems_UiTheme.Button(
                 "QUIT", Systems_UiTheme.SurfaceRaised, Systems_SceneRouter.LoadMenu);
-            quit.style.color = Systems_UiTheme.TextPrimary;
-            ApplyControlSize(quit);
-            quit.style.marginRight = Systems_UiTheme.SPACE_S;
-
-            _speedButton = Systems_UiTheme.Button(
-                string.Empty, Systems_UiTheme.SurfaceRaised, CycleSpeed);
-            _speedButton.style.color = Systems_UiTheme.TextPrimary;
-            ApplyControlSize(_speedButton);
+            quit.style.color = Systems_UiTheme.TextMuted;
+            Systems_UiTheme.ApplyControlActionSize(quit);
 
             bar.Add(quit);
-            bar.Add(_speedButton);
-
-            ApplySpeed();
             return bar;
-        }
-
-        /// <summary>
-        /// Chrome sits over a live field, so these are deliberately smaller and
-        /// quieter than the primary actions on the overlays — they are an escape
-        /// hatch, not the point of the screen.
-        /// </summary>
-        private static void ApplyControlSize(Button button)
-        {
-            button.style.width = Length.Percent(34f);
-            button.style.maxWidth = 260;
-            button.style.minHeight = Systems_UiTheme.TAP_TARGET;
-            button.style.fontSize = Systems_UiTheme.TEXT_BODY;
-        }
-
-        private void CycleSpeed()
-        {
-            _speedIndex = (_speedIndex + 1) % SPEEDS.Length;
-            ApplySpeed();
-        }
-
-        private void ApplySpeed()
-        {
-            float speed = SPEEDS[_speedIndex];
-
-            Time.timeScale = speed;
-            _speedButton.text = $"{speed:0.#}x";
-        }
-
-        /// <summary>
-        /// Unconditional, because timeScale is global and outlives this scene. A
-        /// view that left the editor or the menu running at 8x after a scene change
-        /// is the obvious way for this control to become somebody's afternoon.
-        /// </summary>
-        private void OnDisable()
-        {
-            Time.timeScale = 1f;
         }
 
         private static Color BannerColorFor(Systems_DownResolvedMessage message)

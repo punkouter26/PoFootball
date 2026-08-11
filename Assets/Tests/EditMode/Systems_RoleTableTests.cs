@@ -14,7 +14,13 @@ namespace PoFootball.Tests
         /// part of changing the observation or action contract — the config and the
         /// run-id are paired by name (UNITY_RULES §1).
         /// </summary>
-        private const string CONFIG_FILE_NAME = "FootballBase04.yaml";
+        /// <summary>
+        /// The current anchor config — see the note on the same constant in
+        /// Systems_ContractTests. It pointed at an archived file, so both tests
+        /// below have been failing on "config not found" rather than checking
+        /// anything.
+        /// </summary>
+        private const string CONFIG_FILE_NAME = "FootballBase06.yaml";
 
         /// <summary>
         /// The single highest-value assertion in the suite. Behavior names are

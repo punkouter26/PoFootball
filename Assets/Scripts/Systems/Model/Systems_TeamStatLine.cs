@@ -38,6 +38,12 @@ namespace PoFootball.Models
         /// <summary>Seconds of game clock burned while this team held the ball.</summary>
         public float TimeOfPossession { get; private set; }
 
+        /// <summary>
+        /// Yards per play and completion rate — the two derived numbers the
+        /// game-over screen shows. Guarded against a zero denominator: a team can
+        /// finish a game having attempted no passes, and "NaN%" on the final screen
+        /// is worse than "0%".
+        /// </summary>
         public float YardsPerPlay => PlaysRun > 0 ? TotalYards / PlaysRun : 0f;
 
         public float CompletionPercentage =>

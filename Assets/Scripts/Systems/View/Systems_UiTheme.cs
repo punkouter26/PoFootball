@@ -51,11 +51,42 @@ namespace PoFootball.Views
         private static readonly Color HomeColor = new Color(0.204f, 0.545f, 0.937f, 1f);
         private static readonly Color AwayColor = new Color(0.922f, 0.365f, 0.298f, 1f);
 
-        /// <summary>Reserved for the chains and nothing else, so it always means "the line".</summary>
+        /// <summary>
+        /// Reserved for the chains and nothing else, so it always means "the line".
+        ///
+        /// THAT RESERVATION WAS A FICTION UNTIL NOW. Accent was simultaneously the
+        /// down and distance, the possession dot, and the tint of every primary
+        /// button on both screens — four meanings, which is the same as none. The
+        /// possession dot now uses the team's own colour, which is what it was
+        /// actually indicating, and buttons use <see cref="Action"/>.
+        /// </summary>
         public static readonly Color Accent = new Color(0.984f, 0.788f, 0.220f, 1f);
 
+        /// <summary>
+        /// The tint of a primary action. Deliberately neutral: every hue in this
+        /// palette already means something on a football field — amber is the
+        /// chains, blue and orange are the two teams, green and red are good and
+        /// bad news — and a button is the one element that means "press me"
+        /// regardless of what is happening in the game.
+        ///
+        /// The same value as <see cref="TextPrimary"/>, and a separate token on
+        /// purpose: they are one colour serving two meanings, and either may need
+        /// to move without the other.
+        /// </summary>
+        public static readonly Color Action = new Color(0.949f, 0.969f, 0.953f, 1f);
+
         public static readonly Color Positive = new Color(0.353f, 0.812f, 0.482f, 1f);
-        public static readonly Color Negative = new Color(0.937f, 0.412f, 0.404f, 1f);
+
+        /// <summary>
+        /// Bad news — a turnover, a safety.
+        ///
+        /// PUSHED TOWARD CRIMSON, AWAY FROM ORANGE. The previous value was
+        /// (0.937, 0.412, 0.404) against an away team of (0.922, 0.365, 0.298):
+        /// the same colour to any eye, at a glance, on a 20 px banner. So an
+        /// interception announced itself in what the viewer had just been taught
+        /// was the away team's colour, whichever team had actually made it.
+        /// </summary>
+        public static readonly Color Negative = new Color(0.914f, 0.267f, 0.451f, 1f);
 
         /// <summary>Ring drawn around whatever currently has keyboard or gamepad focus.</summary>
         private static readonly Color FocusRing = new Color(1f, 1f, 1f, 0.85f);
@@ -75,6 +106,16 @@ namespace PoFootball.Views
         public const int TEXT_BODY = 26;
         public const int TEXT_TITLE = 34;
 
+        /// <summary>
+        /// The two team scores on the HUD. Second-largest thing on the bar, below
+        /// the down and distance, which is the number that changes every play.
+        ///
+        /// On the scale because it was a bare 44 at the call site — precisely the
+        /// thing the note above says must never happen, sitting in the file that
+        /// says it.
+        /// </summary>
+        public const int TEXT_SCORE = 44;
+
         /// <summary>Primary action buttons. Between TITLE and BANNER on purpose.</summary>
         public const int TEXT_ACTION = 44;
 
@@ -84,6 +125,9 @@ namespace PoFootball.Views
         public const int TEXT_DISPLAY = 76;
 
         public const int RADIUS = 12;
+
+        /// <summary>Diameter of the possession indicator beside a team's tag.</summary>
+        public const int DOT_SIZE = 16;
 
         /// <summary>
         /// Minimum touch target. Every pressable thing is at least this tall
@@ -267,6 +311,25 @@ namespace PoFootball.Views
         {
             ApplyPrimaryActionSize(button);
             button.style.fontSize = TEXT_TITLE;
+        }
+
+        /// <summary>
+        /// A control that sits over the live field — QUIT, the speed cycle.
+        /// Deliberately smaller and quieter than the two above: these are an escape
+        /// hatch, not the point of the screen.
+        ///
+        /// Here rather than in Systems_HudView, where it lived as a third private
+        /// sizer. The whole reason the other two are in this class is that the same
+        /// component coming out different on two screens is a bug a user cannot
+        /// explain, and a sizer that opts out of that rule by living elsewhere is
+        /// how the drift starts again.
+        /// </summary>
+        public static void ApplyControlActionSize(Button button)
+        {
+            button.style.width = Length.Percent(34f);
+            button.style.maxWidth = 260;
+            button.style.minHeight = TAP_TARGET;
+            button.style.fontSize = TEXT_BODY;
         }
 
         // --- Transitions -------------------------------------------------------

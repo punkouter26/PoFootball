@@ -16,6 +16,14 @@ namespace PoFootball.Systems
     /// behaviour in Unity. Deferring costs one physics tick and makes the reset
     /// deterministic.
     ///
+    /// It is then deferred FURTHER by Systems_ISpotProvider.DeadBallTicks — none in
+    /// training, a couple of seconds in a game. That interval is the only thing
+    /// standing between the whistle and the next snap, and without it the HUD's
+    /// result banner went up and came down inside one physics step, so no viewer
+    /// ever read the result of any play. The bodies simply stand still through it:
+    /// the play is Dead, so no agent is driven and neither the referee nor the game
+    /// clock does anything.
+    ///
     /// Agents' OnEpisodeBegin is deliberately empty — all repositioning happens
     /// here, so 22 agents cannot half-reset each other in an arbitrary order.
     ///
@@ -40,6 +48,13 @@ namespace PoFootball.Systems
         private IDisposable _subscription;
         private bool _resetPending;
         private bool _started;
+
+        /// <summary>
+        /// Ticks left of the dead-ball hold before the next snap. Zero except while
+        /// a game is counting one down; training's provider always asks for none, so
+        /// this never leaves zero there and the loop is the one it always was.
+        /// </summary>
+        private int _deadBallTicksRemaining;
 
         public Systems_EpisodeDirector(
             Systems_PlayModel play,
@@ -84,16 +99,46 @@ namespace PoFootball.Systems
             }
 
             _started = true;
+            _deadBallTicksRemaining = 0;
             BeginEpisode();
         }
 
         public void FixedTick()
         {
-            if (!_started || !_resetPending)
+            if (!_started)
             {
                 return;
             }
 
+            if (_resetPending)
+            {
+                ResolveWhistle();
+                return;
+            }
+
+            if (_deadBallTicksRemaining > 0)
+            {
+                _deadBallTicksRemaining--;
+
+                if (_deadBallTicksRemaining == 0)
+                {
+                    BeginEpisode();
+                }
+            }
+        }
+
+        /// <summary>
+        /// The tick after the whistle: settle the episode that just ended, then
+        /// either snap the next play or start the dead-ball hold before it.
+        ///
+        /// The reward is paid here, one tick after the whistle, exactly as it always
+        /// was — a dead-ball pause must not change WHEN a policy is told how the
+        /// play went, only how long the bodies then stand still. In training the
+        /// hold is zero ticks and this method still ends with BeginEpisode, so the
+        /// training loop is unchanged.
+        /// </summary>
+        private void ResolveWhistle()
+        {
             _resetPending = false;
 
             // Read before anything is disturbed: BeginEpisode overwrites the play
@@ -112,7 +157,13 @@ namespace PoFootball.Systems
                 return;
             }
 
-            BeginEpisode();
+            _deadBallTicksRemaining = _spotProvider.DeadBallTicks;
+
+            if (_deadBallTicksRemaining <= 0)
+            {
+                _deadBallTicksRemaining = 0;
+                BeginEpisode();
+            }
         }
 
         private void OnPlayEnded(Systems_PlayEndedMessage message)

@@ -1,6 +1,9 @@
+using System;
+using MessagePipe;
 using PoFootball.Models;
 using PoFootball.Systems;
 using UnityEngine;
+using VContainer;
 
 namespace PoFootball.Views
 {
@@ -30,16 +33,107 @@ namespace PoFootball.Views
     /// import at 256 px per unit, so a shape at scale 1 is exactly as big as the
     /// body that collides. Drawing linemen chunkier would look better and lie about
     /// where contact happens, which in a physics sim is the wrong trade.
+    ///
+    /// THE TINT FOLLOWS POSSESSION, THE SHAPE FOLLOWS THE BODY. Shapes are painted
+    /// once in Awake and never change — slot 8 is a quarterback for the whole game.
+    /// Colour is repainted whenever the ball changes hands, because the same eleven
+    /// bodies play offense for BOTH teams and the field mirrors underneath them
+    /// (Systems_TeamId). Without this, a turnover on downs moved the possession
+    /// indicator and nothing else: blue was permanently the offense, so the red team
+    /// could never be seen with the ball.
+    ///
+    /// This component lives only in SCN_GAME. A training scene has no scoreboard in
+    /// the container at all, so there is no possession to follow and nothing here
+    /// runs — which is also why injecting Systems_GameModel is safe.
     /// </summary>
     [DefaultExecutionOrder(-100)]
     [DisallowMultipleComponent]
-    public sealed class Systems_RoleShapeApplier : MonoBehaviour
+    public sealed class Systems_RoleShapeApplier : MonoBehaviour, Systems_IInjectableView
     {
         /// <summary>Resources path of the shared shape set.</summary>
         private const string SHAPE_SET_RESOURCE = "PoFootballRoleShapes";
 
         [Tooltip("Leave empty to load the shared set from Resources.")]
         [SerializeField] private Systems_RoleShapeSet _shapeSet;
+
+        private Systems_GameModel _game;
+        private ISubscriber<Systems_DownResolvedMessage> _resolvedSubscriber;
+        private IDisposable _resolvedSubscription;
+
+        /// <summary>Every handle found in Awake, so a repaint does not re-scan the scene.</summary>
+        private Systems_IPlayerHandle[] _handles = new Systems_IPlayerHandle[0];
+        private int _handleCount;
+
+        /// <summary>
+        /// Which team the field is currently painted for. Starts at null so the
+        /// first resolved down always paints, even if possession never changed.
+        /// </summary>
+        private Systems_TeamId? _paintedFor;
+
+        [Inject]
+        public void Construct(
+            Systems_GameModel game,
+            ISubscriber<Systems_DownResolvedMessage> resolvedSubscriber)
+        {
+            _game = game;
+            _resolvedSubscriber = resolvedSubscriber;
+        }
+
+        private void Start()
+        {
+            _resolvedSubscription = _resolvedSubscriber?.Subscribe(OnDownResolved);
+
+            // The opening possession is decided by Systems_GameFlowSystem's Start,
+            // which VContainer runs before this one — the scope is at -5000 and
+            // registers the flow system as an entry point. Painting here rather than
+            // in Awake is what makes the kickoff colours correct on frame one.
+            RepaintForPossession();
+        }
+
+        private void OnDestroy()
+        {
+            _resolvedSubscription?.Dispose();
+        }
+
+        private void OnDownResolved(Systems_DownResolvedMessage message)
+        {
+            RepaintForPossession();
+        }
+
+        /// <summary>
+        /// Repaints only when the ball has actually changed hands. A down that keeps
+        /// possession is the common case and must not touch twenty-two renderers.
+        /// </summary>
+        private void RepaintForPossession()
+        {
+            if (_game == null || _shapeSet == null)
+            {
+                return;
+            }
+
+            Systems_TeamId possession = _game.Possession;
+            if (_paintedFor == possession)
+            {
+                return;
+            }
+
+            _paintedFor = possession;
+
+            Color offenseColor = _shapeSet.ColorOf(possession);
+            Color defenseColor = _shapeSet.ColorOf(possession.Opponent());
+
+            for (int index = 0; index < _handleCount; index++)
+            {
+                Systems_IPlayerHandle handle = _handles[index];
+                if (handle == null)
+                {
+                    continue;
+                }
+
+                handle.SetTeamColor(
+                    handle.Side == Systems_TeamSide.Offense ? offenseColor : defenseColor);
+            }
+        }
 
         private void Awake()
         {
@@ -62,9 +156,14 @@ namespace PoFootball.Views
         private void Apply()
         {
             MonoBehaviour[] behaviours = FindObjectsByType<MonoBehaviour>(
-                FindObjectsInactive.Include, FindObjectsSortMode.None);
+                FindObjectsInactive.Include);
 
             int painted = 0;
+
+            // Sized to the whole sweep rather than grown: this runs once, and the
+            // exact player count is not known until the loop has finished.
+            _handles = new Systems_IPlayerHandle[behaviours.Length];
+            _handleCount = 0;
 
             for (int index = 0; index < behaviours.Length; index++)
             {
@@ -83,6 +182,8 @@ namespace PoFootball.Views
                 }
 
                 Paint(renderer, handle.Role, handle.Side);
+                _handles[_handleCount] = handle;
+                _handleCount++;
                 painted++;
             }
 

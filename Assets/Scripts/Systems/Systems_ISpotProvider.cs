@@ -37,5 +37,28 @@ namespace PoFootball.Systems
         /// is true.
         /// </summary>
         float NextLineOfScrimmageY();
+
+        /// <summary>
+        /// Physics ticks to hold the dead ball before re-forming for the next snap.
+        ///
+        /// WHY THIS IS ON THIS INTERFACE. It is the same question the rest of this
+        /// seam answers — "is anybody watching?" — and it has the same two answers.
+        /// Training returns zero and the episode loop is exactly what it always was,
+        /// tick for tick. A game returns a real pause.
+        ///
+        /// IT IS NOT COSMETIC, IT IS THE WHOLE READABILITY OF THE GAME. The director
+        /// used to re-snap on the very FixedTick after the whistle, so every dead
+        /// ball lasted 20 ms. The HUD's result banner is raised by the down
+        /// resolving and taken down again by the next snap, which meant it was
+        /// raised and lowered inside a single physics step: a viewer never once saw
+        /// which down it was, what the call had been, or how many yards it gained,
+        /// on any play of any game. Systems_HudView.BANNER_SECONDS had been dead
+        /// code since the game layer was added.
+        ///
+        /// The play is Dead throughout, so the referee and the game clock both stand
+        /// down and the pause costs the offense nothing — which is correct football
+        /// as well as correct code.
+        /// </summary>
+        int DeadBallTicks { get; }
     }
 }

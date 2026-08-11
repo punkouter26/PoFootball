@@ -155,3 +155,17 @@ Library/UnitySkillsAudit.jsonl
 
 # Local backups made before edits
 *.bak
+
+# Training watchdog sentinel: created ad hoc to stop an overnight run,
+# never a tracked file. Tools/watch_training.ps1 exits when it appears.
+STOP_TRAINING
+
+# ML-Agents writes a timer JSON per scene on every play session and on every
+# headless env exit. They are run artifacts, not assets, and they churn on every
+# single run — regenerated automatically, never worth a diff.
+/[Aa]ssets/ML-Agents/Timers/
+/[Aa]ssets/ML-Agents/Timers.meta
+
+# MCP's Unity connectivity probe drops a GUID-named scene at the Assets root.
+/[Aa]ssets/InitTestScene*.unity
+/[Aa]ssets/InitTestScene*.unity.meta

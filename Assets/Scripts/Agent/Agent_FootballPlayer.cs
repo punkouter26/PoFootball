@@ -63,6 +63,12 @@ namespace PoFootball.Agents
         private int _lastSeenEpisode = -1;
         private bool _hasQuarterbackActions;
         private bool _isBlocker;
+
+        /// <summary>
+        /// Fullback or halfback — the two roles that line up in the quarterback's
+        /// retreat lane and have to vacate it on a dropback.
+        /// </summary>
+        private bool _isBack;
         private bool _isReceiver;
 
         /// <summary>Reused every tick so building observations allocates nothing.</summary>
@@ -87,6 +93,13 @@ namespace PoFootball.Agents
         private Systems_FieldModel _field;
         private Systems_PlayerRegistry _registry;
         private Systems_Referee _referee;
+
+        /// <summary>
+        /// Training or Game. Read once, in Awake, for exactly one decision — see
+        /// <see cref="ConfigureTrainerLink"/>. Defaults to Training, so an agent
+        /// dropped into a scene with no lifetime scope behaves as it always has.
+        /// </summary>
+        private Systems_SimMode _simMode = Systems_SimMode.Training;
 
         public int Id => _formationSlotIndex;
 
@@ -114,7 +127,8 @@ namespace PoFootball.Agents
             Systems_BallSystem ballSystem,
             Systems_FieldModel field,
             Systems_PlayerRegistry registry,
-            Systems_Referee referee)
+            Systems_Referee referee,
+            Systems_SimMode simMode)
         {
             _play = play;
             _ball = ball;
@@ -122,6 +136,7 @@ namespace PoFootball.Agents
             _field = field;
             _registry = registry;
             _referee = referee;
+            _simMode = simMode;
 
             // Before Register, not after: the registry hands this instance to the
             // rest of the graph, and Role and Side are cached fields now rather
@@ -155,17 +170,23 @@ namespace PoFootball.Agents
             // point in Agent's initialisation at which each of them reads it.
             //
             // Ordering was NOT the cause of the `ArgumentException: length` flood
-            // seen while bringing football_base04 up. That comes from running this
-            // scene with no trainer attached: all 22 agents have BehaviorType
-            // Default with a stale Football_v01 .onnx assigned, so ML-Agents falls
+            // seen while bringing football_base04 up. That came from running this
+            // scene with no trainer attached: all 22 agents had BehaviorType
+            // Default with a stale Football_v01 .onnx assigned, so ML-Agents fell
             // back to inference against a 25-observation, 2-continuous-action brain
-            // and the shapes cannot line up. With a trainer connected the policy is
-            // remote and the assigned model is ignored, which is why training runs
-            // clean. Clear those model slots before judging anything by playing the
-            // training scene directly.
+            // and the shapes could not line up. With a trainer connected the policy
+            // is remote and the assigned model is ignored, which is why training
+            // ran clean either way.
+            //
+            // That flood cannot recur: ConfigureBrain below now assigns the model
+            // from Agent_BrainRegistry unconditionally, overwriting whatever the
+            // scene serialized, and Football_v01 has been deleted outright.
             CacheRole();
             _hasQuarterbackActions =
                 Systems_RoleTable.HasQuarterbackActions(Systems_RoleTable.BrainOf(_role));
+
+            // Before base.Awake, which is where Agent registers the communicator.
+            ConfigureTrainerLink();
             ConfigureBrain();
 
             // Agent.Awake registers the RPC communicator. Hiding it instead of
@@ -180,6 +201,8 @@ namespace PoFootball.Agents
             _steerTorque = Systems_RoleTable.SteerTorqueOf(_role);
             _isBlocker = Reward_Role.IsBlocker(_role);
             _isReceiver = Reward_Role.IsReceiver(_role);
+            _isBack = _role == Systems_PlayerRole.Fullback
+                || _role == Systems_PlayerRole.RunningBack;
 
             // Team tint is authored in the scene; cache it so the carrier
             // highlight can be reverted to exactly what it was.
@@ -228,6 +251,32 @@ namespace PoFootball.Agents
             // applied as torque, so leaving that constraint on would silently
             // discard half of every action the policy takes.
             _rigidbody.constraints = RigidbodyConstraints2D.None;
+        }
+
+        /// <summary>
+        /// Decides whether ML-Agents may go looking for a trainer at all.
+        ///
+        /// WHY: the Academy opens a gRPC connection to port 5004 the first time any
+        /// Agent initialises, and when nothing is listening it blocks until the
+        /// connect times out. Measured on this project that is about 4.3 seconds —
+        /// 4.3 seconds of frozen, empty field after a player taps PLAY, on every
+        /// single launch of a shipped game that has no trainer and never will. The
+        /// only trace of it is an informational log about performing inference
+        /// instead, which reads as routine.
+        ///
+        /// Set from the scene's own mode rather than probed, and set in BOTH
+        /// directions rather than only switched off. A one-way switch would survive
+        /// "Enter Play Mode without domain reload" and silently prevent the next
+        /// training run in the same editor session from ever reaching mlagents-learn
+        /// — a far worse bug than the one being fixed. Writing it every time makes
+        /// the last scene loaded authoritative.
+        ///
+        /// Must run before base.Awake: the flag has no effect once the Academy has
+        /// initialised, and Agent.Awake is what initialises it.
+        /// </summary>
+        private void ConfigureTrainerLink()
+        {
+            CommunicatorFactory.Enabled = _simMode != Systems_SimMode.Game;
         }
 
         private void ConfigureBrain()
@@ -352,7 +401,13 @@ namespace PoFootball.Agents
             // up with an episode boundary the director chose independently. In
             // football_base03 the quarterback latched Keep on 8 of 8 instrumented
             // plays and possession never changed hands once.
-            if (!_play.CallIsLatched)
+            // The dropback. Nothing is committed until the quarterback has had
+            // DROPBACK_TICKS to retreat and read the rush — before that, whatever
+            // the policy emits on branch 0 is ignored, exactly as index 0 is.
+            // Committing on the first decision step meant choosing off the pre-snap
+            // alignment alone; see Systems_SimConstants.DROPBACK_TICKS.
+            if (!_play.CallIsLatched
+                && _play.PhysicsTick >= Systems_SimConstants.DROPBACK_TICKS)
             {
                 _play.LatchCall((Systems_PlayCall)discrete[0]);
 
@@ -627,6 +682,25 @@ namespace PoFootball.Agents
         }
 
         /// <summary>
+        /// Rebinds the base colour cached in Awake. Called when possession changes,
+        /// so the offense unit wears the colour of the team that actually has the
+        /// ball rather than a fixed "offense is blue".
+        ///
+        /// The carrier check is the whole subtlety: repainting a carrier would erase
+        /// the white highlight mid-play. Storing it and letting SetCarrier(false)
+        /// apply it later keeps the two writers in one order.
+        /// </summary>
+        public void SetTeamColor(Color color)
+        {
+            _teamColor = color;
+
+            if (_spriteRenderer != null && !_isCarrier)
+            {
+                _spriteRenderer.color = color;
+            }
+        }
+
+        /// <summary>
         /// Scripted football, used whenever no trained brain is bound — which,
         /// until a set is promoted against the current contract, is always.
         ///
@@ -689,6 +763,28 @@ namespace PoFootball.Agents
             // side of the field the nearest defender is not on. That drift is what
             // produces runs that break outside instead of everyone piling up on the
             // hash marks.
+            // The scripted dropback, and then the pocket. A quarterback holding the
+            // ball retreats off the line rather than running at the goal line like
+            // any other carrier, which is what gives the pocket time to form and the
+            // receivers time to get downfield.
+            //
+            // IT USED TO END THE INSTANT THE CALL LATCHED, and that was wrong. The
+            // call latches DROPBACK_TICKS after the snap and the heuristic does not
+            // release until THROW_AT_TICK, so a quarterback that had just committed
+            // to a PASS spent the twenty ticks in between falling through to the
+            // ordinary carrier branch below — turning round and running at the goal
+            // line, straight into the four linemen rushing it, while still holding
+            // the ball it was about to throw. Only once the throw window closes is
+            // it really out of options, and only then does it scramble.
+            if (_isCarrier && _hasQuarterbackActions && IsHoldingThePocket())
+            {
+                return new Vector2(
+                    position.x,
+                    _play.LineOfScrimmageY
+                        - (Systems_SimConstants.DROPBACK_DEPTH_YARDS
+                            * Systems_FieldModel.YARD));
+            }
+
             if (_isCarrier)
             {
                 Systems_IPlayerHandle chaser = NearestOpponent();
@@ -709,21 +805,50 @@ namespace PoFootball.Agents
 
             if (_side == Systems_TeamSide.Defense)
             {
-                // Defenders converge on the ball — its carrier while it is held, the
-                // ball itself while it is in the air, which is what turns a pass
-                // into a contested play rather than a free completion.
-                return _ball == null ? position : _ball.Position;
+                return DefensiveTarget(position);
             }
 
-            // Blockers meet the nearest defender. Driving at them is enough: the
-            // collision response does the blocking, and a lineman that reaches its
-            // man is standing exactly where the rules layer wants it.
+            // Blockers stand BETWEEN the rusher and the ball rather than driving at
+            // the rusher itself.
+            //
+            // Driving at him meant arriving where he had just been and shoving from
+            // behind, which a rusher running past simply leaves. Taking the inside
+            // position puts the blocker's body in the path to the quarterback, which
+            // is the whole job — and it is the same thing Reward_Role.Block already
+            // measures, so the scripted line and the reward finally want the same
+            // thing instead of two different ones.
             if (_isBlocker)
             {
                 Systems_IPlayerHandle opponent = NearestOpponent();
-                return opponent == null
-                    ? new Vector2(position.x, position.y + 4f)
-                    : opponent.Position;
+                if (opponent == null)
+                {
+                    return new Vector2(position.x, position.y + 4f);
+                }
+
+                Vector2 anchor = _ball == null ? position : _ball.Position;
+                Vector2 rusherToAnchor = anchor - opponent.Position;
+
+                // Degenerate only if a rusher is standing exactly on the ball, in
+                // which case there is no line to take and meeting him is correct.
+                if (rusherToAnchor.sqrMagnitude < 0.0001f)
+                {
+                    return opponent.Position;
+                }
+
+                return opponent.Position
+                    + (rusherToAnchor.normalized * Systems_SimConstants.BLOCK_CUSHION);
+            }
+
+            // Backs clear the quarterback's retreat lane while the call is still
+            // open. All three start on x = 0 — quarterback at -2.5, fullback at
+            // -4.5, halfback at -6.5 — so a seven-yard dropback reverses straight
+            // through both of them. Slot parity splits them opposite ways, which is
+            // also what a back does on a pass: release to the flat.
+            if (_isBack && !_play.CallIsLatched)
+            {
+                float lane = (_formationSlotIndex % 2 == 0) ? -1f : 1f;
+                return new Vector2(
+                    lane * Systems_SimConstants.POCKET_LANE_X, position.y);
             }
 
             // Receivers and backs run upfield and spread. Slot index parity fans
@@ -736,6 +861,167 @@ namespace PoFootball.Agents
                     -Systems_FieldModel.HALF_WIDTH,
                     Systems_FieldModel.HALF_WIDTH),
                 Systems_FieldModel.ATTACKING_GOAL_LINE_Y);
+        }
+
+        /// <summary>
+        /// Whether the quarterback is still a passer rather than a runner: either it
+        /// has not committed to anything yet, or it has called a pass and the throw
+        /// window is still open.
+        ///
+        /// A handoff drops out of here the moment it latches, which is correct — on
+        /// a handoff the quarterback's job is to close on the back, and
+        /// Systems_BallSystem.TryHandoff completes on proximity alone.
+        /// </summary>
+        private bool IsHoldingThePocket()
+        {
+            if (!_play.CallIsLatched)
+            {
+                return true;
+            }
+
+            return _play.Call == Systems_PlayCall.Pass
+                && _play.PhysicsTick <= Systems_SimConstants.THROW_WINDOW_TICKS;
+        }
+
+        /// <summary>
+        /// Where a defender wants to be.
+        ///
+        /// THIS USED TO BE ONE LINE — every defender, every tick, targeted the ball.
+        /// That produced eleven bodies converging on the quarterback the instant the
+        /// ball was snapped: no coverage, no leverage, nothing between a receiver and
+        /// the end zone. The 4-3 with two-high safeties that Systems_Formation lines
+        /// up was cosmetic, dissolving into a swarm before anyone had run a step, and
+        /// the two split receivers were uncovered about a second after every snap.
+        ///
+        /// The structure below is Cover 1 and it is only three ideas deep:
+        ///
+        ///   THE BALL IN THE AIR OVERRIDES EVERYTHING. Assignments exist to stop the
+        ///   ball being caught; once it is thrown, the ball IS the assignment. This
+        ///   is also what keeps a pass contested rather than a free completion, which
+        ///   is the property Systems_BallSystem.FindCatcher depends on to make
+        ///   coverage worth learning at all.
+        ///
+        ///   SO DOES A BALL PAST THE LINE. A carrier who has crossed the line of
+        ///   scrimmage has beaten the call; holding a zone behind him is how a five
+        ///   yard gain becomes sixty. Everyone chases.
+        ///
+        ///   OTHERWISE, PLAY YOUR JOB. Linemen rush, linebackers hold a zone,
+        ///   corners and the strong safety play their man, the free safety plays the
+        ///   deep middle.
+        ///
+        /// None of this is reachable by a trained policy — it is the heuristic only.
+        /// A brain sees the same observations it always did and is free to invent
+        /// something better.
+        /// </summary>
+        private Vector2 DefensiveTarget(Vector2 position)
+        {
+            if (_ball == null || _play == null)
+            {
+                return position;
+            }
+
+            if (_ball.IsInFlight)
+            {
+                return _ball.Position;
+            }
+
+            Systems_IPlayerHandle carrier = CurrentCarrier();
+
+            if (carrier == null)
+            {
+                return _ball.Position;
+            }
+
+            if (carrier.Position.y > _play.LineOfScrimmageY)
+            {
+                return carrier.Position;
+            }
+
+            switch (_role)
+            {
+                case Systems_PlayerRole.DefensiveLine:
+                    return carrier.Position;
+
+                case Systems_PlayerRole.Linebacker:
+                    return LinebackerZone(carrier);
+
+                case Systems_PlayerRole.Cornerback:
+                case Systems_PlayerRole.Safety:
+                    return CoverageSpot(carrier);
+
+                default:
+                    return carrier.Position;
+            }
+        }
+
+        /// <summary>
+        /// The ball's carrier, or null while it is in the air. Read straight from
+        /// the ball model rather than through Systems_Referee so this works for an
+        /// agent that was never injected with one.
+        /// </summary>
+        private Systems_IPlayerHandle CurrentCarrier()
+        {
+            if (_ball == null || !_ball.IsHeld || _registry == null)
+            {
+                return null;
+            }
+
+            return _registry.Get(_ball.CarrierId);
+        }
+
+        /// <summary>
+        /// A linebacker's spot: its own alignment, dropped to a fixed depth beyond
+        /// the line and leaning part of the way toward the ball.
+        ///
+        /// Anchored on the FORMATION x, not on the linebacker's current x. Leaning
+        /// from where it already stands compounds every tick — each step closes a
+        /// fraction of a gap that is then measured again from the new position — so
+        /// the zone walks itself onto the quarterback within a second and the
+        /// linebacker has silently become a fourth rusher.
+        /// </summary>
+        private Vector2 LinebackerZone(Systems_IPlayerHandle carrier)
+        {
+            float anchorX = Systems_Formation.GetSlot(_formationSlotIndex).OffsetX;
+
+            float x = anchorX
+                + ((carrier.Position.x - anchorX) * Systems_SimConstants.ZONE_BALL_LEAN);
+
+            float y = _play.LineOfScrimmageY
+                + (Systems_SimConstants.LINEBACKER_DROP_YARDS * Systems_FieldModel.YARD);
+
+            return new Vector2(
+                Mathf.Clamp(x, -Systems_FieldModel.HALF_WIDTH, Systems_FieldModel.HALF_WIDTH),
+                y);
+        }
+
+        /// <summary>
+        /// A cover defender's spot: goalside of the receiver it was assigned, or the
+        /// deep middle if it was assigned nobody.
+        /// </summary>
+        private Vector2 CoverageSpot(Systems_IPlayerHandle carrier)
+        {
+            int assignedSlot = Systems_Formation.CoverageAssignmentFor(_formationSlotIndex);
+
+            Systems_IPlayerHandle receiver = assignedSlot < 0 || _registry == null
+                ? null
+                : _registry.Get(assignedSlot);
+
+            if (receiver == null)
+            {
+                // The free safety. Deep middle, leaning slightly to the ball, so
+                // nothing gets behind the coverage down either seam.
+                float deepY = _play.LineOfScrimmageY
+                    + (Systems_SimConstants.SAFETY_DEPTH_YARDS * Systems_FieldModel.YARD);
+
+                return new Vector2(
+                    carrier.Position.x * Systems_SimConstants.ZONE_BALL_LEAN, deepY);
+            }
+
+            // Between the receiver and the end zone it is running at — see
+            // Systems_SimConstants.COVERAGE_CUSHION for why not on top of it.
+            return new Vector2(
+                receiver.Position.x,
+                receiver.Position.y + Systems_SimConstants.COVERAGE_CUSHION);
         }
 
         /// <summary>
@@ -804,11 +1090,58 @@ namespace PoFootball.Agents
                 return;
             }
 
-            Vector2 aim = (target.Position - Position).normalized;
+            Vector2 aim = LeadAim(target);
 
             discreteActions[1] = 1;
             continuousActions[2] = aim.x;
             continuousActions[3] = aim.y;
+        }
+
+        /// <summary>
+        /// Where to throw so that the ball and the receiver arrive together.
+        ///
+        /// THE PREVIOUS VERSION AIMED AT target.Position, AND THAT MADE MOST PASSES
+        /// UNCATCHABLE BY CONSTRUCTION. Systems_BallSystem flies the ball in a
+        /// straight line at a fixed speed and completes the catch only when someone
+        /// is within CATCH_RADIUS — 1.2 m — of it. A receiver twenty metres downfield
+        /// is most of a second of flight away and has run five or six metres in that
+        /// time, so the ball arrived four or five catch radii behind him. Every
+        /// throw at a moving target was a scripted incompletion, and no amount of
+        /// route running or coverage could change that.
+        ///
+        /// The fix is the standard intercept solve. Guess a flight time from the
+        /// present separation, walk the receiver along its own velocity by that
+        /// much, remeasure against the new point. It converges geometrically; three
+        /// passes is well under a centimetre for any throw this field allows, and it
+        /// allocates nothing.
+        ///
+        /// The release speed is read from the same constant Systems_BallSystem uses,
+        /// because HeuristicQuarterback hands it a unit-length aim and unit length
+        /// is full power. If either side of that is ever retuned the lead follows it
+        /// rather than quietly going stale.
+        /// </summary>
+        private Vector2 LeadAim(Systems_IPlayerHandle target)
+        {
+            Vector2 origin = Position;
+            Vector2 targetPosition = target.Position;
+            Vector2 targetVelocity = target.Velocity;
+
+            const float SPEED = Systems_SimConstants.PASS_SPEED_MAX;
+
+            Vector2 aimPoint = targetPosition;
+
+            for (int iteration = 0; iteration < 3; iteration++)
+            {
+                float flightSeconds = (aimPoint - origin).magnitude / SPEED;
+                aimPoint = targetPosition + (targetVelocity * flightSeconds);
+            }
+
+            Vector2 aim = aimPoint - origin;
+
+            // A receiver standing exactly on the quarterback has no direction to be
+            // led in; straight downfield is the same fallback Systems_BallSystem
+            // applies to a degenerate aim.
+            return aim.sqrMagnitude < 1e-4f ? Vector2.up : aim.normalized;
         }
 
         /// <summary>

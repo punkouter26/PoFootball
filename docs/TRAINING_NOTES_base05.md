@@ -132,9 +132,11 @@ That is exactly what had to be cleaned up before this run could start.
 
 ## In the morning
 
-Nothing is promoted. `Assets/Agents/Football_v01` still holds the stale
-football_base02 brains, and `Agent_BrainTable` does not exist, so both scenes
-run `Agent_FootballPlayer.Heuristic` and the game is playable but not trained.
+Nothing is promoted. `Assets/Agents/Football_v01` **has since been deleted** — it
+held the stale football_base02 brains, which were unloadable against the
+six-behavior contract. No `Resources/PoFootballBrains.asset` exists either, so
+`Agent_BrainRegistry.ModelFor` returns null, both scenes run
+`Agent_FootballPlayer.Heuristic`, and the game is playable but not trained.
 
 To promote once this run is worth promoting:
 

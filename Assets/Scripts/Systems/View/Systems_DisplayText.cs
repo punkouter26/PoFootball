@@ -99,23 +99,6 @@ namespace PoFootball.Views
             return team == Systems_TeamId.Home ? "HOME" : "AWAY";
         }
 
-        public static string RoleAbbreviation(Systems_PlayerRole role)
-        {
-            switch (role)
-            {
-                case Systems_PlayerRole.Quarterback: return "QB";
-                case Systems_PlayerRole.RunningBack: return "HB";
-                case Systems_PlayerRole.Fullback: return "FB";
-                case Systems_PlayerRole.WideReceiver: return "WR";
-                case Systems_PlayerRole.TightEnd: return "TE";
-                case Systems_PlayerRole.OffensiveLine: return "OL";
-                case Systems_PlayerRole.DefensiveLine: return "DL";
-                case Systems_PlayerRole.Linebacker: return "LB";
-                case Systems_PlayerRole.Cornerback: return "CB";
-                default: return "S";
-            }
-        }
-
         public static string PlayCallLabel(Systems_PlayCall call)
         {
             switch (call)

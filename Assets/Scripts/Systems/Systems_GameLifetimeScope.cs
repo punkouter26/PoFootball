@@ -52,6 +52,14 @@ namespace PoFootball.Systems
             builder.RegisterInstance(
                 new Systems_PresentationBudget(_simMode, _presentationEffects));
 
+            // The mode itself, for the one consumer that needs the distinction and
+            // cannot get it from the presentation budget: Agent_FootballPlayer turns
+            // the ML-Agents trainer link off in Game mode, and "am I decoration" is
+            // not the question it is asking. Registering the enum rather than
+            // widening Systems_PresentationBudget keeps each of them answering
+            // exactly one thing (.claude/rules/architecture.md).
+            builder.RegisterInstance(_simMode);
+
             builder.Register<Systems_PlayModel>(Lifetime.Singleton);
             builder.Register<Systems_BallModel>(Lifetime.Singleton);
             builder.Register<Systems_FieldModel>(Lifetime.Singleton);

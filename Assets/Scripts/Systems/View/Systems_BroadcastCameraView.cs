@@ -33,17 +33,26 @@ namespace PoFootball.Views
     public sealed class Systems_BroadcastCameraView : MonoBehaviour, Systems_IInjectableView
     {
         /// <summary>
-        /// Orthographic size that frames the full width of the field. At 9:16 the
-        /// visible width is 1.125 x the ortho size, and the field is 53.3 yd
-        /// across — so anything below this crops the sidelines.
+        /// Widest framing, in metres of half-height. Shows about 78 yards of field.
+        ///
+        /// WAS 46, AND THAT WAS THE ROOT OF THE FRAMING BUG. A portrait screen
+        /// cannot show the full 53.3 yd width without also showing most of the
+        /// length — at 9:16 the visible width is only 1.125 x the ortho size, so
+        /// covering the sidelines needs an ortho size around 43, which makes the
+        /// visible rectangle 86 m tall against a 109.7 m field. Once the view is
+        /// that large, ClampToField has almost no room left to move the camera in,
+        /// and the shot stops being able to follow the ball at all. Framing the
+        /// sidelines was never worth that: both receivers are inside x = ±11 m at
+        /// their widest split, and nothing important happens outside them.
         /// </summary>
-        private const float WIDE_SIZE = 46f;
+        private const float WIDE_SIZE = 36f;
 
         /// <summary>
-        /// Tightest framing. Loses roughly five metres of each sideline, which
-        /// still leaves both wide receivers on screen at their widest split.
+        /// Tightest framing — about 61 yards of field. Crops the outer few metres
+        /// of each sideline, which is empty grass at every formation this game
+        /// lines up.
         /// </summary>
-        private const float TIGHT_SIZE = 36f;
+        private const float TIGHT_SIZE = 28f;
 
         /// <summary>Yards past the line of scrimmage at which the shot is fully wide.</summary>
         private const float FULL_WIDE_YARDS = 22f;
@@ -169,10 +178,36 @@ namespace PoFootball.Views
         }
 
         /// <summary>
-        /// Keeps the visible rectangle inside the field plus a small apron. Without
-        /// this, following the ball into the end zone shows a band of empty
-        /// background above the back line, which reads as the camera falling off
-        /// the world.
+        /// Keeps the visible rectangle inside the field plus a small apron, without
+        /// ever refusing to follow the ball.
+        ///
+        /// WHAT WAS WRONG. The vertical limit was the apron rule alone:
+        /// ATTACKING_BACK_LINE_Y + APRON - halfHeight. The field is 54.9 m from the
+        /// centre to a back line and the view was 36-46 m tall in half-height, so
+        /// that left the camera only ±22.9 m of travel at its tightest and ±12.9 m
+        /// at its widest — barely the middle third of a 109.7 m field. Three things
+        /// followed, all of them visible on every game:
+        ///
+        ///   The shot could not centre on a snap outside the 25s. The play sat in
+        ///   the bottom fifth of the screen with forty yards of empty grass above
+        ///   it, which is exactly backwards.
+        ///
+        ///   Going wide TIGHTENED the limit, because the limit is a function of
+        ///   halfHeight. So the camera was dragged back toward midfield at the
+        ///   moment it zoomed out — which is to say, on every pass in flight and
+        ///   every run that broke. The one moment the shot most needs to follow the
+        ///   ball is the one moment it was pulled off it.
+        ///
+        ///   Backed up near its own goal, the quarterback fell off the bottom of
+        ///   the frame entirely.
+        ///
+        /// THE FIX. On a portrait screen the view is necessarily a large fraction of
+        /// the field's length, so "never show grass beyond the back line" and
+        /// "always follow the ball" cannot both hold near a goal line. Following the
+        /// ball wins: the limit is now whichever of the two rules is MORE permissive,
+        /// so the apron governs in the middle of the field where it costs nothing —
+        /// no void is visible inside roughly the 16 yard lines — and gives way near
+        /// the goal lines, which is where the football that matters happens.
         /// </summary>
         private Vector2 ClampToField(Vector2 position, float orthographicSize)
         {
@@ -181,12 +216,19 @@ namespace PoFootball.Views
             float halfHeight = orthographicSize;
             float halfWidth = orthographicSize * _camera.aspect;
 
-            float limitY = Systems_FieldModel.ATTACKING_BACK_LINE_Y + APRON - halfHeight;
+            // Rule one: do not show more than the apron beyond a back line.
+            float voidLimitY = Systems_FieldModel.ATTACKING_BACK_LINE_Y + APRON - halfHeight;
+
+            // Rule two: the shot must always be able to reach a goal line, because
+            // the ball can be spotted anywhere between them.
+            float limitY = Mathf.Max(voidLimitY, Systems_FieldModel.ATTACKING_GOAL_LINE_Y);
+
             float limitX = Systems_FieldModel.HALF_WIDTH + APRON - halfWidth;
 
-            // A negative limit means the view is already wider than the field, so
-            // the only correct position on that axis is dead centre.
-            position.y = limitY <= 0f ? 0f : Mathf.Clamp(position.y, -limitY, limitY);
+            position.y = Mathf.Clamp(position.y, -limitY, limitY);
+
+            // Laterally the view really is wider than the field at these sizes, and
+            // there the only correct position is dead centre.
             position.x = limitX <= 0f ? 0f : Mathf.Clamp(position.x, -limitX, limitX);
 
             return position;

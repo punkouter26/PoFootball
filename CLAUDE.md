@@ -46,7 +46,7 @@ Unity ML-Agents self-play.
 - Overwrite `.onnx` in place to preserve `.meta` GUIDs.
 - Headless: `--env --no-graphics` + explicit `--base-port` (envs take consecutive ports; collisions hang). 4–8 envs, leaving cores for torch. `--num-envs` changes how experience is batched — record it.
 - Telemetry over HTTP *and* `StatsRecorder` (`Agent_Telemetry`, a component on `/Systems` in `SCN_TRAIN_FOOTBALL` only). Kill TensorBoard before `--force`: it holds Windows handles and the wipe silently no-ops. Clean up trainer → envs → TensorBoard.
-- **Judge self-play on ELO, not mean reward.**
+- **Judge self-play on ELO, not mean reward** — *when self-play is actually running*. It is not, from base05 onward: ML-Agents self-play does not model two different behaviors playing each other, every behavior here carries exactly one team id, and the `self_play` block was removed from the anchor. `Self-play/ELO` does not exist for base05/base06; judge those on `Call/Entropy` and the play mix. See [docs/TRAINING_NOTES_base05.md](docs/TRAINING_NOTES_base05.md).
 
 ---
 
@@ -56,16 +56,29 @@ Unity ML-Agents self-play.
 
 ```
 Assets/Agents/                 promoted brains: <Name>_v<NN>/{*.onnx, *_Character.asset, MANIFEST.md}
+                               — currently EMPTY but for MANIFEST_TEMPLATE.md; see below
 Assets/Scripts/Agent/          Agent_*.cs      — Agent subclasses, action application
 Assets/Scripts/Sensor/         Sensor_*.cs     — observation collection
 Assets/Scripts/Reward/         Reward_*.cs     — reward terms
 Assets/Scripts/Systems/        Systems_*.cs    — referee, game flow, UI (no ML-Agents dependency)
 Assets/Scripts/Systems/View/   Systems_*.cs    — UI Toolkit screens, audio, shape presentation
-Assets/Scenes/                 SCN_*.unity, SCN_TRAIN_*.unity
-Assets/Resources/              PoFootballPanelSettings, PoFootballRoleShapes
-Builds/<Name>Env/              headless training envs (git-ignored)
+Assets/Scenes/                 SCN_*.unity, SCN_TRAIN_*.unity — these three only
+Assets/Resources/              PoFootballPanelSettings, PoFootballRoleShapes, M_PoFootball*.mat
+Builds/<Name>Env/              headless training envs (git-ignored) — FootballEnv only
 Config/<Name><Phase><NN>.yaml  trainer configs, 1:1 with run-id <name>_<phase><nn>
+Config/archive/                configs for superseded contracts; they will NOT run
+results/<run-id>/MANIFEST.md   one per run — records --num-envs, which is part of the run's identity
 ```
+
+**No brain is currently promoted.** `Assets/Agents/Football_v01` was deleted: its
+four `.onnx` files came from the four-behavior base02 contract and are unloadable
+against the six-behavior contract, and the 44 `m_Model` references to them in
+`SCN_GAME` and `SCN_TRAIN_FOOTBALL` were already dead — `Agent_FootballPlayer`
+assigns `behaviorParameters.Model` from `Agent_BrainRegistry` at `Awake`,
+overwriting whatever the scene serialized. There is also no
+`Resources/PoFootballBrains.asset`, so `ModelFor` returns null and **every player
+runs `Heuristic`**. That is a supported, playable state, not a bug — but it means
+nothing you watch right now is a trained policy.
 
 **Scenes.** `SCN_MENU` (front end) → `SCN_GAME` (a scored game) and
 `SCN_TRAIN_FOOTBALL` (the trainer's endless single plays). All three share one
@@ -100,17 +113,17 @@ different dynamics than it was fitted against.
 .venv\Scripts\Activate.ps1
 
 # In-editor smoke test: start the trainer, then press Play.
-mlagents-learn Config\FootballBase04.yaml --run-id=football_base04
+mlagents-learn Config\FootballBase06.yaml --run-id=football_base06
 
 # Headless sweep — envs take CONSECUTIVE ports from --base-port.
-mlagents-learn Config\FootballBase04.yaml --run-id=football_base04 `
+mlagents-learn Config\FootballBase06.yaml --run-id=football_base06 `
   --env=Builds\FootballEnv\PoFootball.exe --no-graphics `
   --base-port=5010 --num-envs=6
 
 tensorboard --logdir results
 ```
 
-`FootballBase04.yaml` carries **six** behaviors. The quarterback has its own brain
+`FootballBase06.yaml` (the current config) carries **six** behaviors. The quarterback has its own brain
 — it is the only one with discrete actions, and while it shared `OffenseSkill`
 with the backs and receivers its play-call gradient was diluted five to one and
 its entropy bonus could not be raised without injecting noise into four other
@@ -137,20 +150,24 @@ hand:
 
 # promote — refuses unless every brain's observation and action shapes match,
 # then writes MANIFEST.md and overwrites in place to preserve .meta GUIDs
-.venv\Scripts\python.exe Tools\promote_brain.py --run football_base04 `
-  --version 02 --num-envs 6
+.venv\Scripts\python.exe Tools\promote_brain.py --run football_base06 `
+  --version 01 --num-envs 6
 
 # reclaim disk: keeps the final and peak-ELO checkpoint per brain, never events
 .venv\Scripts\python.exe Tools\prune_results.py --apply
+
+# watch a live run's play-call entropy; exits nonzero the moment it collapses
+.venv\Scripts\python.exe Tools\watch_entropy.py --run football_base06
 ```
 
 The gate reads every expected value out of `Sensor_FootballState.cs`,
 `Agent_ActionContract.cs`, `Systems_RoleTable.cs` and the training scene, so it
-cannot drift from the contract it guards. `Assets/Agents/Football_v01` is the
-reason it exists: those four brains came from `football_base02` at ~500k steps
-against a contract that had since changed, the shipped `OffenseSkill.onnx` had no
-discrete output at all, and the resulting "quarterback calls the same play every
-down" was diagnosed as a collapsed policy for a long time.
+cannot drift from the contract it guards. The deleted `Assets/Agents/Football_v01`
+is the reason it exists: those four brains came from `football_base02` at ~500k
+steps against a contract that had since changed, the shipped `OffenseSkill.onnx`
+had no discrete output at all, and the resulting "quarterback calls the same play
+every down" was diagnosed as a collapsed policy for a long time. Its provenance is
+recorded in [results/football_base02/MANIFEST.md](results/football_base02/MANIFEST.md).
 
 ---
 

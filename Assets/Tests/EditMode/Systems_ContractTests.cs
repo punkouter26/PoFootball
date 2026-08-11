@@ -29,7 +29,15 @@ namespace PoFootball.Tests
     /// </summary>
     public sealed class Systems_ContractTests
     {
-        private const string CONFIG_FILE_NAME = "FootballBase04.yaml";
+        /// <summary>
+        /// The CURRENT anchor config. This said FootballBase04.yaml long after that
+        /// file moved to Config/archive/, and every test that reads it had been
+        /// failing on "config not found" ever since — which is to say the four
+        /// guards standing between the trainer config and the code contract were
+        /// dead, silently, in exactly the way the class note above describes.
+        /// Point it at whatever Config/ actually holds when the anchor moves.
+        /// </summary>
+        private const string CONFIG_FILE_NAME = "FootballBase06.yaml";
 
         /// <summary>
         /// The undershoot case, which the existing size test cannot see: the caller
@@ -243,6 +251,69 @@ namespace PoFootball.Tests
                 $"time_horizon must be {Systems_PlayModel.MAX_DECISIONS} to span a full play "
                 + $"({Systems_PlayModel.MAX_PHYSICS_TICKS} ticks at DecisionPeriod "
                 + $"{Systems_SimConstants.DECISION_PERIOD})");
+        }
+
+        /// <summary>
+        /// The dropback has to fit inside the throw window, and inside the play.
+        ///
+        /// These are three independent constants that only mean anything relative to
+        /// each other. If DROPBACK_TICKS ever reached THROW_WINDOW_TICKS the
+        /// quarterback would be forbidden from throwing on the exact tick it was
+        /// first allowed to decide, and every pass call would silently become a
+        /// scramble — a dead branch of the action space that nothing would report.
+        /// </summary>
+        [Test]
+        public void Dropback_EndsWellInsideTheThrowWindow()
+        {
+            Assert.That(
+                Systems_SimConstants.DROPBACK_TICKS,
+                Is.LessThan(Systems_SimConstants.THROW_WINDOW_TICKS),
+                "the call must latch before the throw window shuts, or Pass is unreachable");
+
+            Assert.That(
+                Systems_SimConstants.DROPBACK_TICKS,
+                Is.LessThan(Systems_PlayModel.MAX_PHYSICS_TICKS),
+                "the call must latch before the play is force-ended");
+
+            // A call latched on the very first decision step is the behaviour the
+            // dropback exists to replace, so the window has to be at least one
+            // decision long or nothing has changed.
+            Assert.That(
+                Systems_SimConstants.DROPBACK_TICKS,
+                Is.GreaterThanOrEqualTo(Systems_SimConstants.DECISION_PERIOD),
+                "a dropback shorter than one decision period never defers anything");
+        }
+
+        /// <summary>
+        /// The ball's fake vertical axis must return to the turf on its own.
+        ///
+        /// Height is integrated, not interpolated over a known flight length, so a
+        /// non-positive gravity would leave a thrown ball climbing forever and the
+        /// shadow pinned at its smallest for the rest of the game.
+        /// </summary>
+        [Test]
+        public void PassArc_FallsBackToTheGround()
+        {
+            Assert.That(Systems_SimConstants.PASS_GRAVITY, Is.GreaterThan(0f));
+            Assert.That(Systems_SimConstants.PASS_LOFT_RATIO, Is.GreaterThan(0f));
+
+            Systems_BallModel ball = new Systems_BallModel();
+            ball.Throw(0, Vector2.zero, new Vector2(0f, Systems_SimConstants.PASS_SPEED_MAX));
+
+            Assert.That(ball.Height, Is.EqualTo(0f), "a ball leaves the hand at ground level");
+
+            float peak = 0f;
+            for (int tick = 0; tick < Systems_SimConstants.MAX_FLIGHT_TICKS; tick++)
+            {
+                ball.AdvanceFlight(Time.fixedDeltaTime);
+                peak = Mathf.Max(peak, ball.Height);
+            }
+
+            Assert.That(peak, Is.GreaterThan(1f), "a pass has to clear the players it passes over");
+            Assert.That(
+                ball.Height, Is.EqualTo(0f),
+                "the ball must be back on the ground by MAX_FLIGHT_TICKS, when the "
+                + "pass is ruled incomplete");
         }
 
         private static string ReadTrainerConfig()

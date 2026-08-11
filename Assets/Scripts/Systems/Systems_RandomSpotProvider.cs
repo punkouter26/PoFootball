@@ -32,6 +32,18 @@ namespace PoFootball.Systems
         /// </summary>
         public bool HasNextPlay => true;
 
+        /// <summary>
+        /// Zero, and it must stay zero. A dead-ball pause is wall-clock a trainer
+        /// spends producing no experience, multiplied by 4-8 environments and by
+        /// time_scale 20. It also changes nothing a policy observes, so paying for
+        /// it here would be pure loss.
+        ///
+        /// At zero the director ends the episode and begins the next one in the same
+        /// FixedTick, exactly as it did before the pause existed — so a run started
+        /// either side of this change draws the identical sequence of episodes.
+        /// </summary>
+        public int DeadBallTicks => 0;
+
         public float NextLineOfScrimmageY()
         {
             return _rng.NextFloat(Systems_FieldModel.LOS_MIN_Y, Systems_FieldModel.LOS_MAX_Y);

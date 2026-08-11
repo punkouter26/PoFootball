@@ -1,5 +1,6 @@
 using PoFootball.Models;
 using UnityEngine;
+using UnityEngine.Serialization;
 
 namespace PoFootball.Views
 {
@@ -27,9 +28,27 @@ namespace PoFootball.Views
         [SerializeField] private Sprite _pentagon;
         [SerializeField] private Sprite _hexagon;
 
+        /// <summary>
+        /// A tint per COMPETING TEAM, not per side of the ball.
+        ///
+        /// These were `_offenseColor` and `_defenseColor` and were painted from
+        /// Systems_TeamSide, which is a property of a body: slot 8 is the
+        /// quarterback and is always on the offense, so blue was permanently the
+        /// offense and red permanently the defense. A viewer watching a turnover on
+        /// downs saw the possession indicator move and nothing else change, because
+        /// the same eleven bodies play offense for both teams and the field mirrors
+        /// underneath them (see Systems_TeamId).
+        ///
+        /// Painting from Systems_TeamId instead means the offense unit wears the
+        /// colour of whoever actually has the ball. Nothing about the simulation
+        /// moves — colour is not observed, so no policy can tell the difference.
+        /// </summary>
         [Header("Team tints")]
-        [SerializeField] private Color _offenseColor = new Color(0.204f, 0.545f, 0.937f, 1f);
-        [SerializeField] private Color _defenseColor = new Color(0.922f, 0.365f, 0.298f, 1f);
+        [FormerlySerializedAs("_offenseColor")]
+        [SerializeField] private Color _homeColor = new Color(0.204f, 0.545f, 0.937f, 1f);
+
+        [FormerlySerializedAs("_defenseColor")]
+        [SerializeField] private Color _awayColor = new Color(0.922f, 0.365f, 0.298f, 1f);
 
         /// <summary>
         /// The carrier highlight is NOT here. Agent_FootballPlayer owns it, because
@@ -38,9 +57,22 @@ namespace PoFootball.Views
         /// asset from there would invert the assembly dependency. The two colours
         /// only have to stay distinguishable, not co-located.
         /// </summary>
+        public Color ColorOf(Systems_TeamId team)
+        {
+            return team == Systems_TeamId.Home ? _homeColor : _awayColor;
+        }
+
+        /// <summary>
+        /// The pre-kickoff paint, used before any possession exists and in any scene
+        /// with no scoreboard in the container at all. Offense reads as Home so the
+        /// field looks exactly as it did before possession drove the tint.
+        /// </summary>
         public Color ColorOf(Systems_TeamSide side)
         {
-            return side == Systems_TeamSide.Offense ? _offenseColor : _defenseColor;
+            return ColorOf(
+                side == Systems_TeamSide.Offense
+                    ? Systems_TeamId.Home
+                    : Systems_TeamId.Away);
         }
 
         /// <summary>

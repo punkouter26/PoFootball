@@ -128,18 +128,6 @@ namespace PoFootball.Views
                 .StartingIn((long)(Systems_UiTheme.TRANSITION_SECONDS * 1000f));
         }
 
-        public void SetVisible(bool visible)
-        {
-            if (visible)
-            {
-                Show();
-            }
-            else
-            {
-                Hide();
-            }
-        }
-
         /// <summary>
         /// A pending auto-hide from the previous play would otherwise fire in the
         /// middle of the next one, and a pending finish-hide would blank an overlay

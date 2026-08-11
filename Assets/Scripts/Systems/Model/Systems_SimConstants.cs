@@ -47,9 +47,35 @@ namespace PoFootball.Models
         /// top speeds in Systems_RoleTable were unreachable, a receiver and a
         /// guard were dynamically identical, and the MAX_BODY_SPEED guard could
         /// never bind. TopSpeedOf was live only in observation normalization.
+        ///
+        /// IT ALSO SETS ACCELERATION, AND THAT IS WHY IT MOVED. Under linear drag
+        /// the equation of motion is v' = d * (v_top - v), so damping is the whole
+        /// of the acceleration curve: initial acceleration is d * v_top and the
+        /// speed-up time constant is exactly 1 / d.
+        ///
+        /// At the old 1.5 a receiver left the line at 1.5 * 9.6 = 14.4 m/s², which
+        /// is about 1.5 g — roughly double what a human sprinter produces — and hit
+        /// 63% of top speed in 0.67 s and 95% in 2 s. Every player therefore
+        /// snapped to full speed almost on the snap, which is what made the game
+        /// read as fast-forward however sane the top speeds looked on paper.
+        ///
+        /// At 0.8 the same receiver leaves at 7.7 m/s² (0.78 g, which is what
+        /// sprint-start force plates actually measure) with a 1.25 s time constant,
+        /// so it takes about 3.7 s and 25 m to be genuinely at top speed — a
+        /// realistic build-up, and the reason a linebacker now has time to close.
+        ///
+        /// Drive force is derived from this, so lowering it lowers every role's
+        /// applied force by the same factor and no role's top speed changes.
         /// </summary>
-        public const float LINEAR_DAMPING = 1.5f;
+        public const float LINEAR_DAMPING = 0.8f;
 
+        /// <summary>
+        /// Rotational damping. Same relationship as LINEAR_DAMPING: the turn-rate
+        /// time constant is 1 / this, so 6 means a player reaches its terminal
+        /// turn rate in about 0.17 s. Left alone — the unrealistic part of turning
+        /// was the terminal rate itself, not how quickly it was reached, and that
+        /// is Systems_RoleTable.TurnRateOf.
+        /// </summary>
         public const float ANGULAR_DAMPING = 6f;
 
         /// <summary>Collider radius. Also the lever arm in the moment of inertia.</summary>
@@ -57,9 +83,15 @@ namespace PoFootball.Models
 
         /// <summary>
         /// Hard velocity ceiling — the pileup-explosion guard (criterion #13).
-        /// Set above the fastest role's 9.0 m/s so ordinary running never touches
+        /// Set above the fastest role's 9.3 m/s so ordinary running never touches
         /// it and a collision may legitimately overshoot; it exists to catch the
         /// solver blowing a stack of bodies apart, not to cap sprinting.
+        ///
+        /// It matters more than it did. Halving LINEAR_DAMPING halves how quickly
+        /// the solver bleeds off the velocity a bad contact injects, so a body
+        /// kicked out of a pileup now coasts for over a second rather than a third
+        /// of one. The ceiling is what stops that becoming a player leaving the
+        /// stadium.
         /// </summary>
         public const float MAX_BODY_SPEED = 12f;
 
@@ -169,6 +201,141 @@ namespace PoFootball.Models
         /// this it must run, which stops it from circling forever behind the line.
         /// </summary>
         public const int THROW_WINDOW_TICKS = 250;
+
+        // --- The ball's fake third axis (presentation only) ------------------
+        /// <summary>
+        /// Vertical launch speed as a fraction of the throw's horizontal speed.
+        ///
+        /// 0.32 of a PASS_SPEED_MAX throw is roughly 8 m/s up, which peaks around
+        /// 3.3 m and hangs for about 1.6 s — a ball that clears twenty-two shapes
+        /// convincingly without floating like a punt.
+        ///
+        /// This drives <see cref="Systems_BallModel.Height"/>, which nothing in the
+        /// simulation reads. Changing it cannot affect a trained policy.
+        /// </summary>
+        public const float PASS_LOFT_RATIO = 0.32f;
+
+        /// <summary>
+        /// Gravity for that fake axis, m/s². Earth, matching CLAUDE.md section 2 —
+        /// the arc should fall at the rate everything else in the world would.
+        ///
+        /// Deliberately a separate constant from Physics2D.gravity, which is zero
+        /// here: the players are a top-down plane with no gravity at all, and
+        /// borrowing the engine's value would tie a cosmetic arc to a physics
+        /// setting that every brain was fitted against.
+        /// </summary>
+        public const float PASS_GRAVITY = 9.81f;
+
+        /// <summary>
+        /// Ticks after the snap before the quarterback's play call is allowed to
+        /// latch — the dropback.
+        ///
+        /// WHY THIS EXISTS. The call used to latch on the FIRST decision step after
+        /// the snap, which meant the quarterback committed before it had moved,
+        /// before the rush arrived, and before any receiver had run a step. It was
+        /// choosing off the pre-snap alignment alone. A quarterback with no
+        /// information to separate a good pass from a good handoff has little reason
+        /// to prefer either, and collapsing onto whichever one paid last is cheap —
+        /// which is what football_base05 did on the halfback handoff, 99% of downs.
+        ///
+        /// 40 ticks is 0.8 s at the pinned 50 Hz, and eight decision steps at
+        /// DECISION_PERIOD 5, so the policy gets several observations of the pocket
+        /// collapsing before it has to commit. It is well inside THROW_WINDOW_TICKS.
+        ///
+        /// This changes WHEN the call is read, not the shape of anything. The
+        /// observation vector and the action spec are untouched, so the promotion
+        /// gate still passes — but a brain fitted before this change latched on a
+        /// different tick and is not interchangeable with one fitted after it, which
+        /// is why Agent_ActionContract.CONTRACT_REVISION moves with it.
+        /// </summary>
+        public const int DROPBACK_TICKS = 40;
+
+        /// <summary>
+        /// How far behind the line of scrimmage the quarterback retreats during
+        /// DROPBACK_TICKS, in yards. Seven is a conventional pass-set depth: far
+        /// enough to see over the line, near enough that the tackles can still wall
+        /// off the edge before the quarterback is reached.
+        ///
+        /// Read by the heuristic only. A trained policy is free to drop back further,
+        /// less, or not at all — this is where the scripted quarterback goes, not a
+        /// constraint on the learned one.
+        /// </summary>
+        public const float DROPBACK_DEPTH_YARDS = 7f;
+
+        /// <summary>
+        /// How far goalside of a rusher a blocker tries to stand, in metres.
+        ///
+        /// WHY POSITION AND NOT FORCE. A blocker used to drive at the rusher's
+        /// current position, which means arriving where the rusher just was and
+        /// shoving from behind. Standing on the line BETWEEN the rusher and the ball
+        /// cuts the angle instead, and an offensive line that cuts angles buys the
+        /// quarterback the time a dropback needs.
+        ///
+        /// The alternative — making linemen heavier or stronger — would change the
+        /// dynamics every brain is fitted against (CLAUDE.md section 2) to fix
+        /// something that is really a targeting problem. Offensive and defensive
+        /// linemen keep identical mass and identical top speed.
+        ///
+        /// 1.2 m is just over two body radii (PLAYER_RADIUS 0.5), so the blocker
+        /// occupies the rusher's path rather than overlapping him.
+        /// </summary>
+        public const float BLOCK_CUSHION = 1.2f;
+
+        /// <summary>
+        /// How far off the middle of the field the backs slide while the quarterback
+        /// is dropping back, in metres.
+        ///
+        /// The formation stacks the quarterback, fullback and halfback on x = 0 at
+        /// -2.5, -4.5 and -6.5, and DROPBACK_DEPTH_YARDS retreats the quarterback
+        /// straight through both of them. They clear the lane instead of being run
+        /// over, which is also what a back actually does on a pass: release to the
+        /// flat rather than stand in the pocket.
+        ///
+        /// 3 m is six body radii off centre — clear of the quarterback, still inside
+        /// HANDOFF_RADIUS of the lane it will cross if the call comes back a run.
+        /// </summary>
+        public const float POCKET_LANE_X = 3.0f;
+
+        // --- Coverage (heuristic defense) ------------------------------------
+        /// <summary>
+        /// How far goalside of its assigned receiver a cover defender tries to
+        /// stand, in metres.
+        ///
+        /// Goalside, not on top of: a defender occupying the receiver's own square
+        /// metre is beaten by whichever of the two moves first, because it has to
+        /// react and the receiver does not. Standing between the receiver and the
+        /// end zone means the defender is already where the play has to go.
+        ///
+        /// 1.5 m is three body radii, so the two shapes read as covered rather than
+        /// overlapping, and it is inside CATCH_RADIUS * 1.25 — close enough that the
+        /// defender genuinely contests the ball when it arrives.
+        /// </summary>
+        public const float COVERAGE_CUSHION = 1.5f;
+
+        /// <summary>
+        /// How far beyond the line of scrimmage a linebacker sets up before the ball
+        /// declares, in yards.
+        ///
+        /// Linebackers are the one group with no man assignment and no pass rush, so
+        /// without a landmark they simply joined the rush — which is what turned the
+        /// whole defense into eleven bodies converging on the quarterback and left
+        /// every receiver running free. Five yards is downhill enough to meet a run
+        /// at the line and deep enough to be in the way of a short throw.
+        /// </summary>
+        public const float LINEBACKER_DROP_YARDS = 5f;
+
+        /// <summary>
+        /// How far beyond the line of scrimmage the free safety plays, in yards.
+        /// Deep enough that nothing gets behind it, which is the entire job.
+        /// </summary>
+        public const float SAFETY_DEPTH_YARDS = 14f;
+
+        /// <summary>
+        /// How much of the ball's lateral position a zone defender leans toward,
+        /// as a fraction. Leaning, not tracking: a linebacker that mirrors the
+        /// quarterback step for step vacates the middle it is standing in.
+        /// </summary>
+        public const float ZONE_BALL_LEAN = 0.35f;
 
         // --- Passing rewards -------------------------------------------------
         /// <summary>

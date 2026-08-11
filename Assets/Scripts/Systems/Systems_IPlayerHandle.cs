@@ -59,6 +59,25 @@ namespace PoFootball.Systems
         void ResetTo(Vector2 position);
 
         void SetCarrier(bool isCarrier);
+
+        /// <summary>
+        /// Repaints this body's base team colour, and applies it immediately unless
+        /// the player is currently carrying (the white carrier highlight wins until
+        /// possession leaves it).
+        ///
+        /// It has to go through the handle rather than the view writing
+        /// SpriteRenderer.color directly, for the same reason
+        /// <see cref="SetCarrier"/> lives here: the agent caches its base colour and
+        /// restores that cache every time it stops carrying. A view that painted the
+        /// renderer behind the agent's back would be overwritten by the next tackle,
+        /// and the team colours would drain off the field one player at a time —
+        /// which is exactly the failure Systems_RoleShapeApplier's execution order
+        /// was set to avoid.
+        ///
+        /// Never called in Training: Systems_RoleShapeApplier is only in SCN_GAME,
+        /// and a training scene has no possession to follow.
+        /// </summary>
+        void SetTeamColor(Color color);
     }
 
     /// <summary>

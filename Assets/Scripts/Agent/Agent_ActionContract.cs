@@ -33,8 +33,34 @@ namespace PoFootball.Agents
         /// Revision 1 is the first stamped contract: 32 vector observations, 2
         /// continuous actions, and 4 continuous + 2 discrete branches for the
         /// quarterback. No promoted brain matches it yet.
+        ///
+        /// Revision 2 keeps every shape identical and moves WHEN the play call is
+        /// read: it latches after Systems_SimConstants.DROPBACK_TICKS rather than on
+        /// the first decision step after the snap. Shapes alone would let a revision
+        /// 1 brain load here without complaint, and it would then be committing to a
+        /// call eight decision steps earlier than it was fitted to — a silent
+        /// behavioural mismatch of exactly the kind this stamp exists to catch. Runs
+        /// up to and including football_base06 are revision 1.
+        ///
+        /// Revision 3 also keeps every shape identical and changes the DYNAMICS: the
+        /// players were rebuilt for realistic acceleration. Systems_SimConstants
+        /// .LINEAR_DAMPING fell 1.5 -> 0.8, which nearly doubles the time constant on
+        /// every body in the game, and Systems_RoleTable trimmed both the top speeds
+        /// and the turn rates.
+        ///
+        /// That is a contract change for two separate reasons, and either alone would
+        /// justify the bump. A policy is a function fitted against a specific set of
+        /// dynamics, and these are not those dynamics — CLAUDE.md section 2 is
+        /// explicit that Systems_SimConstants is frozen for the life of a policy.
+        /// Worse, TopSpeedOf is the divisor Sensor_FootballState uses to normalize
+        /// the velocity observation, so a brain fitted at the old speeds would read
+        /// every velocity on a different scale than it was trained on while the
+        /// vector remained exactly 32 floats wide — invisible to any shape check.
+        ///
+        /// Nothing was invalidated in practice: no brain is promoted, which is
+        /// precisely why this was the moment to fix the physics.
         /// </summary>
-        public const int CONTRACT_REVISION = 1;
+        public const int CONTRACT_REVISION = 3;
 
         /// <summary>Continuous outputs every brain has: drive and steer.</summary>
         public const int BASE_CONTINUOUS_ACTIONS = 2;

@@ -53,6 +53,10 @@ namespace PoFootball.Tests
 
             public void SetCarrier(bool isCarrier) => IsCarrier = isCarrier;
 
+            public Color TeamColor { get; private set; } = Color.white;
+
+            public void SetTeamColor(Color color) => TeamColor = color;
+
             public void ApplyTerminalReward(
                 Systems_PlayOutcome outcome, float netYards, bool passCompleted)
             {
@@ -93,6 +97,10 @@ namespace PoFootball.Tests
             public void ResetTo(Vector2 position) => Position = position;
 
             public void SetCarrier(bool isCarrier) => IsCarrier = isCarrier;
+
+            public void SetTeamColor(Color color)
+            {
+            }
         }
 
         private static Systems_PlayerRegistry FillRegistry(out StubAgent[] agents)

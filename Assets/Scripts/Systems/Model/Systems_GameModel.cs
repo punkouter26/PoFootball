@@ -60,8 +60,6 @@ namespace PoFootball.Models
         /// </summary>
         public bool IsClockRunning { get; private set; } = true;
 
-        public bool IsFinal => Phase == Systems_GamePhase.Final;
-
         /// <summary>Yards from the line of scrimmage to the goal line being attacked.</summary>
         public float YardsToGoal =>
             (Systems_FieldModel.ATTACKING_GOAL_LINE_Y - LineOfScrimmageY) / Systems_FieldModel.YARD;
@@ -73,8 +71,6 @@ namespace PoFootball.Models
         {
             return team == Systems_TeamId.Home ? HomeScore : AwayScore;
         }
-
-        public int LeaderMargin => HomeScore - AwayScore;
 
         // --- Mutators. Systems_GameFlowSystem only. --------------------------
 

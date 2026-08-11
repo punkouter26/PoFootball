@@ -85,6 +85,15 @@ namespace PoFootball.Models
         /// Target terminal speed in m/s — and, because DriveForceOf is derived from
         /// it, the speed the body actually reaches. Linemen are slowest, receivers
         /// and corners fastest, with the heavier skill positions in between.
+        ///
+        /// These are real in-play maxima, not sprint records. Player tracking puts
+        /// the fastest receivers and corners a shade over 9 m/s (about 21 mph) on
+        /// the handful of plays a game where they are genuinely running free, and
+        /// linemen around 6 m/s. They are a CEILING, not a cruising speed: under
+        /// the acceleration curve set by Systems_SimConstants.LINEAR_DAMPING it
+        /// takes roughly 25 m to reach one, so most plays never touch these numbers
+        /// at all — which is the point, and is what the previous pairing of these
+        /// speeds with a 0.67 s time constant destroyed.
         /// </summary>
         public static float TopSpeedOf(Systems_PlayerRole role)
         {
@@ -92,20 +101,20 @@ namespace PoFootball.Models
             {
                 case Systems_PlayerRole.OffensiveLine:
                 case Systems_PlayerRole.DefensiveLine:
-                    return 6.5f;
+                    return 6.2f;
                 case Systems_PlayerRole.Fullback:
                 case Systems_PlayerRole.TightEnd:
-                    return 7.5f;
+                    return 7.3f;
                 case Systems_PlayerRole.Quarterback:
-                    return 8.0f;
+                    return 7.6f;
                 case Systems_PlayerRole.Linebacker:
-                    return 8.2f;
+                    return 8.0f;
                 case Systems_PlayerRole.Safety:
-                    return 9.0f;
+                    return 8.7f;
                 case Systems_PlayerRole.RunningBack:
-                    return 9.2f;
+                    return 8.9f;
                 default:
-                    return 9.6f;
+                    return 9.3f;
             }
         }
 
@@ -137,20 +146,36 @@ namespace PoFootball.Models
             }
         }
 
-        /// <summary>Target terminal turn rate in rad/s. SteerTorqueOf is derived from it.</summary>
+        /// <summary>
+        /// Target terminal turn rate in rad/s. SteerTorqueOf is derived from it.
+        ///
+        /// BOUNDED BY GRIP, NOT BY THE BODY. A player running at v and turning at
+        /// omega is pulling a lateral acceleration of v * omega, and that has to
+        /// come from friction against the turf. A cutting athlete manages somewhere
+        /// around 8-10 m/s², call it one g. At the old 3.5 rad/s a receiver holding
+        /// 9.6 m/s was turning at 34 m/s² — three and a half g, sustained, which no
+        /// surface on earth supplies. That is why players looked like they were
+        /// swivelling rather than running: the turn was free.
+        ///
+        /// At 2.6 the same receiver at full speed pulls 24 m/s², which is still
+        /// generous — but the model has no speed dependence, and pricing the turn
+        /// for full speed would leave a stationary player unable to pivot to face
+        /// anything. These are set for a player at cruising speed and deliberately
+        /// left flattering at the top end.
+        /// </summary>
         public static float TurnRateOf(Systems_PlayerRole role)
         {
             switch (role)
             {
                 case Systems_PlayerRole.OffensiveLine:
                 case Systems_PlayerRole.DefensiveLine:
-                    return 2.4f;
+                    return 1.9f;
                 case Systems_PlayerRole.Fullback:
                 case Systems_PlayerRole.TightEnd:
                 case Systems_PlayerRole.Linebacker:
-                    return 2.9f;
+                    return 2.2f;
                 default:
-                    return 3.5f;
+                    return 2.6f;
             }
         }
 
@@ -164,9 +189,14 @@ namespace PoFootball.Models
         ///
         /// This replaces a single hand-tuned DRIVE_FORCE = 900 N shared by every
         /// role at a shared mass of 100 kg, which pinned every player — guard and
-        /// receiver alike — at 900 / (100 * 1.5) = 6.0 m/s. The role top speeds
-        /// were therefore unreachable and existed only as an observation
-        /// normalizer.
+        /// receiver alike — at 900 / (100 * d) m/s. The role top speeds were
+        /// therefore unreachable and existed only as an observation normalizer.
+        ///
+        /// Because d appears on both sides of the physics — it sets terminal
+        /// velocity here and the acceleration curve in the integrator — lowering
+        /// LINEAR_DAMPING for realistic acceleration lowers every applied force by
+        /// the same factor and leaves every top speed exactly where the table says.
+        /// That is the whole reason the force is derived rather than typed in.
         /// </summary>
         public static float DriveForceOf(Systems_PlayerRole role)
         {
@@ -198,20 +228,6 @@ namespace PoFootball.Models
         public static bool HasQuarterbackActions(Systems_BrainGroup group)
         {
             return group == Systems_BrainGroup.Quarterback;
-        }
-
-        /// <summary>Which role a handoff call targets, or None if the call is not a handoff.</summary>
-        public static Systems_PlayerRole HandoffTargetOf(Systems_PlayCall call)
-        {
-            switch (call)
-            {
-                case Systems_PlayCall.HandoffFullback:
-                    return Systems_PlayerRole.Fullback;
-                case Systems_PlayCall.HandoffHalfback:
-                    return Systems_PlayerRole.RunningBack;
-                default:
-                    return Systems_PlayerRole.Quarterback;
-            }
         }
     }
 }

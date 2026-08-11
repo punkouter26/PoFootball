@@ -62,10 +62,5 @@ namespace PoFootball.Systems
             NextYardsToGo = nextYardsToGo;
             ClockSecondsBurned = clockSecondsBurned;
         }
-
-        /// <summary>True when possession changed hands on this play.</summary>
-        public bool IsTurnover =>
-            Result == Systems_DownResult.Interception
-            || Result == Systems_DownResult.TurnoverOnDowns;
     }
 }
