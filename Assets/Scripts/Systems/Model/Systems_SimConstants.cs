@@ -16,8 +16,35 @@ namespace PoFootball.Models
     public static class Systems_SimConstants
     {
         // --- Tackle rule -----------------------------------------------------
-        /// <summary>Closing speed (m/s) at which a defender drops the carrier on impact.</summary>
-        public const float TACKLE_CLOSING_SPEED = 1.5f;
+        /// <summary>
+        /// Closing speed (m/s) at which a defender drops the carrier on impact.
+        ///
+        /// SCALED WITH LINEAR_DAMPING, BECAUSE IT IS A SPEED THRESHOLD AND DAMPING
+        /// SETS WHAT SPEEDS ARE REACHABLE. Dropping damping 1.5 -> 0.8 for realistic
+        /// acceleration nearly doubled the time constant, so a body pushing for a
+        /// fixed short window now reaches roughly 0.8/1.5 of the speed it used to —
+        /// the achieved speed over a short push scales about linearly with d. The
+        /// threshold was calibrated against the old regime, so leaving it at 1.5
+        /// silently raised the bar for every hit in the game.
+        ///
+        /// It was not a small effect. Measured at step 20,000 of an untrained run,
+        /// where the policy is near-random and the heuristic is not involved at all,
+        /// so the dynamics are the only variable:
+        ///
+        ///     run           TackleRate   TimeExpiredRate   LengthTicks
+        ///     base05          0.276          0.546            542
+        ///     base06          0.216          0.605            544
+        ///     base07 (d=0.8)  0.104          0.730            615
+        ///
+        /// Tackling more than halved and nearly three quarters of plays ran out the
+        /// 750-tick cap instead of ending in football. 1.5 * (0.8 / 1.5) = 0.8
+        /// restores the threshold to the same fraction of a reachable speed it
+        /// always represented.
+        ///
+        /// SUSTAINED_TACKLE_TICKS is deliberately left alone. Two knobs moved at
+        /// once is two knobs neither of which can be attributed afterwards.
+        /// </summary>
+        public const float TACKLE_CLOSING_SPEED = 0.8f;
 
         /// <summary>
         /// Consecutive physics ticks of contact that bring the carrier down

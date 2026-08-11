@@ -198,15 +198,27 @@ def inspect_onnx(path: Path) -> dict:
         if len(dims) == 2 and isinstance(dims[1], int):
             continuous = dims[1]
 
+    # Branch sizes live in an INITIALIZER called `discrete_act_size_vector`
+    # ([[5, 2]] for the quarterback). `discrete_action_output_shape` is an OUTPUT
+    # name, not an initializer name, and looking for it there never matched — so
+    # this always fell through to the mask-width fallback below, which reports the
+    # SUM of the branches. Comparing a sum against a list can never succeed, so
+    # every quarterback brain was refused with `[7] != [5, 2]` no matter how
+    # correct it was. A gate that cannot pass is as useless as one that cannot
+    # fail; it just fails in the safe direction.
     branches = []
+    branches_are_exact = False
+
     if "discrete_actions" in outputs:
         for initializer in graph.initializer:
-            if initializer.name.startswith("discrete_action_output_shape"):
+            if initializer.name == "discrete_act_size_vector":
                 branches = [int(v) for v in numpy_helper.to_array(initializer).flatten()]
+                branches_are_exact = True
                 break
+
         if not branches:
-            # Fall back to the action mask width, which is the sum of the
-            # branches — enough to detect a mismatch even if it cannot name it.
+            # Last resort: the action mask width is the sum of the branches.
+            # Flagged as inexact so validate() compares it as a sum.
             mask = inputs.get("action_masks")
             if mask and len(mask) == 2 and isinstance(mask[1], int):
                 branches = [mask[1]]
@@ -215,6 +227,7 @@ def inspect_onnx(path: Path) -> dict:
         "observation_widths": observation_widths,
         "continuous": continuous,
         "branches": branches,
+        "branches_are_exact": branches_are_exact,
         "has_discrete": "discrete_actions" in outputs,
     }
 
@@ -244,16 +257,26 @@ def validate(behavior: str, path: Path, contract: dict) -> list[str]:
             f"continuous actions {actual['continuous']} != expected {wanted_continuous}"
         )
 
+    wanted_branches = contract["quarterback_branches"]
+
     if is_quarterback:
         if not actual["has_discrete"]:
             problems.append(
                 "no discrete_actions output — this brain cannot call a play at all, "
                 "so every down decodes to whatever index 0 means"
             )
-        elif actual["branches"] != contract["quarterback_branches"]:
+        elif actual["branches_are_exact"]:
+            if actual["branches"] != wanted_branches:
+                problems.append(
+                    f"discrete branches {actual['branches']} != expected {wanted_branches}"
+                )
+        elif actual["branches"] != [sum(wanted_branches)]:
+            # Degraded comparison: only the total width could be read, so this
+            # catches a resized playbook but not two branches that swapped sizes.
             problems.append(
-                f"discrete branches {actual['branches']} "
-                f"!= expected {contract['quarterback_branches']}"
+                f"discrete branch total {actual['branches']} "
+                f"!= expected {[sum(wanted_branches)]} "
+                f"(exact sizes unreadable from this .onnx)"
             )
     elif actual["has_discrete"]:
         problems.append("has a discrete_actions output but this brain should have none")

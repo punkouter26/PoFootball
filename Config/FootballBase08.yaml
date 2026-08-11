@@ -1,0 +1,177 @@
+# PoFootball — the first run against CONTRACT_REVISION 3.
+#
+# Pairs 1:1 with run-id `football_base08` (UNITY_RULES §1).
+#   mlagents-learn Config/FootballBase08.yaml --run-id=football_base08
+#
+# ---------------------------------------------------------------------------
+# WHY THIS IS A NEW RUN AND NOT A CONTINUATION OF football_base06
+# ---------------------------------------------------------------------------
+# Every hyperparameter below is identical to FootballBase06.yaml. Nothing in
+# this file changed, and that is exactly the point: the ENVIRONMENT changed, so
+# the run-id has to move with it or two incomparable sets of experience end up
+# in one results directory.
+#
+# Agent_ActionContract.CONTRACT_REVISION moved 2 -> 3 because the body dynamics
+# were rebuilt for realistic acceleration:
+#
+#   Systems_SimConstants.LINEAR_DAMPING   1.5 -> 0.8
+#   Systems_RoleTable.TopSpeedOf          9.6 -> 9.3 m/s at the fastest role
+#   Systems_RoleTable.TurnRateOf          3.5 -> 2.6 rad/s at the fastest role
+#
+# Under linear drag the damping IS the acceleration curve — initial acceleration
+# is d * v_top and the time constant is 1/d — so this nearly doubles the time a
+# body takes to reach top speed, 0.67 s -> 1.25 s. Every checkpoint under
+# results/football_base06 was fitted against the old curve.
+#
+# And it is not only the dynamics. TopSpeedOf is the divisor
+# Sensor_FootballState normalizes the velocity observation by, so a base06
+# checkpoint resumed here would read every velocity on a different scale while
+# the observation vector stayed exactly 32 floats wide — a mismatch no shape
+# check can see. That is what CONTRACT_REVISION exists to catch, and it is why
+# --resume against base06 is not an option.
+#
+# The heuristic changed too: real man/zone coverage instead of eleven defenders
+# converging on the ball, and passes that lead the receiver rather than aiming
+# where it already was. A trained policy does not read the heuristic, but it
+# does change what the untrained opening rollouts look like, which is worth
+# knowing when reading the first hundred thousand steps.
+#
+#
+# ---------------------------------------------------------------------------
+# WHAT CHANGED SINCE football_base07
+# ---------------------------------------------------------------------------
+# base07 ran 20,000 quarterback steps and was stopped, because it showed that
+# revision 3 had broken tackling. Systems_SimConstants.TACKLE_CLOSING_SPEED is
+# an impact threshold in m/s, and revision 3 halved how quickly a body reaches
+# any given speed without rescaling it. At step 20,000 -- where the policy is
+# still near-random and Heuristic() is not called at all, so the dynamics are
+# the only variable between these runs:
+#
+#     run              TackleRate  TimeExpiredRate  LengthTicks  Call/Entropy
+#     football_base05    0.276         0.546           542          1.204
+#     football_base06    0.216         0.605           544          1.149
+#     football_base07    0.104         0.730           615          1.318
+#
+# Tackling more than halved and nearly three quarters of plays ran out the
+# 750-tick cap rather than ending in football. TACKLE_CLOSING_SPEED is now
+# 1.5 * (0.8 / 1.5) = 0.8 -- scaled by exactly the factor damping moved -- and
+# Agent_ActionContract.CONTRACT_REVISION is 4.
+#
+# The one number base07 got right is worth keeping in view: Call/Entropy 1.318
+# of a possible 1.609, the highest of the three at this step, with all four
+# calls between 0.23 and 0.28. Whatever else revision 3 did, it did not narrow
+# the playbook.
+#
+# ---------------------------------------------------------------------------
+# WHAT TO WATCH
+# ---------------------------------------------------------------------------
+# Self-play is still removed, so `Self-play/ELO` does not exist for this run.
+# Judge it on `Call/Entropy` and the play mix (CLAUDE.md): 1.609 is an even
+# split across four calls, and football_base05 collapsed to 0.10.
+#
+behaviors:
+  OffenseLine: &football_brain
+    trainer_type: ppo
+
+    hyperparameters:
+      batch_size: 2048
+      buffer_size: 20480          # 10x batch_size; PPO wants many batches per update
+      learning_rate: 3.0e-4
+      beta: 5.0e-3                # entropy bonus — keep exploration alive through self-play
+      epsilon: 0.2
+      lambd: 0.95
+      num_epoch: 3
+      learning_rate_schedule: constant   # self-play runs long; a linear decay to 0
+                                         # freezes the policy while opponents keep improving
+      beta_schedule: constant
+      epsilon_schedule: constant
+
+    network_settings:
+      normalize: false            # Sensor_FootballState already emits [-1, 1]; running
+                                  # normalization on top fights self-play because the
+                                  # input distribution shifts with the opponent.
+                                  # Systems_ContractTests asserts this stays off.
+      hidden_units: 512
+      num_layers: 2
+      vis_encode_type: simple
+
+    reward_signals:
+      extrinsic:
+        gamma: 0.99
+        strength: 1.0
+
+    keep_checkpoints: 20
+    # 500000 was too coarse to debug with. football_base05 collapsed between 2.1M
+    # and 3.1M steps and every checkpoint from before the collapse had already
+    # been pruned by the time it was noticed, so the diverse-playbook policy was
+    # unrecoverable. 100000 with keep_checkpoints 20 covers a 2M-step window.
+    checkpoint_interval: 100000
+    max_steps: 50000000
+
+    # A play is capped at 750 physics ticks and agents decide every 5th tick
+    # (Systems_PlayModel.MAX_DECISIONS = 150), so 150 keeps an entire play inside
+    # one horizon and lets credit for a touchdown reach back to the snap — and,
+    # now, back to the play call that set it up.
+    time_horizon: 150
+
+    summary_freq: 20000
+    threaded: false               # deterministic ordering (UNITY_RULES §2)
+
+  OffenseSkill:
+    <<: *football_brain
+
+  # The only brain with discrete actions, and the only one whose exploration
+  # problem is a DISCRETE one: five play calls of which four were never sampled
+  # by the end of base03.
+  #
+  # It gets four times the entropy bonus of the movement brains. That is safe
+  # here in a way it was not when this policy also drove four backs and
+  # receivers — beta applies to the whole action distribution, so raising it on
+  # the shared brain would have injected noise into five players' steering in
+  # order to keep one player's play call exploring. Splitting the brain is what
+  # makes this knob usable at all.
+  Quarterback:
+    <<: *football_brain
+    hyperparameters:
+      batch_size: 2048
+      buffer_size: 20480
+      learning_rate: 3.0e-4
+      beta: 5.0e-2
+      epsilon: 0.2
+      lambd: 0.95
+      num_epoch: 3
+      learning_rate_schedule: constant
+      beta_schedule: constant
+      epsilon_schedule: constant
+
+  DefenseLine:
+    <<: *football_brain
+
+  DefenseBox:
+    <<: *football_brain
+
+  DefenseSecondary:
+    <<: *football_brain
+
+env_settings:
+  # Set per-run on the command line, not here:
+  #   --env=Builds/FootballEnv/PoFootball.exe --no-graphics --base-port=5010 --num-envs=4
+  # Envs take CONSECUTIVE ports from --base-port; overlapping ranges hang the
+  # handshake with no error (UNITY_RULES §4).
+  #
+  # Record --num-envs in the run's MANIFEST.md — it changes how experience is
+  # batched, so two runs with this file and different --num-envs are not
+  # comparable. Tools/promote_brain.py writes it into the manifest for you.
+  seed: 1
+
+engine_settings:
+  time_scale: 20                  # physics stays at dt=0.02; this only speeds the clock
+  quality_level: 0
+  target_frame_rate: -1
+  capture_frame_rate: 60
+
+torch_settings:
+  device: cuda                    # RTX 2060 present; falls back to cpu if unavailable
+
+checkpoint_settings:
+  results_dir: results

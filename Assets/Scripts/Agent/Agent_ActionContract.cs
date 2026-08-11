@@ -59,8 +59,17 @@ namespace PoFootball.Agents
         ///
         /// Nothing was invalidated in practice: no brain is promoted, which is
         /// precisely why this was the moment to fix the physics.
+        ///
+        /// Revision 4 is revision 3 plus the tackle threshold that revision 3 should
+        /// have carried. TACKLE_CLOSING_SPEED is a speed, and revision 3 changed
+        /// what speeds are reachable without rescaling it — so run football_base07
+        /// measured a tackle rate less than half of the two runs before it and
+        /// nearly three quarters of plays timing out. See the constant for the
+        /// numbers. Checkpoints exist on disk under results/football_base07 fitted
+        /// against that, and they must not load here, which is the whole job of this
+        /// stamp.
         /// </summary>
-        public const int CONTRACT_REVISION = 3;
+        public const int CONTRACT_REVISION = 4;
 
         /// <summary>Continuous outputs every brain has: drive and steer.</summary>
         public const int BASE_CONTINUOUS_ACTIONS = 2;
