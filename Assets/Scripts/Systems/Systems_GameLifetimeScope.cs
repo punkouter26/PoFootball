@@ -16,15 +16,41 @@ namespace PoFootball.Systems
     /// Systems_IPlayerHandle — an interface this assembly owns — which lets the
     /// scope inject agents without PoFootball.Systems ever referencing
     /// PoFootball.Agents. The dependency direction stays intact.
+    ///
+    /// MODE. The same scene graph serves training and a played game; what differs
+    /// is what is in the container. In <see cref="Systems_SimMode.Training"/> the
+    /// scoreboard, the chains and the stats are simply never
+    /// registered, and the line of scrimmage comes from the same seeded RNG it
+    /// always did. Nothing a policy observes changes between the two, which is the
+    /// point — a brain trained in one is being evaluated on identical dynamics in
+    /// the other.
     /// </summary>
     [DefaultExecutionOrder(-5000)]
     public sealed class Systems_GameLifetimeScope : LifetimeScope
     {
         [SerializeField] private uint _episodeSeed = 1u;
 
+        [Tooltip(
+            "Training: endless random-spot plays for mlagents-learn. "
+            + "Game: downs, clock and a scoreboard.")]
+        [SerializeField] private Systems_SimMode _simMode = Systems_SimMode.Training;
+
+        [Tooltip(
+            "Stadium lights, shadows, post-processing, particles, the broadcast "
+            + "camera and the crowd. Off in Training and headless regardless of "
+            + "this setting; clear it to profile the simulation on its own.")]
+        [SerializeField] private bool _presentationEffects = true;
+
         protected override void Configure(IContainerBuilder builder)
         {
             Systems_EpisodeSeed.Set(_episodeSeed);
+
+            // Registered in both modes. Every presentation view injects it and
+            // switches itself off when it says no, which is why there is exactly
+            // one place that decides whether a graphics pass is allowed to cost
+            // a training run anything.
+            builder.RegisterInstance(
+                new Systems_PresentationBudget(_simMode, _presentationEffects));
 
             builder.Register<Systems_PlayModel>(Lifetime.Singleton);
             builder.Register<Systems_BallModel>(Lifetime.Singleton);
@@ -32,23 +58,73 @@ namespace PoFootball.Systems
             builder.Register<Systems_PlayerRegistry>(Lifetime.Singleton);
             builder.Register<Systems_BallSystem>(Lifetime.Singleton);
 
-            // Registration order is execution order for IFixedTickable. The
-            // director must run first so a deferred reset is consumed before the
-            // referee evaluates the new play.
-            builder.RegisterEntryPoint<Systems_EpisodeDirector>().AsSelf();
-            builder.RegisterEntryPoint<Systems_Referee>().AsSelf();
-            builder.RegisterEntryPoint<Systems_Telemetry>();
-
             MessagePipeOptions messagePipeOptions = builder.RegisterMessagePipe();
             builder.RegisterMessageBroker<Systems_PlaySnappedMessage>(messagePipeOptions);
             builder.RegisterMessageBroker<Systems_PlayEndedMessage>(messagePipeOptions);
             builder.RegisterMessageBroker<Systems_TackleMessage>(messagePipeOptions);
             builder.RegisterMessageBroker<Systems_ScoreMessage>(messagePipeOptions);
 
-            builder.RegisterBuildCallback(InjectPlayerHandles);
+            // Registered in both modes so a view can subscribe without caring which
+            // one it is in. In training nothing ever publishes them.
+            builder.RegisterMessageBroker<Systems_DownResolvedMessage>(messagePipeOptions);
+            builder.RegisterMessageBroker<Systems_GameOverMessage>(messagePipeOptions);
+
+            if (_simMode == Systems_SimMode.Game)
+            {
+                ConfigureGameLayer(builder);
+
+                // A played game has no episodes and no rewards to assign. The
+                // director calls the boundary either way; here it does nothing.
+                builder.Register<
+                    Systems_ITrainingEpisodeBoundary, Systems_NullEpisodeBoundary>(
+                    Lifetime.Singleton);
+            }
+            else
+            {
+                builder.Register<Systems_ISpotProvider, Systems_RandomSpotProvider>(
+                    Lifetime.Singleton);
+
+                builder.Register<
+                    Systems_ITrainingEpisodeBoundary, Systems_TrainingEpisodeBoundary>(
+                    Lifetime.Singleton);
+            }
+
+            // Registration order is execution order for IStartable and
+            // IFixedTickable. The director must tick first so a deferred reset is
+            // consumed before the referee evaluates the new play. The game layer is
+            // registered above it, so the scoreboard has kicked off before the
+            // director asks it where the first snap goes.
+            builder.RegisterEntryPoint<Systems_EpisodeDirector>().AsSelf();
+            builder.RegisterEntryPoint<Systems_Referee>().AsSelf();
+
+            builder.RegisterBuildCallback(InjectSceneBehaviours);
         }
 
-        private void InjectPlayerHandles(IObjectResolver container)
+        private static void ConfigureGameLayer(IContainerBuilder builder)
+        {
+            builder.Register<Systems_GameModel>(Lifetime.Singleton);
+            builder.Register<Systems_BoxScore>(Lifetime.Singleton);
+
+            // ONE registration carrying three roles: the entry point that starts
+            // the game and ticks the clock, the spot provider the director pulls
+            // from, and itself. It has to be a single chained registration — a
+            // separate Register plus RegisterEntryPoint would build two instances,
+            // and the director would then be reading a scoreboard that no play ever
+            // reached, silently, with a plausible-looking 1st & 10 forever.
+            builder.RegisterEntryPoint<Systems_GameFlowSystem>()
+                .As<Systems_ISpotProvider>()
+                .AsSelf();
+
+            builder.RegisterEntryPoint<Systems_StatsSystem>();
+        }
+
+        /// <summary>
+        /// Injects every scene MonoBehaviour this assembly is not allowed to name:
+        /// the agents, the views, and the training telemetry sink. One scan, two
+        /// marker interfaces — Systems_IInjectableView derives from
+        /// Systems_IInjectableBehaviour, so views are covered by the second test.
+        /// </summary>
+        private void InjectSceneBehaviours(IObjectResolver container)
         {
             MonoBehaviour[] behaviours = FindObjectsByType<MonoBehaviour>(
                 FindObjectsInactive.Include);
@@ -58,14 +134,14 @@ namespace PoFootball.Systems
             for (int index = 0; index < behaviours.Length; index++)
             {
                 if (behaviours[index] is Systems_IPlayerHandle
-                    || behaviours[index] is Systems_IInjectableView)
+                    || behaviours[index] is Systems_IInjectableBehaviour)
                 {
                     container.Inject(behaviours[index]);
                     injected++;
                 }
             }
 
-            Debug.Log($"[PoFootball] LifetimeScope injected {injected} player handles.");
+            Debug.Log($"[PoFootball] LifetimeScope injected {injected} scene behaviours.");
         }
     }
 }

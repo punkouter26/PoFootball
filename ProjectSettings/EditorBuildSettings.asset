@@ -6,8 +6,11 @@ EditorBuildSettings:
   serializedVersion: 2
   m_Scenes:
   - enabled: 1
-    path: Assets/Scenes/SCN_TRAIN_FOOTBALL.unity
-    guid: 15fe15d34f785b84fbf5255d2d4de83c
+    path: Assets/Scenes/SCN_MENU.unity
+    guid: 3065b79a774bf5544b6075c6e22571f6
+  - enabled: 1
+    path: Assets/Scenes/SCN_GAME.unity
+    guid: e15d584c12337404aafc8f01384a0bcd
   m_configObjects:
     com.unity.dt.app-ui: {fileID: 11400000, guid: 1b1c20d82303e4b5781c3ef50ac1449f, type: 2}
     com.unity.input.settings.actions: {fileID: -944628639613478452, guid: 2bcd2660ca9b64942af0de543d8d7100, type: 3}

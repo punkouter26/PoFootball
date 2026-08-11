@@ -7,6 +7,7 @@
         "PoFootball.Sensors",
         "PoFootball.Rewards",
         "PoFootball.Agents",
+        "PoFootball.Views",
         "MessagePipe",
         "Unity.ML-Agents",
         "Unity.Mathematics",

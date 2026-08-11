@@ -35,13 +35,19 @@ namespace PoFootball.Tests
 
             public bool IsCarrier { get; private set; }
 
+            /// <summary>
+            /// Presentation-only on the real agent, so the stub reports a body
+            /// that never tires. Nothing the referee does reads it.
+            /// </summary>
+            public float Fatigue => 0f;
+
             public void ClearFatigue() { }
 
             public void ResetTo(Vector2 position) => Position = position;
 
-            public void ApplyTerminalReward(Systems_PlayOutcome outcome, float netYards) { }
-
-            public void EndEpisodeNow() { }
+            // No ApplyTerminalReward or EndEpisodeNow: those moved to
+            // Systems_ITrainingHandle, which this stub deliberately does not
+            // implement. A referee test has no business knowing about episodes.
 
             public void SetCarrier(bool isCarrier) => IsCarrier = isCarrier;
         }

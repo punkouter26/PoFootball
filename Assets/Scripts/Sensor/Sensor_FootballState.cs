@@ -31,6 +31,27 @@ namespace PoFootball.Sensors
         public const int PLAY_CALL_SLOTS = 4;
 
         /// <summary>
+        /// Size of the quarterback's play-call discrete branch: the four real calls
+        /// plus index 0, which means "I have not called anything yet".
+        ///
+        /// That extra slot is the whole point. The branch used to be four wide and
+        /// the agent added one to it, so index 0 meant KeepQuarterback — and a
+        /// zeroed action buffer, which is exactly what ML-Agents hands back on the
+        /// steps between EndEpisode and the next decision, was indistinguishable
+        /// from the quarterback deliberately calling a keeper. Run football_base03
+        /// latched KeepQuarterback on 8 of 8 instrumented plays for that reason.
+        /// The previous defence was a timing guard (latch only once PhysicsTick has
+        /// passed DECISION_PERIOD), which depends on the Academy's step counter
+        /// happening to line up with the episode boundary.
+        ///
+        /// With a no-call slot at index 0 the mapping to Systems_PlayCall is the
+        /// identity, and a zeroed buffer decodes to Systems_PlayCall.None, which
+        /// Systems_PlayModel.LatchCall rejects. A stale buffer can no longer latch
+        /// anything, by construction rather than by timing.
+        /// </summary>
+        public const int PLAY_CALL_BRANCH_SIZE = PLAY_CALL_SLOTS + 1;
+
+        /// <summary>
         /// Fills <paramref name="buffer"/> with exactly OBSERVATION_SIZE values,
         /// all within [-1, 1].
         ///

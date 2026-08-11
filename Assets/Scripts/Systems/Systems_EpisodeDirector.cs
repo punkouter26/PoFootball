@@ -3,14 +3,12 @@ using MessagePipe;
 using PoFootball.Models;
 using UnityEngine;
 using VContainer.Unity;
-using Random = Unity.Mathematics.Random;
 
 namespace PoFootball.Systems
 {
     /// <summary>
-    /// Owns the episode boundary: assigns terminal rewards, ends every agent's
-    /// episode together, re-forms the 22 players at a fresh line of scrimmage, puts
-    /// the ball in the quarterback's hands, and snaps the next play.
+    /// Re-forms the 22 players at a fresh line of scrimmage, puts the ball in the
+    /// quarterback's hands, and snaps the next play.
     ///
     /// The reset is DEFERRED to the next FixedTick rather than run inline when the
     /// whistle fires. A tackle is reported from inside OnCollisionEnter2D, and
@@ -20,39 +18,47 @@ namespace PoFootball.Systems
     ///
     /// Agents' OnEpisodeBegin is deliberately empty — all repositioning happens
     /// here, so 22 agents cannot half-reset each other in an arbitrary order.
+    ///
+    /// NOTHING HERE IS SPECIFIC TO LEARNING. This class used to assign terminal
+    /// rewards and end every agent's ML-Agents episode itself, on every play, in
+    /// both modes. Those two steps are now behind
+    /// <see cref="Systems_ITrainingEpisodeBoundary"/> and are a no-op during a
+    /// played game. What is left is the part a game and a training run genuinely
+    /// share: put the bodies back and snap the ball.
     /// </summary>
     public sealed class Systems_EpisodeDirector : IStartable, IFixedTickable, IDisposable
     {
         private readonly Systems_PlayModel _play;
         private readonly Systems_BallModel _ball;
-        private readonly Systems_FieldModel _field;
         private readonly Systems_PlayerRegistry _registry;
         private readonly Systems_Referee _referee;
+        private readonly Systems_ISpotProvider _spotProvider;
+        private readonly Systems_ITrainingEpisodeBoundary _episodeBoundary;
         private readonly IPublisher<Systems_PlaySnappedMessage> _snappedPublisher;
         private readonly ISubscriber<Systems_PlayEndedMessage> _endedSubscriber;
 
         private IDisposable _subscription;
-        private Random _rng;
         private bool _resetPending;
         private bool _started;
 
         public Systems_EpisodeDirector(
             Systems_PlayModel play,
             Systems_BallModel ball,
-            Systems_FieldModel field,
             Systems_PlayerRegistry registry,
             Systems_Referee referee,
+            Systems_ISpotProvider spotProvider,
+            Systems_ITrainingEpisodeBoundary episodeBoundary,
             IPublisher<Systems_PlaySnappedMessage> snappedPublisher,
             ISubscriber<Systems_PlayEndedMessage> endedSubscriber)
         {
             _play = play;
             _ball = ball;
-            _field = field;
             _registry = registry;
             _referee = referee;
+            _spotProvider = spotProvider;
+            _episodeBoundary = episodeBoundary;
             _snappedPublisher = snappedPublisher;
             _endedSubscriber = endedSubscriber;
-            _rng = new Random(Systems_EpisodeSeed.Value);
         }
 
         public void Start()
@@ -61,7 +67,7 @@ namespace PoFootball.Systems
             // during container build, so a handler registered there is live before
             // the rest of the graph exists and before _started is set — OnPlayEnded
             // would arm a reset for a director that has not begun an episode.
-            // Systems_Telemetry does the same.
+            // Agent_Telemetry does the same.
             _subscription = _endedSubscriber.Subscribe(OnPlayEnded);
 
             Debug.Log(
@@ -90,8 +96,22 @@ namespace PoFootball.Systems
 
             _resetPending = false;
 
-            ApplyTerminalRewards();
-            EndAllEpisodes();
+            // Read before anything is disturbed: BeginEpisode overwrites the play
+            // model, and in training the reward for the play that just ended has to
+            // be computed from how it ended.
+            _episodeBoundary.EndEpisode(
+                _play.Outcome, _play.NetYards, _play.PassCompleted);
+
+            // The contest may be over. The terminal reward above still had to be
+            // paid — the last play of a game is as real as any other — but there is
+            // nothing left to snap, so the bodies stay exactly where the final
+            // whistle left them and this director never ticks again.
+            if (!_spotProvider.HasNextPlay)
+            {
+                _started = false;
+                return;
+            }
+
             BeginEpisode();
         }
 
@@ -100,29 +120,14 @@ namespace PoFootball.Systems
             _resetPending = true;
         }
 
-        private void ApplyTerminalRewards()
-        {
-            float netYards = _play.NetYards;
-            Systems_PlayOutcome outcome = _play.Outcome;
-
-            for (int slotIndex = 0; slotIndex < Systems_PlayerRegistry.CAPACITY; slotIndex++)
-            {
-                _registry.Get(slotIndex).ApplyTerminalReward(outcome, netYards);
-            }
-        }
-
-        private void EndAllEpisodes()
-        {
-            for (int slotIndex = 0; slotIndex < Systems_PlayerRegistry.CAPACITY; slotIndex++)
-            {
-                _registry.Get(slotIndex).EndEpisodeNow();
-            }
-        }
-
         private void BeginEpisode()
         {
-            float lineOfScrimmageY = _rng.NextFloat(
-                Systems_FieldModel.LOS_MIN_Y, Systems_FieldModel.LOS_MAX_Y);
+            // Where the next snap comes from is the ONE thing that differs
+            // between training and a played game, and it is entirely behind this
+            // call. Systems_RandomSpotProvider reproduces the seeded draw this
+            // method used to make inline, so a training run is unchanged;
+            // Systems_GameFlowSystem returns whatever the chains say instead.
+            float lineOfScrimmageY = _spotProvider.NextLineOfScrimmageY();
 
             for (int slotIndex = 0; slotIndex < Systems_PlayerRegistry.CAPACITY; slotIndex++)
             {

@@ -6,7 +6,10 @@
         "PoFootball.Systems",
         "PoFootball.Sensors",
         "PoFootball.Rewards",
+        "MessagePipe",
+        "UniTask",
         "Unity.ML-Agents",
+        "Unity.InferenceEngine",
         "Unity.Mathematics",
         "Unity.Collections",
         "VContainer"

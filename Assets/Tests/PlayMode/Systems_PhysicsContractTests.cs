@@ -78,97 +78,200 @@ namespace PoFootball.Tests
         }
 
         /// <summary>
-        /// Full drive against LINEAR_DAMPING settles at a = F/m over d, i.e.
-        /// (900 / 100) / 1.5 = 6 m/s. This is the number the policies' sense of
-        /// distance and closing speed is built on — TACKLE_CLOSING_SPEED of
-        /// 1.5 m/s is only a meaningful threshold relative to it.
+        /// Full drive settles at exactly the role's advertised top speed. This is
+        /// the assertion that the drive-force derivation actually holds against
+        /// Unity's integrator rather than only on paper.
+        ///
+        /// Before base04 this test settled at 6.0 m/s for EVERY role, because
+        /// drive force and mass were single shared constants. TopSpeedOf's 9.6 /
+        /// 7.5 / 6.5 m/s were unreachable and lived only as an observation
+        /// normalizer, so a receiver and a guard were the same body.
         ///
         /// The body is configured exactly as Agent_FootballPlayer.ConfigureBody
         /// does, deliberately by hand: the point is to pin the dynamics those
         /// constants produce, not to re-test the method that applies them.
         /// </summary>
         [UnityTest]
-        public IEnumerator FullDrive_SettlesAtSixMetresPerSecond()
+        public IEnumerator FullDrive_SettlesAtTheRoleTopSpeed(
+            [Values(
+                Systems_PlayerRole.WideReceiver,
+                Systems_PlayerRole.Fullback,
+                Systems_PlayerRole.OffensiveLine)]
+            Systems_PlayerRole role)
         {
-            Rigidbody2D rigidbody = CreateConfiguredBody();
+            Rigidbody2D rigidbody = CreateConfiguredBody(role);
+            float driveForce = Systems_RoleTable.DriveForceOf(role);
 
             // 6 s at 50 Hz. The response is first-order with a time constant of
             // 1/damping = 0.67 s, so this is nine time constants — the residual is
             // ~1e-4 m/s, well inside the tolerance below. Three seconds is not
-            // enough: it lands at 5.93, which reads as a dynamics change.
+            // enough: it lands short, which reads as a dynamics change.
             for (int tick = 0; tick < 300; tick++)
             {
-                rigidbody.AddForce(rigidbody.transform.up * Systems_SimConstants.DRIVE_FORCE);
+                rigidbody.AddForce(rigidbody.transform.up * driveForce);
                 yield return new WaitForFixedUpdate();
             }
 
-            float expected = Systems_SimConstants.DRIVE_FORCE
-                / Systems_SimConstants.PLAYER_MASS
-                / Systems_SimConstants.LINEAR_DAMPING;
+            Assert.That(
+                rigidbody.linearVelocity.magnitude,
+                Is.EqualTo(Systems_RoleTable.TopSpeedOf(role)).Within(0.05f),
+                $"{role} does not reach the speed Systems_RoleTable advertises for it.");
+        }
 
-            Assert.That(rigidbody.linearVelocity.magnitude, Is.EqualTo(expected).Within(0.05f));
+        /// <summary>
+        /// SteerTorqueOf derives its torque from I = 0.5 * m * r^2, the moment of
+        /// inertia of a uniform disc. That is an assumption about what Unity
+        /// computes for a circle collider, not something the C# can observe, so it
+        /// is pinned here — if Unity ever computes it differently, every role's
+        /// turn rate is wrong by that factor and nothing else would say so.
+        /// </summary>
+        [UnityTest]
+        public IEnumerator RotationalInertia_MatchesTheUniformDiscTheTorqueIsDerivedFrom()
+        {
+            Rigidbody2D rigidbody = CreateConfiguredBody(Systems_PlayerRole.Linebacker);
+
+            // Inertia is recomputed from the colliders during the physics step.
+            yield return new WaitForFixedUpdate();
+
+            float expected = 0.5f * Systems_RoleTable.MassOf(Systems_PlayerRole.Linebacker)
+                * Systems_SimConstants.PLAYER_RADIUS * Systems_SimConstants.PLAYER_RADIUS;
+
+            Assert.That(
+                rigidbody.inertia, Is.EqualTo(expected).Within(0.01f),
+                "Systems_RoleTable.SteerTorqueOf derives torque from a uniform-disc "
+                + "moment of inertia that Unity does not agree with.");
+        }
+
+        /// <summary>
+        /// Full steer settles at exactly the role's advertised turn rate — the
+        /// rotational half of the same derivation, which is easy to get wrong
+        /// because the moment of inertia moves with mass and the mass is now
+        /// per role.
+        /// </summary>
+        [UnityTest]
+        public IEnumerator FullSteer_SettlesAtTheRoleTurnRate(
+            [Values(Systems_PlayerRole.Cornerback, Systems_PlayerRole.DefensiveLine)]
+            Systems_PlayerRole role)
+        {
+            Rigidbody2D rigidbody = CreateConfiguredBody(role);
+            float steerTorque = Systems_RoleTable.SteerTorqueOf(role);
+
+            for (int tick = 0; tick < 300; tick++)
+            {
+                rigidbody.AddTorque(steerTorque);
+                yield return new WaitForFixedUpdate();
+            }
+
+            // Rigidbody2D.angularVelocity is degrees per second; TurnRateOf is rad/s.
+            float radiansPerSecond = rigidbody.angularVelocity * Mathf.Deg2Rad;
+
+            Assert.That(
+                radiansPerSecond,
+                Is.EqualTo(Systems_RoleTable.TurnRateOf(role)).Within(0.05f),
+                $"{role} does not turn at the rate Systems_RoleTable advertises for it.");
         }
 
         /// <summary>
         /// MAX_BODY_SPEED is a pileup-explosion guard (criterion #13), not a
-        /// throttle on normal running. If terminal speed ever reaches it, the
+        /// throttle on normal running. If any role's terminal speed reaches it, the
         /// clamp starts firing every tick during ordinary play and quietly becomes
         /// part of the dynamics.
         /// </summary>
         [Test]
-        public void TerminalSpeed_LeavesHeadroomUnderThePileupClamp()
+        public void EveryRoleTerminalSpeed_LeavesHeadroomUnderThePileupClamp()
         {
-            float terminalSpeed = Systems_SimConstants.DRIVE_FORCE
-                / Systems_SimConstants.PLAYER_MASS
-                / Systems_SimConstants.LINEAR_DAMPING;
+            foreach (Systems_PlayerRole role in System.Enum.GetValues(typeof(Systems_PlayerRole)))
+            {
+                float terminalSpeed = Systems_RoleTable.DriveForceOf(role)
+                    / Systems_RoleTable.MassOf(role)
+                    / Systems_SimConstants.LINEAR_DAMPING;
 
-            Assert.That(
-                terminalSpeed,
-                Is.LessThan(Systems_SimConstants.MAX_BODY_SPEED),
-                "Terminal speed under full drive reached the pileup clamp. The clamp "
-                + "is now shaping every play, not just collisions.");
+                Assert.That(
+                    terminalSpeed,
+                    Is.LessThan(Systems_SimConstants.MAX_BODY_SPEED),
+                    $"{role}'s terminal speed under full drive reached the pileup clamp. "
+                    + "The clamp is now shaping every play, not just collisions.");
+            }
         }
 
         /// <summary>
-        /// Characterizes the fatigue tuning, which does not currently bite.
+        /// Fatigue must be able to accumulate under loads the simulation actually
+        /// produces. Load is the applied force over the role's own maximum plus the
+        /// applied torque over its own maximum, so it spans [0, 2] and the
+        /// break-even point is RECOVERY / GAIN.
         ///
-        /// Agent_FootballPlayer.AccumulateFatigue integrates gain and recovery
-        /// against each other every tick, so fatigue only rises while
-        /// load * FATIGUE_GAIN_PER_NEWTON_SECOND exceeds FATIGUE_RECOVERY_PER_SECOND.
-        /// That break-even sits at 0.06 / 1.2e-5 = 5000 N, but the largest load the
-        /// simulation can produce is DRIVE_FORCE + STEER_TORQUE = 1200 N — about a
-        /// quarter of it. `_fatigue` is therefore clamped at 0 for every player in
-        /// every play, and FATIGUE_MAX_PENALTY never scales anything.
-        ///
-        /// This is asserted rather than fixed on purpose: raising the gain changes
-        /// the dynamics every promoted .onnx was fitted against, which is a
-        /// retraining decision, not a test fix. The test fails the moment either
-        /// constant moves — which is exactly when someone is making that decision.
+        /// This assertion is the inverse of the one it replaces. The previous pair
+        /// of constants put break-even at 0.06 / 1.2e-5 = 5000 against a maximum
+        /// producible load of DRIVE_FORCE + STEER_TORQUE = 1200 N — a quantity that
+        /// was not even dimensionally meaningful, being newtons added to
+        /// newton-metres. `_fatigue` was pinned at 0 for every player in every play
+        /// of base01 through base03: the observation slot was constant,
+        /// FATIGUE_MAX_PENALTY never scaled anything, and the fatigue shader
+        /// parameter never moved. The old test asserted that as a characterization,
+        /// deferring the fix because it changes the dynamics every promoted brain
+        /// was fitted against. base04 is that retraining.
         /// </summary>
         [Test]
-        public void Fatigue_BreakEvenLoadIsAboveAnythingTheSimulationProduces()
+        public void Fatigue_AccumulatesUnderLoadsTheSimulationProduces()
         {
+            const float maximumLoad = 2f;
+
             float breakEvenLoad = Systems_SimConstants.FATIGUE_RECOVERY_PER_SECOND
-                / Systems_SimConstants.FATIGUE_GAIN_PER_NEWTON_SECOND;
+                / Systems_SimConstants.FATIGUE_GAIN_PER_UNIT_LOAD;
 
-            float maximumLoad = Systems_SimConstants.DRIVE_FORCE + Systems_SimConstants.STEER_TORQUE;
-
-            Assert.That(breakEvenLoad, Is.EqualTo(5000f).Within(1f));
-            Assert.That(maximumLoad, Is.EqualTo(1200f).Within(1f));
             Assert.That(
-                maximumLoad,
-                Is.LessThan(breakEvenLoad),
-                "Fatigue now accumulates. That is the intended behaviour, but it is a "
-                + "dynamics change: every brain in Assets/Agents/ was fitted without it.");
+                breakEvenLoad,
+                Is.LessThan(maximumLoad),
+                "Fatigue can never accumulate: recovery outruns the gain at every load "
+                + "the simulation can produce, so the fatigue observation is a constant.");
+
+            // Sustained full effort must also be worth something over one play, not
+            // merely non-zero. A play is capped at MAX_PHYSICS_TICKS ticks.
+            float playSeconds = Systems_PlayModel.MAX_PHYSICS_TICKS * FIXED_DELTA_TIME;
+            float netPerSecond = (maximumLoad * Systems_SimConstants.FATIGUE_GAIN_PER_UNIT_LOAD)
+                - Systems_SimConstants.FATIGUE_RECOVERY_PER_SECOND;
+
+            Assert.That(
+                netPerSecond * playSeconds,
+                Is.GreaterThan(0.25f),
+                "Fatigue accumulates but too slowly to reach a meaningful level within "
+                + "a single play, and it is cleared at every episode boundary.");
         }
 
-        private Rigidbody2D CreateConfiguredBody()
+        /// <summary>
+        /// Recovery must not be so strong that ordinary running is free, nor so
+        /// weak that a player who lets off never recovers within a play.
+        /// </summary>
+        [Test]
+        public void Fatigue_CruisingIsCheaperThanCutting()
+        {
+            const float cruisingLoad = 1f;
+            const float cuttingLoad = 2f;
+
+            float cruising = (cruisingLoad * Systems_SimConstants.FATIGUE_GAIN_PER_UNIT_LOAD)
+                - Systems_SimConstants.FATIGUE_RECOVERY_PER_SECOND;
+            float cutting = (cuttingLoad * Systems_SimConstants.FATIGUE_GAIN_PER_UNIT_LOAD)
+                - Systems_SimConstants.FATIGUE_RECOVERY_PER_SECOND;
+
+            Assert.That(cutting, Is.GreaterThan(cruising * 2f));
+        }
+
+        private Rigidbody2D CreateConfiguredBody(Systems_PlayerRole role)
         {
             _body = new GameObject("PhysicsContractBody");
             Rigidbody2D rigidbody = _body.AddComponent<Rigidbody2D>();
 
+            // The collider is not decoration. Rigidbody2D derives its rotational
+            // inertia from the attached colliders, and a body with none is given a
+            // flat inertia of 1 regardless of its mass — under which every role
+            // turns at torque/damping and SteerTorqueOf's derivation appears to be
+            // wrong by exactly a factor of the moment of inertia. The players in
+            // the scene carry a CircleCollider2D of this radius.
+            CircleCollider2D collider = _body.AddComponent<CircleCollider2D>();
+            collider.radius = Systems_SimConstants.PLAYER_RADIUS;
+
             rigidbody.gravityScale = 0f;
-            rigidbody.mass = Systems_SimConstants.PLAYER_MASS;
+            rigidbody.mass = Systems_RoleTable.MassOf(role);
             rigidbody.linearDamping = Systems_SimConstants.LINEAR_DAMPING;
             rigidbody.angularDamping = Systems_SimConstants.ANGULAR_DAMPING;
             rigidbody.collisionDetectionMode = CollisionDetectionMode2D.Continuous;

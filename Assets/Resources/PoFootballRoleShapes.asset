@@ -1,0 +1,22 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: de21a286c0a16534baabe912f227d536, type: 3}
+  m_Name: PoFootballRoleShapes
+  m_EditorClassIdentifier: PoFootball.Views::PoFootball.Views.Systems_RoleShapeSet
+  _circle: {fileID: 21300000, guid: 286684ef780ca2041a42f407b467b411, type: 3}
+  _square: {fileID: 21300000, guid: e711d5ad09a0815498fa118a0d18f11c, type: 3}
+  _triangle: {fileID: 21300000, guid: 9870d3f23d6260347ad181aaf08f7712, type: 3}
+  _diamond: {fileID: 21300000, guid: ed73876c3922f8344a76d6586617184e, type: 3}
+  _pentagon: {fileID: 21300000, guid: 4a829c0220492f54d80f21a441ea1086, type: 3}
+  _hexagon: {fileID: 21300000, guid: b9378f51abac17645a85bcce3e89789e, type: 3}
+  _offenseColor: {r: 0.204, g: 0.545, b: 0.937, a: 1}
+  _defenseColor: {r: 0.922, g: 0.365, b: 0.298, a: 1}

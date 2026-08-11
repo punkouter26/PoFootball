@@ -7,8 +7,7 @@
         "MessagePipe",
         "MessagePipe.VContainer",
         "UniTask",
-        "Unity.Mathematics",
-        "Unity.ML-Agents"
+        "Unity.Mathematics"
     ],
     "includePlatforms": [],
     "excludePlatforms": [],

@@ -3,13 +3,12 @@ namespace PoFootball.Systems
     /// <summary>
     /// Marker for presentation MonoBehaviours that need container injection.
     ///
-    /// Systems_GameLifetimeScope lives in this assembly and cannot reference
-    /// PoFootball.Views without inverting the dependency direction. Views implement
-    /// this interface — which Systems owns — so the scope's build callback can find
-    /// and inject them without ever naming a view type. Same trick as
-    /// Systems_IPlayerHandle uses for the agents.
+    /// Narrows <see cref="Systems_IInjectableBehaviour"/> to the presentation
+    /// layer. It carries no members of its own — the distinction is documentary,
+    /// so that a reader of a view can see it is a view, and so that a future rule
+    /// about what views may inject has something to attach to.
     /// </summary>
-    public interface Systems_IInjectableView
+    public interface Systems_IInjectableView : Systems_IInjectableBehaviour
     {
     }
 }

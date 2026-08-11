@@ -8,9 +8,7 @@
         "MessagePipe",
         "MessagePipe.VContainer",
         "UniTask",
-        "Unity.Mathematics",
-        "Unity.Cinemachine",
-        "Unity.InputSystem"
+        "Unity.Mathematics"
     ],
     "includePlatforms": [],
     "excludePlatforms": [],

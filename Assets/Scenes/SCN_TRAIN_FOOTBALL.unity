@@ -8724,6 +8724,7 @@ GameObject:
   m_Component:
   - component: {fileID: 1998844774}
   - component: {fileID: 1998844775}
+  - component: {fileID: 1998844776}
   m_Layer: 0
   m_Name: Systems
   m_TagString: Untagged
@@ -8763,6 +8764,20 @@ MonoBehaviour:
   autoRun: 1
   autoInjectGameObjects: []
   _episodeSeed: 1
+  _simMode: 0
+  _presentationEffects: 1
+--- !u!114 &1998844776
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1998844773}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 50ccf522864cc474a858d8b69ba31e16, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: PoFootball.Agents::PoFootball.Agents.Agent_Telemetry
 --- !u!1660057539 &9223372036854775807
 SceneRoots:
   m_ObjectHideFlags: 0
