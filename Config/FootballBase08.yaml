@@ -171,7 +171,13 @@ engine_settings:
   capture_frame_rate: 60
 
 torch_settings:
-  device: cuda                    # RTX 2060 present; falls back to cpu if unavailable
+  device: cpu                     # NOT cuda. This machine has an RTX 5070 Ti (Blackwell,
+                                  # sm_120) and the pinned torch 2.5.1+cu121 has no kernels
+                                  # for it. There is no fallback: is_available() returns True,
+                                  # so the trainer selects CUDA and dies building the first
+                                  # layer with 'no kernel image is available for execution on
+                                  # the device'. This key also OVERRIDES --torch-device on the
+                                  # command line, so the flag alone does not save you.
 
 checkpoint_settings:
   results_dir: results

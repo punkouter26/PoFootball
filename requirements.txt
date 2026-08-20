@@ -25,9 +25,14 @@ mlagents-envs==1.1.0
 # cu121 ships no kernels for it. torch.cuda.is_available() still returns True, so the
 # trainer picks CUDA and dies on the first step with
 #   "CUDA error: no kernel image is available for execution on the device".
-# Every mlagents-learn run therefore needs --torch-device=cpu. To train on the GPU
-# instead, replace this pin with a CUDA 12.8 build (torch>=2.7) — mlagents 1.1.0 only
-# requires torch>=1.13.1, so a newer version is allowed.
+# Set CUDA_VISIBLE_DEVICES=-1 before every mlagents-learn run. That is the only thing
+# that works: --torch-device=cpu and torch_settings.device: cpu were both tried and both
+# still crashed, because mlagents/torch_utils/torch.py calls set_torch_config(device=None)
+# at import time, resolves it to "cuda", and its cpu branch never resets the default
+# device afterwards. Use -1, not "" — an empty value is ignored on Windows.
+#
+# To train on the GPU instead, replace this pin with a CUDA 12.8 build (torch>=2.7) —
+# mlagents 1.1.0 only requires torch>=1.13.1, so a newer version is allowed.
 torch==2.5.1+cu121
 
 # --- Pins that are load-bearing, not incidental ------------------------------
