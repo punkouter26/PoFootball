@@ -36,7 +36,10 @@ MonoBehaviour:
     m_Name: package.openupm.com
     m_Url: https://package.openupm.com
     m_Scopes:
+    - com.github-glitchenzo
     - com.ivanmurzak
+    - com.kyrylokuzyk
+    - com.tayx
     - extensions.unity
     m_IsDefault: 0
     m_IsUnityRegistry: 0
@@ -51,7 +54,7 @@ MonoBehaviour:
     m_Modified: 0
     m_ErrorMessage: 
     m_UserModificationsEntityId:
-      m_rawData: 568105589213756510
+      m_rawData: 568105589213756494
     m_OriginalEntityId:
-      m_rawData: 568105589213756508
+      m_rawData: 568105589213756490
   m_LoadAssets: 0
