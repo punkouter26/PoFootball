@@ -18,8 +18,16 @@
 mlagents==1.1.0
 mlagents-envs==1.1.0
 
-# --- Torch (CUDA 12.1 build for the RTX 2060) --------------------------------
+# --- Torch (CUDA 12.1 build) -------------------------------------------------
 # Needs the PyTorch index; the plain PyPI wheel is CPU-only.
+#
+# NOTE (2026-08-20): this machine now has an RTX 5070 Ti Laptop (Blackwell, sm_120).
+# cu121 ships no kernels for it. torch.cuda.is_available() still returns True, so the
+# trainer picks CUDA and dies on the first step with
+#   "CUDA error: no kernel image is available for execution on the device".
+# Every mlagents-learn run therefore needs --torch-device=cpu. To train on the GPU
+# instead, replace this pin with a CUDA 12.8 build (torch>=2.7) — mlagents 1.1.0 only
+# requires torch>=1.13.1, so a newer version is allowed.
 torch==2.5.1+cu121
 
 # --- Pins that are load-bearing, not incidental ------------------------------

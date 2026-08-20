@@ -12,7 +12,8 @@ Unity ML-Agents self-play.
 | ML-Agents (C#) | `com.unity.ml-agents` 4.1.0 — comms API **1.5.0** |
 | ML-Agents (Python) | `mlagents` 1.1.0 — comms API **1.5.0** |
 | Python | 3.10.11, venv at `.venv/` |
-| Torch | 2.5.1+cu121 (RTX 2060) |
+| Torch | 2.5.1+cu121 — **CPU only**; see `--torch-device=cpu` below |
+| GPU | RTX 5070 Ti Laptop (Blackwell, sm_120) — **unusable** by this Torch build |
 
 ---
 
@@ -113,15 +114,22 @@ different dynamics than it was fitted against.
 .venv\Scripts\Activate.ps1
 
 # In-editor smoke test: start the trainer, then press Play.
-mlagents-learn Config\FootballBase06.yaml --run-id=football_base06
+mlagents-learn Config\FootballBase06.yaml --run-id=football_base06 --torch-device=cpu
 
 # Headless sweep — envs take CONSECUTIVE ports from --base-port.
-mlagents-learn Config\FootballBase06.yaml --run-id=football_base06 `
+mlagents-learn Config\FootballBase06.yaml --run-id=football_base06 --torch-device=cpu `
   --env=Builds\FootballEnv\PoFootball.exe --no-graphics `
   --base-port=5010 --num-envs=6
 
 tensorboard --logdir results
 ```
+
+**`--torch-device=cpu` is not optional.** The pinned `torch==2.5.1+cu121` carries no
+kernels for this machine's RTX 5070 Ti (Blackwell, sm_120). `torch.cuda.is_available()`
+still returns `True`, so the trainer will happily select CUDA and then die on the first
+step with `CUDA error: no kernel image is available for execution on the device`. Pass
+the flag on every run, or upgrade Torch to a CUDA 12.8 build and revisit the pin in
+`requirements.txt`.
 
 `FootballBase06.yaml` (the current config) carries **six** behaviors. The quarterback has its own brain
 — it is the only one with discrete actions, and while it shared `OffenseSkill`
