@@ -32,7 +32,9 @@ namespace PoFootball.Tests
             Sensor_FootballState.Write(
                 buffer, new Systems_FieldModel(), role, position, velocity,
                 rotationDegrees, fatigue, isCarrier, ballPosition, ballVelocity,
-                ballState, call, lineOfScrimmageY);
+                ballState, call, lineOfScrimmageY,
+                1,
+                Systems_GameRules.YARDS_TO_GAIN);
 
             return buffer;
         }

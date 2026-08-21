@@ -96,7 +96,7 @@ namespace PoFootball.Tests
                 _play, _ball, _ballSystem, new Systems_FieldModel(), _registry,
                 _ended, _tackled, _scored);
 
-            _play.BeginEpisode(0f, _quarterback.Position.y);
+            _play.BeginEpisode(0f, _quarterback.Position.y, 1, Systems_GameRules.YARDS_TO_GAIN);
             _play.Snap();
             _quarterback.SetCarrier(true);
             _ball.AttachTo(Systems_Formation.QUARTERBACK_SLOT_INDEX, _quarterback.Position);
@@ -191,6 +191,16 @@ namespace PoFootball.Tests
         {
             _quarterback.Position = Vector2.zero;
             MoveEveryoneFarAway();
+
+            // A RECEIVER HAS TO BE DOWNFIELD FOR THIS TO BE A PASS AT ALL. The aim
+            // vector stopped being a raw direction in contract revision 5 — it names
+            // whichever eligible receiver best matches the bearing — so throwing at
+            // an empty field now picks some far-flung target and the ball never
+            // crosses the defender. Putting the intended receiver behind the safety
+            // is what the play being tested actually looks like: a throw to a covered
+            // man, jumped by the man covering him.
+            StubPlayer receiver = (StubPlayer)_registry.Get(6);
+            receiver.Position = new Vector2(0f, 20f);
 
             StubPlayer safety = (StubPlayer)_registry.Get(20);
             safety.Position = new Vector2(0f, 6f);

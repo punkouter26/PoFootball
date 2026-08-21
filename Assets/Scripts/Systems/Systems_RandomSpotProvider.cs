@@ -44,9 +44,29 @@ namespace PoFootball.Systems
         /// </summary>
         public int DeadBallTicks => 0;
 
-        public float NextLineOfScrimmageY()
+        /// <summary>
+        /// A seeded spot, and now a seeded SITUATION.
+        ///
+        /// Training has no chains — Systems_GameFlowSystem is a Game-mode
+        /// registration — so before this the down did not exist here at all and a
+        /// quarterback could not have learned when to punt if it wanted to. Drawing
+        /// down and distance alongside the spot puts the decision in front of the
+        /// policy on roughly a quarter of reps without turning training into a full
+        /// game simulation: every play is still an independent, seeded rep.
+        ///
+        /// Distance is drawn from one to fifteen rather than always ten, so 4th and
+        /// 1 and 4th and 14 are both in the distribution. A policy that only ever saw
+        /// ten would learn one threshold and apply it everywhere.
+        /// </summary>
+        public Systems_PlaySituation NextSituation()
         {
-            return _rng.NextFloat(Systems_FieldModel.LOS_MIN_Y, Systems_FieldModel.LOS_MAX_Y);
+            float lineOfScrimmageY =
+                _rng.NextFloat(Systems_FieldModel.LOS_MIN_Y, Systems_FieldModel.LOS_MAX_Y);
+
+            int down = _rng.NextInt(1, Systems_GameRules.DOWNS_PER_SERIES + 1);
+            float yardsToGo = _rng.NextFloat(1f, 15f);
+
+            return new Systems_PlaySituation(lineOfScrimmageY, down, yardsToGo);
         }
     }
 }

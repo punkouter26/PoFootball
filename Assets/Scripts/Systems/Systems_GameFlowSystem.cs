@@ -106,7 +106,7 @@ namespace PoFootball.Systems
             _liveTicks = 0;
             _quarterExpiredMidPlay = false;
             _game.KickOff(
-                Systems_TeamId.Home, OwnYardLineToY(Systems_GameRules.KICKOFF_YARD_LINE));
+                Systems_TeamId.Home, OwnYardLineToY(Systems_GameRules.KICKOFF_TOUCHBACK_YARD_LINE));
         }
 
         /// <summary>
@@ -132,7 +132,7 @@ namespace PoFootball.Systems
         /// spot the next snap belongs on, so the model is the single source of
         /// truth and there is no second copy to fall out of step with it.
         /// </summary>
-        public float NextLineOfScrimmageY()
+        public Systems_PlaySituation NextSituation()
         {
             // Belt and braces against HasNextPlay being ignored. This method has
             // side effects — it counts a play and restarts the clock — so a caller
@@ -142,7 +142,7 @@ namespace PoFootball.Systems
             // does again.
             if (_game.Phase == Systems_GamePhase.Final)
             {
-                return _game.LineOfScrimmageY;
+                return Situation();
             }
 
             _game.CountPlay();
@@ -153,7 +153,13 @@ namespace PoFootball.Systems
             // period, which is when a viewer actually reads it.
             _game.SetClockRunning(true);
 
-            return _game.LineOfScrimmageY;
+            return Situation();
+        }
+
+        private Systems_PlaySituation Situation()
+        {
+            return new Systems_PlaySituation(
+                _game.LineOfScrimmageY, _game.Down, _game.YardsToGo);
         }
 
         private void OnPlayEnded(Systems_PlayEndedMessage message)
@@ -236,8 +242,53 @@ namespace PoFootball.Systems
                 // whoever says it.
                 _game.GiveBallTo(
                     offense.Opponent(),
-                    OwnYardLineToY(Systems_GameRules.TOUCHBACK_YARD_LINE));
+                    OwnYardLineToY(Systems_GameRules.KICKOFF_TOUCHBACK_YARD_LINE));
                 return Systems_DownResult.Touchdown;
+            }
+
+            if (outcome == Systems_PlayOutcome.Punt)
+            {
+                // Net yards from the line of scrimmage, then mirrored into the
+                // receiving team's own frame. A punt that reaches the end zone is a
+                // touchback at the 20 — which is a different yard line from a
+                // kickoff touchback, because they are different rules.
+                float landing = _game.LineOfScrimmageY
+                    + (Systems_GameRules.PUNT_NET_YARDS * Systems_FieldModel.YARD);
+
+                float receiverSpot =
+                    landing >= Systems_FieldModel.ATTACKING_GOAL_LINE_Y
+                        ? OwnYardLineToY(Systems_GameRules.PUNT_TOUCHBACK_YARD_LINE)
+                        : ClampSeriesStart(Mirror(landing));
+
+                _game.GiveBallTo(offense.Opponent(), receiverSpot);
+                return Systems_DownResult.Punt;
+            }
+
+            if (outcome == Systems_PlayOutcome.FieldGoalGood)
+            {
+                pointsScored = Systems_GameRules.FIELD_GOAL_POINTS;
+                _game.AddPoints(offense, pointsScored);
+
+                // A score is followed by a kickoff, so the conceding team takes over
+                // at the kickoff touchback spot — the 35, not the punt's 20.
+                _game.GiveBallTo(
+                    offense.Opponent(),
+                    OwnYardLineToY(Systems_GameRules.KICKOFF_TOUCHBACK_YARD_LINE));
+                return Systems_DownResult.FieldGoalGood;
+            }
+
+            if (outcome == Systems_PlayOutcome.FieldGoalMissed)
+            {
+                // The defense takes over at the SPOT OF THE KICK, seven yards behind
+                // the line of scrimmage, not at the line itself. That is what makes a
+                // long attempt a genuine gamble instead of a free roll — miss from 55
+                // and the other side starts near midfield.
+                float spotOfKick = _game.LineOfScrimmageY
+                    - (Systems_GameRules.FIELD_GOAL_SNAP_YARDS * Systems_FieldModel.YARD);
+
+                _game.GiveBallTo(
+                    offense.Opponent(), ClampSeriesStart(Mirror(spotOfKick)));
+                return Systems_DownResult.FieldGoalMissed;
             }
 
             if (outcome == Systems_PlayOutcome.Interception)
@@ -253,7 +304,7 @@ namespace PoFootball.Systems
 
                 _game.GiveBallTo(
                     offense.Opponent(),
-                    OwnYardLineToY(Systems_GameRules.SAFETY_RESTART_YARD_LINE));
+                    OwnYardLineToY(Systems_GameRules.SAFETY_FREE_KICK_RESULT_YARD_LINE));
                 return Systems_DownResult.Safety;
             }
 
@@ -308,6 +359,13 @@ namespace PoFootball.Systems
                 case Systems_PlayOutcome.OutOfBounds:
                 case Systems_PlayOutcome.Touchdown:
                 case Systems_PlayOutcome.Interception:
+                // Every kick changes possession, and the clock stops on a change of
+                // possession. A safety stops it too — the free kick that follows is
+                // a fresh start, not a continuation of the drive.
+                case Systems_PlayOutcome.Safety:
+                case Systems_PlayOutcome.Punt:
+                case Systems_PlayOutcome.FieldGoalGood:
+                case Systems_PlayOutcome.FieldGoalMissed:
                     return true;
                 default:
                     return false;
@@ -340,7 +398,7 @@ namespace PoFootball.Systems
             {
                 _game.GiveBallTo(
                     _game.OpeningPossession.Opponent(),
-                    OwnYardLineToY(Systems_GameRules.KICKOFF_YARD_LINE));
+                    OwnYardLineToY(Systems_GameRules.KICKOFF_TOUCHBACK_YARD_LINE));
             }
 
             return announceScore ? resultSoFar : Systems_DownResult.EndOfQuarter;

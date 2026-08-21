@@ -1,5 +1,6 @@
 using System;
 using MessagePipe;
+using PoFootball.Sensors;
 using PoFootball.Models;
 using PoFootball.Systems;
 using Unity.MLAgents;
@@ -51,8 +52,19 @@ namespace PoFootball.Agents
         /// </summary>
         private const int CALL_WINDOW_PLAYS = 200;
 
-        /// <summary>Width of the call histogram: the four real calls plus None.</summary>
-        private const int CALL_SLOT_COUNT = 5;
+        /// <summary>
+        /// Width of the call histogram: every real call plus None.
+        ///
+        /// DERIVED, NOT TYPED. This was the literal 5 — the four calls of the day
+        /// plus None — and when Punt and FieldGoal were added it silently became
+        /// wrong in the worst possible way: RecordCall drops any index at or past
+        /// this bound, so both new calls vanished from the histogram entirely.
+        /// `Call/Entropy` kept reporting a healthy number computed over the old five
+        /// while the two calls the whole contract revision existed to introduce were
+        /// invisible. Reading it off Sensor_FootballState.PLAY_CALL_BRANCH_SIZE means
+        /// the histogram widens with the branch, by construction.
+        /// </summary>
+        private const int CALL_SLOT_COUNT = Sensor_FootballState.PLAY_CALL_BRANCH_SIZE;
 
         private ISubscriber<Systems_PlayEndedMessage> _endedSubscriber;
 
@@ -114,6 +126,12 @@ namespace PoFootball.Agents
             stats.Add("Call/HandoffFullback", CallRate(message.Call, Systems_PlayCall.HandoffFullback));
             stats.Add("Call/HandoffHalfback", CallRate(message.Call, Systems_PlayCall.HandoffHalfback));
             stats.Add("Call/Pass", CallRate(message.Call, Systems_PlayCall.Pass));
+
+            // The two calls contract revision 6 exists to introduce. Without these
+            // a thirty-hour run produces no evidence at all about whether the
+            // quarterback learned when to kick.
+            stats.Add("Call/Punt", CallRate(message.Call, Systems_PlayCall.Punt));
+            stats.Add("Call/FieldGoal", CallRate(message.Call, Systems_PlayCall.FieldGoal));
 
             RecordCall(message.Call);
             stats.Add("Call/Entropy", CallEntropy());

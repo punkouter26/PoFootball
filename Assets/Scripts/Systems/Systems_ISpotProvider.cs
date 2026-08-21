@@ -36,7 +36,7 @@ namespace PoFootball.Systems
         /// before the formation is laid out, and only when <see cref="HasNextPlay"/>
         /// is true.
         /// </summary>
-        float NextLineOfScrimmageY();
+        Systems_PlaySituation NextSituation();
 
         /// <summary>
         /// Physics ticks to hold the dead ball before re-forming for the next snap.

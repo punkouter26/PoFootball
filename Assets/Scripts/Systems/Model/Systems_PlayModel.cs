@@ -55,19 +55,35 @@ namespace PoFootball.Models
         /// <summary>True once a receiver has caught a pass on this play.</summary>
         public bool PassCompleted { get; private set; }
 
+        /// <summary>
+        /// Which down this snap is, one through Systems_GameRules.DOWNS_PER_SERIES.
+        ///
+        /// Lives here rather than only on Systems_GameModel because the game model
+        /// does not exist in training — Systems_GameFlowSystem is a Game-mode
+        /// registration — and the quarterback has to be able to see the down in both
+        /// modes to learn when a punt or a field goal is the right call.
+        /// </summary>
+        public int Down { get; private set; } = 1;
+
+        /// <summary>Yards needed for a new series from this snap.</summary>
+        public float YardsToGo { get; private set; } = Systems_GameRules.YARDS_TO_GAIN;
+
         public void MarkPassCompleted()
         {
             PassCompleted = true;
         }
 
         /// <summary>Called by Systems_EpisodeDirector before the snap.</summary>
-        public void BeginEpisode(float lineOfScrimmageY, float ballY)
+        public void BeginEpisode(
+            float lineOfScrimmageY, float ballY, int down, float yardsToGo)
         {
             Phase = Systems_PlayPhase.PreSnap;
             Outcome = Systems_PlayOutcome.None;
             Call = Systems_PlayCall.None;
             PassCompleted = false;
             PhysicsTick = 0;
+            Down = Mathf.Clamp(down, 1, Systems_GameRules.DOWNS_PER_SERIES);
+            YardsToGo = Mathf.Max(yardsToGo, 0.1f);
             LineOfScrimmageY = lineOfScrimmageY;
             BallY = ballY;
             DeadBallSpot = new Vector2(0f, ballY);

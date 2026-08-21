@@ -178,7 +178,8 @@ namespace PoFootball.Systems
             // call. Systems_RandomSpotProvider reproduces the seeded draw this
             // method used to make inline, so a training run is unchanged;
             // Systems_GameFlowSystem returns whatever the chains say instead.
-            float lineOfScrimmageY = _spotProvider.NextLineOfScrimmageY();
+            Systems_PlaySituation situation = _spotProvider.NextSituation();
+            float lineOfScrimmageY = situation.LineOfScrimmageY;
 
             for (int slotIndex = 0; slotIndex < Systems_PlayerRegistry.CAPACITY; slotIndex++)
             {
@@ -200,7 +201,9 @@ namespace PoFootball.Systems
             _ball.AttachTo(Systems_Formation.QUARTERBACK_SLOT_INDEX, quarterback.Position);
             _referee.ResetContactTracking();
 
-            _play.BeginEpisode(lineOfScrimmageY, quarterback.Position.y);
+            _play.BeginEpisode(
+                lineOfScrimmageY, quarterback.Position.y,
+                situation.Down, situation.YardsToGo);
             _play.Snap();
 
             _snappedPublisher.Publish(

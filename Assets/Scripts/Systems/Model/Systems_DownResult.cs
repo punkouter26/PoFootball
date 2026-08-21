@@ -32,6 +32,15 @@ namespace PoFootball.Models
         EndOfQuarter = 6,
 
         /// <summary>Regulation expired.</summary>
-        EndOfGame = 7
+        EndOfGame = 7,
+
+        /// <summary>The offense punted it away. Not a turnover: giving the ball up
+        /// on purpose to win field position is a decision, not a mistake, and the
+        /// box score should not read it as one.</summary>
+        Punt = 8,
+
+        FieldGoalGood = 9,
+
+        FieldGoalMissed = 10
     }
 }

@@ -64,6 +64,35 @@ namespace PoFootball.Rewards
                 case Systems_PlayOutcome.Interception:
                     return -Systems_SimConstants.INTERCEPTION_REWARD;
 
+                // Flat, and deliberately not stacked with the yardage term the way
+                // Tackle is. A safety is already the worst thing on this list; how
+                // far backwards the carrier went to get there does not make it
+                // worse, and letting netYards pile on top would make the penalty
+                // depend on where the drive happened to start.
+                case Systems_PlayOutcome.Safety:
+                    return -Systems_SimConstants.SAFETY_PENALTY;
+
+                // A field goal is worth less than a touchdown by design, and the
+                // ratio matters more than the numbers: if three points paid nearly
+                // as well as seven, a policy would settle for the kick from inside
+                // the twenty and never learn to finish a drive.
+                case Systems_PlayOutcome.FieldGoalGood:
+                    return Systems_SimConstants.FIELD_GOAL_REWARD;
+
+                // Worse than a punt from the same spot, because it is: the defense
+                // takes over seven yards further back than the line of scrimmage.
+                case Systems_PlayOutcome.FieldGoalMissed:
+                    return -Systems_SimConstants.FIELD_GOAL_MISS_PENALTY;
+
+                // Nearly free, and deliberately so. Punting is the CORRECT call on
+                // most fourth downs, and pricing it like a turnover would teach the
+                // offense to avoid the one decision that is usually right. The small
+                // cost that remains is the cost of not having converted — enough
+                // that a policy still prefers a first down to a punt from the same
+                // spot, and not so much that it never kicks.
+                case Systems_PlayOutcome.Punt:
+                    return -Systems_SimConstants.PUNT_PENALTY;
+
                 default:
                     return completionBonus;
             }

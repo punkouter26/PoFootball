@@ -61,6 +61,12 @@ namespace PoFootball.Agents
         private float _previousBallY;
         private float _previousBallDistance;
         private int _lastSeenEpisode = -1;
+        /// <summary>
+        /// Index of the play-call branch in the quarterback's discrete action space.
+        /// Branch 1 is the throw trigger; see Agent_ActionContract.For.
+        /// </summary>
+        private const int PLAY_CALL_BRANCH = 0;
+
         private bool _hasQuarterbackActions;
         private bool _isBlocker;
 
@@ -348,7 +354,56 @@ namespace PoFootball.Agents
                 hasBall ? _ball.Velocity : Vector2.zero,
                 hasBall ? _ball.State : Systems_BallState.Held,
                 hasPlay ? _play.Call : Systems_PlayCall.None,
-                hasPlay ? _play.LineOfScrimmageY : 0f);
+                hasPlay ? _play.LineOfScrimmageY : 0f,
+                hasPlay ? _play.Down : 1,
+                hasPlay ? _play.YardsToGo : Systems_GameRules.YARDS_TO_GAIN);
+        }
+
+        /// <summary>
+        /// Makes the kicking calls illegal everywhere they would be absurd, which is
+        /// how the quarterback learns WHEN to use them rather than only that they
+        /// exist.
+        ///
+        /// Masking rather than reward shaping, for two reasons. A punt on first down
+        /// is not a bad decision to be discouraged, it is not a decision at all, and
+        /// a policy should never spend exploration on it. And a field goal from
+        /// eighty yards is not a choice with a poor expected value — it cannot
+        /// happen, so letting the network propose it only teaches it to associate the
+        /// action with a penalty it would never have collected on a real field.
+        ///
+        /// Only the quarterback has this branch; every other brain is continuous-only
+        /// and never reaches here.
+        /// </summary>
+        public override void WriteDiscreteActionMask(IDiscreteActionMask actionMask)
+        {
+            if (!_hasQuarterbackActions || _play == null)
+            {
+                return;
+            }
+
+            bool isFourthDown = _play.Down >= Systems_GameRules.DOWNS_PER_SERIES;
+
+            actionMask.SetActionEnabled(
+                PLAY_CALL_BRANCH, (int)Systems_PlayCall.Punt, isFourthDown);
+
+            actionMask.SetActionEnabled(
+                PLAY_CALL_BRANCH,
+                (int)Systems_PlayCall.FieldGoal,
+                isFourthDown && IsInFieldGoalRange());
+        }
+
+        /// <summary>
+        /// Distance to the goal line plus the seventeen yards every real field goal
+        /// carries — ten of end zone and seven back to the hold.
+        /// </summary>
+        private bool IsInFieldGoalRange()
+        {
+            float yardsToGoalLine =
+                (Systems_FieldModel.ATTACKING_GOAL_LINE_Y - _play.LineOfScrimmageY)
+                / Systems_FieldModel.YARD;
+
+            return yardsToGoalLine + Systems_GameRules.FIELD_GOAL_SNAP_YARDS
+                <= Systems_GameRules.FIELD_GOAL_MAX_YARDS;
         }
 
         public override void OnActionReceived(ActionBuffers actions)
@@ -778,11 +833,22 @@ namespace PoFootball.Agents
             // it really out of options, and only then does it scramble.
             if (_isCarrier && _hasQuarterbackActions && IsHoldingThePocket())
             {
-                return new Vector2(
-                    position.x,
-                    _play.LineOfScrimmageY
-                        - (Systems_SimConstants.DROPBACK_DEPTH_YARDS
-                            * Systems_FieldModel.YARD));
+                float dropback = _play.LineOfScrimmageY
+                    - (Systems_SimConstants.DROPBACK_DEPTH_YARDS * Systems_FieldModel.YARD);
+
+                // AND NOT INTO OUR OWN END ZONE. The drop used to be an unclamped
+                // offset from the line of scrimmage, so any snap inside our own
+                // seven put the target point behind the goal line and the
+                // quarterback walked backwards over it — a safety, two points, and
+                // the ball, conceded by the scripted behaviour on purpose every
+                // time the offense was backed up. A real quarterback shortens the
+                // drop when there is no room behind him, which is exactly what
+                // taking the max does here.
+                float floor = Systems_FieldModel.OWN_GOAL_LINE_Y
+                    + (Systems_SimConstants.POCKET_GOAL_LINE_CUSHION_YARDS
+                        * Systems_FieldModel.YARD);
+
+                return new Vector2(position.x, Mathf.Max(dropback, floor));
             }
 
             if (_isCarrier)

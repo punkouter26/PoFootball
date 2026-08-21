@@ -297,8 +297,40 @@ namespace PoFootball.Tests
                 "throwing the ball away is punished harder than being dropped for no gain");
         }
 
+        /// <summary>
+        /// A safety is the floor of the reward function, and an interception is the
+        /// worst thing that can happen short of one.
+        ///
+        /// This test used to say an interception was the worst outcome outright, and
+        /// it was right until a safety became a distinct outcome. It is not a
+        /// close call: an interception costs the ball, while a safety costs the ball
+        /// AND two points, so anything that ranked them equal was mispricing the
+        /// difference between losing possession and being scored on.
+        /// </summary>
         [Test]
-        public void AnInterception_IsTheWorstOutcomeForTheOffense()
+        public void ASafety_IsTheWorstOutcomeForTheOffense()
+        {
+            float safety = Reward_Terminal.For(
+                Systems_TeamSide.Offense, Systems_PlayOutcome.Safety, 12f, false);
+
+            foreach (Systems_PlayOutcome outcome in
+                     System.Enum.GetValues(typeof(Systems_PlayOutcome)))
+            {
+                if (outcome == Systems_PlayOutcome.Safety)
+                {
+                    continue;
+                }
+
+                Assert.That(
+                    safety,
+                    Is.LessThanOrEqualTo(
+                        Reward_Terminal.For(Systems_TeamSide.Offense, outcome, 12f, false)),
+                    $"{outcome} is worse for the offense than conceding a safety");
+            }
+        }
+
+        [Test]
+        public void AnInterception_IsTheWorstOutcomeShortOfASafety()
         {
             float interception = Reward_Terminal.For(
                 Systems_TeamSide.Offense, Systems_PlayOutcome.Interception, 12f, false);
@@ -306,7 +338,8 @@ namespace PoFootball.Tests
             foreach (Systems_PlayOutcome outcome in
                      System.Enum.GetValues(typeof(Systems_PlayOutcome)))
             {
-                if (outcome == Systems_PlayOutcome.Interception)
+                if (outcome == Systems_PlayOutcome.Interception
+                    || outcome == Systems_PlayOutcome.Safety)
                 {
                     continue;
                 }
@@ -317,6 +350,52 @@ namespace PoFootball.Tests
                         Reward_Terminal.For(Systems_TeamSide.Offense, outcome, 12f, false)),
                     $"{outcome} is worse for the offense than a turnover");
             }
+        }
+
+        /// <summary>
+        /// Punting has to be cheap. It is the correct call on most fourth downs, and
+        /// a reward function that prices it like a turnover teaches the offense to
+        /// avoid the right decision — which is how you end up with a policy going for
+        /// it on 4th and 12 from its own 15.
+        /// </summary>
+        [Test]
+        public void Punting_CostsFarLessThanTurningTheBallOver()
+        {
+            float punt = Reward_Terminal.For(
+                Systems_TeamSide.Offense, Systems_PlayOutcome.Punt, 0f, false);
+            float interception = Reward_Terminal.For(
+                Systems_TeamSide.Offense, Systems_PlayOutcome.Interception, 0f, false);
+            float tackledShort = Reward_Terminal.For(
+                Systems_TeamSide.Offense, Systems_PlayOutcome.Tackle, -1f, false);
+
+            Assert.That(punt, Is.GreaterThan(interception));
+            Assert.That(
+                punt, Is.GreaterThan(tackledShort),
+                "punting must beat being dropped short of the sticks");
+            Assert.That(punt, Is.LessThan(0f), "a punt is still a drive that failed");
+        }
+
+        /// <summary>
+        /// Three points must stay clearly worth less than seven, or a policy learns
+        /// to stop driving at the twenty and take the kick every time.
+        /// </summary>
+        [Test]
+        public void AFieldGoal_PaysWellBelowATouchdown()
+        {
+            float fieldGoal = Reward_Terminal.For(
+                Systems_TeamSide.Offense, Systems_PlayOutcome.FieldGoalGood, 0f, false);
+            float touchdown = Reward_Terminal.For(
+                Systems_TeamSide.Offense, Systems_PlayOutcome.Touchdown, 0f, false);
+            float missed = Reward_Terminal.For(
+                Systems_TeamSide.Offense, Systems_PlayOutcome.FieldGoalMissed, 0f, false);
+            float punt = Reward_Terminal.For(
+                Systems_TeamSide.Offense, Systems_PlayOutcome.Punt, 0f, false);
+
+            Assert.That(fieldGoal, Is.GreaterThan(0f));
+            Assert.That(fieldGoal, Is.LessThan(touchdown * 0.6f));
+            Assert.That(
+                missed, Is.LessThan(punt),
+                "missing gives the ball up seven yards behind the line; punting does not");
         }
 
         // --- Role-shaped terms -------------------------------------------------

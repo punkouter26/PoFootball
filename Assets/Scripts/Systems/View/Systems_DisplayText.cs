@@ -107,6 +107,8 @@ namespace PoFootball.Views
                 case Systems_PlayCall.HandoffFullback: return "DIVE";
                 case Systems_PlayCall.HandoffHalfback: return "HANDOFF";
                 case Systems_PlayCall.Pass: return "PASS";
+                case Systems_PlayCall.Punt: return "PUNT";
+                case Systems_PlayCall.FieldGoal: return "FIELD GOAL";
                 default: return "NO CALL";
             }
         }
@@ -134,6 +136,10 @@ namespace PoFootball.Views
                 case Systems_PlayOutcome.Incompletion: return "INCOMPLETE";
                 case Systems_PlayOutcome.OutOfBounds: return "OUT OF BOUNDS";
                 case Systems_PlayOutcome.TimeExpired: return "PLAY OVER";
+                case Systems_PlayOutcome.Safety: return "SAFETY";
+                case Systems_PlayOutcome.Punt: return "PUNT";
+                case Systems_PlayOutcome.FieldGoalGood: return "FIELD GOAL IS GOOD";
+                case Systems_PlayOutcome.FieldGoalMissed: return "NO GOOD";
                 default: return "TACKLED";
             }
         }

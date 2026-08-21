@@ -68,8 +68,26 @@ namespace PoFootball.Agents
         /// numbers. Checkpoints exist on disk under results/football_base07 fitted
         /// against that, and they must not load here, which is the whole job of this
         /// stamp.
+        ///
+        /// Revision 5 changes what the quarterback's aim actions MEAN. Continuous
+        /// slots 2 and 3 used to be the throw direction, taken literally: the ball
+        /// left the hand along that vector whether or not anyone was standing on it.
+        /// They are now a direction of INTENT, resolved by
+        /// Systems_BallSystem.ResolveThrowDirection to whichever eligible receiver
+        /// on the throwing side best matches that bearing, led for the flight time.
+        /// Every shape is identical — 4 continuous, branches [5, 2] — so a revision
+        /// 4 brain would load without a murmur and then be steering a control it was
+        /// never fitted against. That is the same class of silent behavioural
+        /// mismatch as revision 2's latch timing, and the same reason this number
+        /// exists.
+        ///
+        /// It invalidates Assets/Agents/Football_v01 (football_base08). Those
+        /// checkpoints were fitted against the free-aim throw and will not load
+        /// here — Resources/PoFootballBrains.asset still stamps revision 4, so
+        /// Agent_BrainTable.MatchesCurrentContract is false and every player falls
+        /// back to Heuristic until a revision 5 run is trained and promoted.
         /// </summary>
-        public const int CONTRACT_REVISION = 4;
+        public const int CONTRACT_REVISION = 6;
 
         /// <summary>Continuous outputs every brain has: drive and steer.</summary>
         public const int BASE_CONTINUOUS_ACTIONS = 2;

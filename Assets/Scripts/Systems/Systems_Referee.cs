@@ -68,6 +68,21 @@ namespace PoFootball.Systems
 
             _play.AdvanceTick();
 
+            // A kick is resolved by the rules, not simulated. There is no kicking
+            // model here — the same reason the extra point is awarded rather than
+            // played — so the down is over the instant the quarterback commits to
+            // one, and Systems_GameFlowSystem works out where the ball goes from
+            // the line of scrimmage. Spotting it at the line rather than at the
+            // carrier keeps net yards at zero, which is what a kick actually gains
+            // the offense.
+            if (_play.CallIsLatched && IsKick(_play.Call))
+            {
+                EndPlay(
+                    KickOutcome(_play.Call),
+                    new Vector2(0f, _play.LineOfScrimmageY));
+                return;
+            }
+
             // The ball resolves first: a catch, an interception or an incompletion
             // must be settled before boundaries are judged against its new position.
             Systems_PlayOutcome ballOutcome = _ballSystem.Tick();
@@ -94,6 +109,34 @@ namespace PoFootball.Systems
             }
 
             EvaluateCarrier();
+        }
+
+        private static bool IsKick(Systems_PlayCall call)
+        {
+            return call == Systems_PlayCall.Punt || call == Systems_PlayCall.FieldGoal;
+        }
+
+        /// <summary>
+        /// A punt is always a punt. A field goal is good or short purely as a
+        /// function of its length, so the offense owns the outcome completely —
+        /// see Systems_GameRules.FIELD_GOAL_MAX_YARDS for why that is deterministic.
+        /// </summary>
+        private Systems_PlayOutcome KickOutcome(Systems_PlayCall call)
+        {
+            if (call == Systems_PlayCall.Punt)
+            {
+                return Systems_PlayOutcome.Punt;
+            }
+
+            float yardsToGoalLine =
+                (Systems_FieldModel.ATTACKING_GOAL_LINE_Y - _play.LineOfScrimmageY)
+                / Systems_FieldModel.YARD;
+
+            float attempt = yardsToGoalLine + Systems_GameRules.FIELD_GOAL_SNAP_YARDS;
+
+            return attempt <= Systems_GameRules.FIELD_GOAL_MAX_YARDS
+                ? Systems_PlayOutcome.FieldGoalGood
+                : Systems_PlayOutcome.FieldGoalMissed;
         }
 
         private void EvaluateCarrier()
@@ -205,7 +248,16 @@ namespace PoFootball.Systems
             _tacklePublisher.Publish(
                 new Systems_TackleMessage(tacklerId, carrier.Id, closingSpeed, _play.NetYards));
 
-            EndPlay(Systems_PlayOutcome.Tackle, spot);
+            // Down on or behind the offense's own goal line is a safety, not a
+            // tackle. Systems_GameFlowSystem derives the same thing independently
+            // from the spot when it awards the two points, so this changes no rule —
+            // it makes the outcome say what happened, which is what lets
+            // Reward_Terminal price it as the disaster it is.
+            EndPlay(
+                spot.y <= Systems_FieldModel.OWN_GOAL_LINE_Y
+                    ? Systems_PlayOutcome.Safety
+                    : Systems_PlayOutcome.Tackle,
+                spot);
         }
 
         private void EndPlay(Systems_PlayOutcome outcome, Vector2 spot)

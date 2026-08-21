@@ -290,6 +290,19 @@ namespace PoFootball.Models
         public const float DROPBACK_DEPTH_YARDS = 7f;
 
         /// <summary>
+        /// Yards of room the scripted quarterback keeps between the back of its
+        /// pocket and its own goal line.
+        ///
+        /// A full DROPBACK_DEPTH_YARDS drop from inside our own seven finishes
+        /// behind the goal line, and the quarterback took it — conceding a safety
+        /// on purpose whenever the offense was backed up, because the target point
+        /// was an unclamped offset from the line of scrimmage. Two yards is enough
+        /// that a tackle at the back of the pocket is still only a long loss rather
+        /// than two points.
+        /// </summary>
+        public const float POCKET_GOAL_LINE_CUSHION_YARDS = 2f;
+
+        /// <summary>
         /// How often the scripted quarterback takes a deep shot instead of the
         /// safest throw: one pass play in this many. 2 means every other one.
         ///
@@ -458,6 +471,57 @@ namespace PoFootball.Models
         /// the new reason never to throw.
         /// </summary>
         public const float INTERCEPTION_REWARD = 0.6f;
+
+        /// <summary>
+        /// What conceding a safety costs the offense.
+        ///
+        /// Above INTERCEPTION_REWARD (0.6) because a safety is strictly worse than a
+        /// turnover: the defense takes two points AND the ball, where an
+        /// interception only takes the ball. Below TOUCHDOWN_REWARD (1.0) so that
+        /// scoring stays the largest single number in the reward function and a
+        /// policy is never better off avoiding its own end zone than attacking the
+        /// other one.
+        ///
+        /// THIS IS THE TERM THAT WAS MISSING ENTIRELY. Before it, a quarterback
+        /// tackled in its own end zone was scored as a tackle for loss — worth
+        /// -(0.5 + 0.25) — so two points and possession cost 0.75, barely more than
+        /// being dropped for a yard anywhere else on the field. Retreating was
+        /// nearly free, and an undertrained quarterback duly retreated.
+        /// </summary>
+        public const float SAFETY_PENALTY = 0.85f;
+
+        /// <summary>
+        /// What a made field goal pays the offense.
+        ///
+        /// Roughly three sevenths of TOUCHDOWN_REWARD (1.0), because that is the
+        /// ratio of the points. The ratio is the part that matters: price three
+        /// points anywhere near seven and a policy learns to stop driving at the
+        /// twenty and take the kick, which is the single most common way a football
+        /// sim ends up looking nothing like football.
+        /// </summary>
+        public const float FIELD_GOAL_REWARD = 0.4f;
+
+        /// <summary>
+        /// What a missed field goal costs. Larger than PUNT_PENALTY because the miss
+        /// really is worse than a punt from the same spot — the defense takes over at
+        /// the spot of the kick, seven yards behind the line of scrimmage, instead of
+        /// forty yards downfield. That gap is what makes a long attempt a decision
+        /// rather than a free roll.
+        /// </summary>
+        public const float FIELD_GOAL_MISS_PENALTY = 0.35f;
+
+        /// <summary>
+        /// What punting costs the offense. Small on purpose.
+        ///
+        /// Punting is the RIGHT call on most fourth downs, and a reward function that
+        /// treats it like a turnover teaches the offense to avoid the correct
+        /// decision — you get a policy that goes for it on 4th and 12 from its own 15
+        /// because the alternative was priced as a mistake. What is left here is just
+        /// the cost of having failed to convert, so a first down from the same spot
+        /// still beats a punt, and a punt still beats being tackled short of the
+        /// sticks (-0.75).
+        /// </summary>
+        public const float PUNT_PENALTY = 0.12f;
 
         // --- Play-call diversity ---------------------------------------------
         /// <summary>

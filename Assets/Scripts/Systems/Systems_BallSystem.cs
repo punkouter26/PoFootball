@@ -167,6 +167,20 @@ namespace PoFootball.Systems
                     continue;
                 }
 
+                // Nor can an offensive lineman, who is an ineligible receiver.
+                // Excluding them from the TARGET list was not enough on its own:
+                // this method hands the ball to whoever is nearest inside the catch
+                // radius, and a pass thrown over the middle passes directly through
+                // the five bodies standing at the line — so the guard was catching
+                // throws that were aimed past him. Only the offensive line is
+                // filtered; DefensiveLine is a separate role and keeps its
+                // interception, which is the whole reason a rusher batting a ball
+                // down has to stay possible.
+                if (candidate.Role == Systems_PlayerRole.OffensiveLine)
+                {
+                    continue;
+                }
+
                 float distance = Vector2.Distance(candidate.Position, _ball.Position);
                 if (distance <= bestDistance)
                 {

@@ -43,6 +43,15 @@ namespace PoFootball.Views
         private const int BALL_TEXTURE_WIDTH = 40;
         private const int BALL_TEXTURE_HEIGHT = 64;
 
+        /// <summary>
+        /// Lower than the texture height, so the sprite is longer than one world
+        /// unit before the transform's own 0.36 scale. At a true 1:1 the ball came
+        /// out about six screen pixels at broadcast framing — the brown was there
+        /// but nothing could be read on it, and against the cream carrier glow it
+        /// vanished into the shape it was sitting on.
+        /// </summary>
+        private const float BALL_PIXELS_PER_UNIT = 42f;
+
         [SerializeField] private float _zOffset = -1f;
 
         /// <summary>
@@ -197,7 +206,7 @@ namespace PoFootball.Views
                 texture,
                 new Rect(0f, 0f, BALL_TEXTURE_WIDTH, BALL_TEXTURE_HEIGHT),
                 new Vector2(0.5f, 0.5f),
-                BALL_TEXTURE_HEIGHT);
+                BALL_PIXELS_PER_UNIT);
 
             sprite.name = "PoFootball_Ball";
             sprite.hideFlags = HideFlags.HideAndDontSave;

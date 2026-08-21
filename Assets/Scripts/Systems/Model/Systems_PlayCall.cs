@@ -22,6 +22,22 @@ namespace PoFootball.Models
 
         HandoffHalfback = 3,
 
-        Pass = 4
+        Pass = 4,
+
+        /// <summary>
+        /// Kick it away and give the other side the ball. Resolved at the rules
+        /// layer rather than simulated — there is no kicking model here, and
+        /// inventing a random one would put noise into field position that no
+        /// policy can influence (the same reason the extra point is awarded).
+        /// Legal on fourth down only; Agent_FootballPlayer masks it everywhere else.
+        /// </summary>
+        Punt = 5,
+
+        /// <summary>
+        /// Three points from where the ball is spotted. Masked out on downs one to
+        /// three, and masked out on fourth down whenever the attempt would be
+        /// longer than Systems_GameRules.FIELD_GOAL_MAX_YARDS.
+        /// </summary>
+        FieldGoal = 6
     }
 }

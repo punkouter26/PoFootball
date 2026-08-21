@@ -34,13 +34,28 @@ namespace PoFootball.Tests
 
             for (int episode = 0; episode < 250; episode++)
             {
+                // Same draw order as Systems_RandomSpotProvider.NextSituation:
+                // spot, then down, then distance. The determinism guarantee covers
+                // the whole situation now, not just the spot.
                 float expectedY = expected.NextFloat(
                     Systems_FieldModel.LOS_MIN_Y, Systems_FieldModel.LOS_MAX_Y);
+                int expectedDown = expected.NextInt(1, Systems_GameRules.DOWNS_PER_SERIES + 1);
+                float expectedYardsToGo = expected.NextFloat(1f, 15f);
+
+                Systems_PlaySituation situation = provider.NextSituation();
 
                 Assert.That(
-                    provider.NextLineOfScrimmageY(),
+                    situation.LineOfScrimmageY,
                     Is.EqualTo(expectedY),
                     $"episode {episode} drew a different line of scrimmage");
+                Assert.That(
+                    situation.Down,
+                    Is.EqualTo(expectedDown),
+                    $"episode {episode} drew a different down");
+                Assert.That(
+                    situation.YardsToGo,
+                    Is.EqualTo(expectedYardsToGo),
+                    $"episode {episode} drew a different distance");
             }
         }
 
@@ -52,10 +67,16 @@ namespace PoFootball.Tests
 
             for (int episode = 0; episode < 500; episode++)
             {
-                float y = provider.NextLineOfScrimmageY();
+                Systems_PlaySituation situation = provider.NextSituation();
 
-                Assert.That(y, Is.GreaterThanOrEqualTo(Systems_FieldModel.LOS_MIN_Y));
-                Assert.That(y, Is.LessThanOrEqualTo(Systems_FieldModel.LOS_MAX_Y));
+                Assert.That(
+                    situation.LineOfScrimmageY,
+                    Is.GreaterThanOrEqualTo(Systems_FieldModel.LOS_MIN_Y));
+                Assert.That(
+                    situation.LineOfScrimmageY,
+                    Is.LessThanOrEqualTo(Systems_FieldModel.LOS_MAX_Y));
+                Assert.That(situation.Down, Is.InRange(1, Systems_GameRules.DOWNS_PER_SERIES));
+                Assert.That(situation.YardsToGo, Is.InRange(1f, 15f));
             }
         }
 
@@ -81,7 +102,7 @@ namespace PoFootball.Tests
             for (int episode = 0; episode < 500; episode++)
             {
                 Assert.That(provider.HasNextPlay, Is.True);
-                provider.NextLineOfScrimmageY();
+                provider.NextSituation();
             }
         }
     }

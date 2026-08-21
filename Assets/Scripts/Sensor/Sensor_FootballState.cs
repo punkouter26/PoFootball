@@ -25,10 +25,17 @@ namespace PoFootball.Sensors
         /// Must equal BrainParameters.VectorObservationSize or ML-Agents throws at
         /// the first step. Agent_FootballPlayer sets that field from this constant.
         /// </summary>
-        public const int OBSERVATION_SIZE = 32;
+        public const int OBSERVATION_SIZE = 36;
 
-        /// <summary>Number of real play calls, excluding None. Width of the call one-hot.</summary>
-        public const int PLAY_CALL_SLOTS = 4;
+        /// <summary>
+        /// Number of real play calls, excluding None. Width of the call one-hot.
+        ///
+        /// Went 4 -> 6 when Punt and FieldGoal were added, which is why
+        /// OBSERVATION_SIZE went 32 -> 34: the one-hot is written straight into the
+        /// observation vector, so every extra call is another float every agent
+        /// reads. Both numbers are checked by Tools/promote_brain.py.
+        /// </summary>
+        public const int PLAY_CALL_SLOTS = 6;
 
         /// <summary>
         /// Size of the quarterback's play-call discrete branch: the four real calls
@@ -52,6 +59,14 @@ namespace PoFootball.Sensors
         public const int PLAY_CALL_BRANCH_SIZE = PLAY_CALL_SLOTS + 1;
 
         /// <summary>
+        /// Distance at which yards-to-go is treated as "long" and the observation
+        /// saturates. Past about fifteen the exact number stops changing anyone's
+        /// job, and clamping keeps the value inside [0, 1] like every other float
+        /// in this vector.
+        /// </summary>
+        private const float LONG_YARDAGE_YARDS = 15f;
+
+        /// <summary>
         /// Fills <paramref name="buffer"/> with exactly OBSERVATION_SIZE values,
         /// all within [-1, 1].
         ///
@@ -71,7 +86,9 @@ namespace PoFootball.Sensors
             Vector2 ballVelocity,
             Systems_BallState ballState,
             Systems_PlayCall call,
-            float lineOfScrimmageY)
+            float lineOfScrimmageY,
+            int down,
+            float yardsToGo)
         {
             int cursor = 0;
 
@@ -119,7 +136,19 @@ namespace PoFootball.Sensors
             buffer[cursor++] = NormalizeRange(Systems_FieldModel.HALF_WIDTH + position.x);
             buffer[cursor++] = NormalizeRange(lineOfScrimmageY - position.y);
 
-            // Play call one-hot: 4, offense only.
+            // The situation: 2. Down normalized to [0, 1] across the four downs,
+            // and distance normalized against a long-yardage cap.
+            //
+            // Every player sees these, not just the offense. A defense that cannot
+            // tell third and one from third and fifteen has no basis for playing the
+            // run or dropping into coverage, and the down is public information on a
+            // real field — it is on the scoreboard. Only the play CALL is hidden,
+            // and that stays hidden below.
+            buffer[cursor++] =
+                Mathf.Clamp01((down - 1f) / (Systems_GameRules.DOWNS_PER_SERIES - 1f));
+            buffer[cursor++] = Mathf.Clamp01(yardsToGo / LONG_YARDAGE_YARDS);
+
+            // Play call one-hot: 6, offense only.
             bool isOffense = Systems_RoleTable.SideOf(role) == Systems_TeamSide.Offense;
 
             for (int callIndex = 0; callIndex < PLAY_CALL_SLOTS; callIndex++)
@@ -144,11 +173,14 @@ namespace PoFootball.Sensors
             Vector2 ballVelocity,
             Systems_BallState ballState,
             Systems_PlayCall call,
-            float lineOfScrimmageY)
+            float lineOfScrimmageY,
+            int down,
+            float yardsToGo)
         {
             Write(
                 buffer, field, role, position, velocity, rotationDegrees, fatigue,
-                isCarrier, ballPosition, ballVelocity, ballState, call, lineOfScrimmageY);
+                isCarrier, ballPosition, ballVelocity, ballState, call, lineOfScrimmageY,
+                down, yardsToGo);
 
             sensor.AddObservation(buffer);
         }

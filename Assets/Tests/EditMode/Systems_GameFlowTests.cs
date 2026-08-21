@@ -105,31 +105,46 @@ namespace PoFootball.Tests
                 outcome, call, new Vector2(0f, spotY), 0f, physicsTicks, false));
         }
 
+        /// <summary>
+        /// Reads the touchback spot from the rule rather than a literal, so a change
+        /// to KICKOFF_TOUCHBACK_YARD_LINE moves the expectation with it. These tests
+        /// hardcoded 25 and all failed together the day the constant became the 2025
+        /// dynamic-kickoff 35 — which told us nothing about the chains, only that a
+        /// number had moved.
+        /// </summary>
+        private static float StartYardLine => Systems_GameRules.KICKOFF_TOUCHBACK_YARD_LINE;
+
         [Test]
-        public void KickOff_StartsFirstAndTenFromOwnTwentyFive()
+        public void KickOff_StartsFirstAndTenFromTheTouchbackSpot()
         {
             Assert.That(_game.Phase, Is.EqualTo(Systems_GamePhase.Playing));
             Assert.That(_game.Down, Is.EqualTo(1));
             Assert.That(_game.YardsToGo, Is.EqualTo(10f).Within(0.01f));
-            Assert.That(YardLineOf(_game.LineOfScrimmageY), Is.EqualTo(25f).Within(0.1f));
+            Assert.That(
+                YardLineOf(_game.LineOfScrimmageY),
+                Is.EqualTo(StartYardLine).Within(0.1f));
             Assert.That(_game.Possession, Is.EqualTo(Systems_TeamId.Home));
         }
 
         [Test]
         public void Gain_PastTheChains_IsAFirstDown()
         {
-            EndPlayAt(OwnYard(36f));
+            // One yard past the sticks.
+            EndPlayAt(OwnYard(StartYardLine + 11f));
 
             Assert.That(_resolved.Last.Result, Is.EqualTo(Systems_DownResult.FirstDown));
             Assert.That(_game.Down, Is.EqualTo(1));
             Assert.That(_game.YardsToGo, Is.EqualTo(10f).Within(0.01f));
-            Assert.That(YardLineOf(_game.LineOfScrimmageY), Is.EqualTo(36f).Within(0.1f));
+            Assert.That(
+                YardLineOf(_game.LineOfScrimmageY),
+                Is.EqualTo(StartYardLine + 11f).Within(0.1f));
         }
 
         [Test]
         public void Gain_ShortOfTheChains_AdvancesTheDownAndShortensTheDistance()
         {
-            EndPlayAt(OwnYard(28f));
+            // Three yards gained, seven still to go.
+            EndPlayAt(OwnYard(StartYardLine + 3f));
 
             Assert.That(_resolved.Last.Result, Is.EqualTo(Systems_DownResult.NextDown));
             Assert.That(_game.Down, Is.EqualTo(2));
@@ -139,7 +154,8 @@ namespace PoFootball.Tests
         [Test]
         public void Loss_IncreasesTheDistanceToGo()
         {
-            EndPlayAt(OwnYard(21f));
+            // Four yards lost, so fourteen to go instead of ten.
+            EndPlayAt(OwnYard(StartYardLine - 4f));
 
             Assert.That(_game.Down, Is.EqualTo(2));
             Assert.That(_game.YardsToGo, Is.EqualTo(14f).Within(0.1f));
@@ -216,7 +232,7 @@ namespace PoFootball.Tests
             Assert.That(_game.HomeScore, Is.EqualTo(7));
             Assert.That(_game.AwayScore, Is.EqualTo(0));
             Assert.That(_game.Possession, Is.EqualTo(Systems_TeamId.Away));
-            Assert.That(YardLineOf(_game.LineOfScrimmageY), Is.EqualTo(25f).Within(0.1f));
+            Assert.That(YardLineOf(_game.LineOfScrimmageY), Is.EqualTo(StartYardLine).Within(0.1f));
         }
 
         [Test]
@@ -228,7 +244,7 @@ namespace PoFootball.Tests
             Assert.That(_game.AwayScore, Is.EqualTo(2));
             Assert.That(_game.HomeScore, Is.EqualTo(0));
             Assert.That(_game.Possession, Is.EqualTo(Systems_TeamId.Away));
-            Assert.That(YardLineOf(_game.LineOfScrimmageY), Is.EqualTo(20f).Within(0.1f));
+            Assert.That(YardLineOf(_game.LineOfScrimmageY), Is.EqualTo(Systems_GameRules.SAFETY_FREE_KICK_RESULT_YARD_LINE).Within(0.1f));
         }
 
         [Test]
@@ -259,7 +275,7 @@ namespace PoFootball.Tests
         [Test]
         public void Clock_RunsDownWhileTheBallIsLive()
         {
-            _play.BeginEpisode(_game.LineOfScrimmageY, _game.LineOfScrimmageY);
+            _play.BeginEpisode(_game.LineOfScrimmageY, _game.LineOfScrimmageY, 1, Systems_GameRules.YARDS_TO_GAIN);
             _play.Snap();
 
             float before = _game.SecondsRemaining;
@@ -278,7 +294,7 @@ namespace PoFootball.Tests
         [Test]
         public void Clock_DoesNotRunWhileTheBallIsDead()
         {
-            _play.BeginEpisode(_game.LineOfScrimmageY, _game.LineOfScrimmageY);
+            _play.BeginEpisode(_game.LineOfScrimmageY, _game.LineOfScrimmageY, 1, Systems_GameRules.YARDS_TO_GAIN);
 
             float before = _game.SecondsRemaining;
 
@@ -337,7 +353,7 @@ namespace PoFootball.Tests
 
             Assert.That(_game.Quarter, Is.EqualTo(3));
             Assert.That(_game.Possession, Is.EqualTo(Systems_TeamId.Away));
-            Assert.That(YardLineOf(_game.LineOfScrimmageY), Is.EqualTo(25f).Within(0.1f));
+            Assert.That(YardLineOf(_game.LineOfScrimmageY), Is.EqualTo(StartYardLine).Within(0.1f));
         }
 
         [Test]
@@ -399,8 +415,8 @@ namespace PoFootball.Tests
             int playsAtFinal = _game.PlaysRun;
 
             // Exactly what the director would have done if nothing stopped it.
-            _flow.NextLineOfScrimmageY();
-            _flow.NextLineOfScrimmageY();
+            _flow.NextSituation();
+            _flow.NextSituation();
 
             Assert.That(_game.PlaysRun, Is.EqualTo(playsAtFinal));
         }
@@ -421,7 +437,7 @@ namespace PoFootball.Tests
         /// </summary>
         private void BurnQuarterToZero()
         {
-            _play.BeginEpisode(_game.LineOfScrimmageY, _game.LineOfScrimmageY);
+            _play.BeginEpisode(_game.LineOfScrimmageY, _game.LineOfScrimmageY, 1, Systems_GameRules.YARDS_TO_GAIN);
             _play.Snap();
 
             int guard = 0;
@@ -436,5 +452,96 @@ namespace PoFootball.Tests
 
             Assert.That(_game.SecondsRemaining, Is.Zero, "clock should have reached 0:00");
         }
+
+        // --- Kicking -----------------------------------------------------------
+
+        /// <summary>
+        /// A punt from the middle of the field: forty net yards, then the receiving
+        /// team takes over in its own frame. Own 35 + 40 = our 75, which is their 25.
+        /// </summary>
+        [Test]
+        public void APunt_GivesTheBallUpFortyNetYardsDownfield()
+        {
+            EndPlayAt(
+                OwnYard(StartYardLine),
+                Systems_PlayOutcome.Punt,
+                Systems_PlayCall.Punt);
+
+            Assert.That(_resolved.Last.Result, Is.EqualTo(Systems_DownResult.Punt));
+            Assert.That(_game.Possession, Is.EqualTo(Systems_TeamId.Away));
+            Assert.That(_game.Down, Is.EqualTo(1));
+            Assert.That(
+                YardLineOf(_game.LineOfScrimmageY),
+                Is.EqualTo(100f - (StartYardLine + Systems_GameRules.PUNT_NET_YARDS))
+                    .Within(0.5f));
+        }
+
+        /// <summary>
+        /// A punt from inside the opponent's forty would land in the end zone, which
+        /// is a touchback at the 20 — NOT the 35 a kickoff touchback uses.
+        /// </summary>
+        [Test]
+        public void APuntIntoTheEndZone_IsATouchbackAtTheTwenty()
+        {
+            // Drive to our own 70 first. A kick is measured from the LINE OF
+            // SCRIMMAGE, not from where the previous ball died, so the spot passed
+            // to EndPlayAt below is deliberately irrelevant.
+            EndPlayAt(OwnYard(70f));
+
+            EndPlayAt(
+                OwnYard(70f),
+                Systems_PlayOutcome.Punt,
+                Systems_PlayCall.Punt);
+
+            Assert.That(_game.Possession, Is.EqualTo(Systems_TeamId.Away));
+            Assert.That(
+                YardLineOf(_game.LineOfScrimmageY),
+                Is.EqualTo(Systems_GameRules.PUNT_TOUCHBACK_YARD_LINE).Within(0.5f));
+        }
+
+        [Test]
+        public void AMadeFieldGoal_ScoresThreeAndKicksOff()
+        {
+            int before = _game.HomeScore;
+
+            EndPlayAt(
+                OwnYard(70f),
+                Systems_PlayOutcome.FieldGoalGood,
+                Systems_PlayCall.FieldGoal);
+
+            Assert.That(_resolved.Last.Result, Is.EqualTo(Systems_DownResult.FieldGoalGood));
+            Assert.That(
+                _game.HomeScore - before,
+                Is.EqualTo(Systems_GameRules.FIELD_GOAL_POINTS));
+            Assert.That(_game.Possession, Is.EqualTo(Systems_TeamId.Away));
+            Assert.That(
+                YardLineOf(_game.LineOfScrimmageY),
+                Is.EqualTo(Systems_GameRules.KICKOFF_TOUCHBACK_YARD_LINE).Within(0.5f));
+        }
+
+        /// <summary>
+        /// A miss hands over the ball at the SPOT OF THE KICK — seven yards behind
+        /// the line of scrimmage — which is what makes a long attempt a gamble.
+        /// </summary>
+        [Test]
+        public void AMissedFieldGoal_GivesTheBallUpBehindTheLineOfScrimmage()
+        {
+            EndPlayAt(OwnYard(60f));
+
+            EndPlayAt(
+                OwnYard(60f),
+                Systems_PlayOutcome.FieldGoalMissed,
+                Systems_PlayCall.FieldGoal);
+
+            Assert.That(_resolved.Last.Result, Is.EqualTo(Systems_DownResult.FieldGoalMissed));
+            Assert.That(_game.Possession, Is.EqualTo(Systems_TeamId.Away));
+            Assert.That(_game.HomeScore, Is.EqualTo(0));
+
+            // Kick from our 60 - 17 = our 43, which is their 57.
+            Assert.That(
+                YardLineOf(_game.LineOfScrimmageY),
+                Is.EqualTo(100f - (60f - Systems_GameRules.FIELD_GOAL_SNAP_YARDS)).Within(0.5f));
+        }
+
     }
 }

@@ -64,20 +64,78 @@ namespace PoFootball.Models
         /// The try after a touchdown is awarded rather than simulated. There is no
         /// kicking model in this sim and inventing a random one would put noise
         /// into the score that no policy can influence.
+        ///
+        /// It stays awarded even now that FIELD_GOAL_MAX_YARDS exists, and the two
+        /// are consistent rather than contradictory: a real extra point is a 33-yard
+        /// kick, comfortably inside the 55-yard range below, so simulating it would
+        /// return "good" every single time anyway.
         /// </summary>
         public const int EXTRA_POINT_POINTS = 1;
 
         public const int SAFETY_POINTS = 2;
 
+        public const int FIELD_GOAL_POINTS = 3;
+
+        // --- Kicking ---------------------------------------------------------
+        /// <summary>
+        /// Yards added to the distance-to-goal-line to get the real length of a
+        /// field goal: ten yards of end zone plus seven yards from the line of
+        /// scrimmage back to the hold. A kick from the opponent's 30 is therefore a
+        /// 47-yarder, which is how every broadcast and every kicker measures it.
+        /// </summary>
+        public const float FIELD_GOAL_SNAP_YARDS = 17f;
+
+        /// <summary>
+        /// Longest field goal that goes in. Beyond it the attempt is short.
+        ///
+        /// DETERMINISTIC ON PURPOSE, AND THIS IS A REAL SIMPLIFICATION. Actual NFL
+        /// kickers are a curve, not a cliff: roughly 95% inside 30 yards, 85% from
+        /// 30-39, 75% from 40-49, 60% from 50-59, and about 35% from 60 and out. A
+        /// sampled curve would be more faithful and would also inject variance the
+        /// offense cannot influence — exactly the objection EXTRA_POINT_POINTS
+        /// already raises against simulating the try. 55 sits in the middle of the
+        /// real 50-59 band, so "inside 55" stands in for "makeable" while keeping
+        /// the outcome a pure function of field position, which is something a
+        /// policy can actually learn to exploit.
+        /// </summary>
+        public const float FIELD_GOAL_MAX_YARDS = 55f;
+
+        /// <summary>
+        /// Net yards a punt gains, measured from the line of scrimmage to where the
+        /// receiving team next snaps it. NFL net punting averages sit in the high
+        /// thirties to low forties; 40 is the round number in the middle of that.
+        ///
+        /// Flat rather than a function of field position, so the DECISION to punt is
+        /// what gets learned rather than the execution of it. A punter who is better
+        /// when backed up is a detail this sim has no model for.
+        /// </summary>
+        public const float PUNT_NET_YARDS = 40f;
+
         // --- Field position after a dead ball --------------------------------
-        /// <summary>Own yard line a team starts from after conceding a touchdown.</summary>
-        public const float TOUCHBACK_YARD_LINE = 25f;
+        /// <summary>
+        /// Where a punt that reaches the end zone is spotted: the receiving team's
+        /// own 20. Deliberately NOT the same constant as a kickoff touchback —
+        /// they are different rules and different yard lines, and this sim used to
+        /// run both through one 25.
+        /// </summary>
+        public const float PUNT_TOUCHBACK_YARD_LINE = 20f;
 
-        /// <summary>Own yard line the scoring team's opponent starts from after a safety.</summary>
-        public const float SAFETY_RESTART_YARD_LINE = 20f;
+        /// <summary>
+        /// Where a kickoff touchback is spotted: the receiving team's own 35, per
+        /// the 2025 dynamic-kickoff rule. Used at the start of each half and after
+        /// every score.
+        /// </summary>
+        public const float KICKOFF_TOUCHBACK_YARD_LINE = 35f;
 
-        /// <summary>Own yard line each half opens from.</summary>
-        public const float KICKOFF_YARD_LINE = 25f;
+        /// <summary>
+        /// Where the team that was awarded a safety takes over.
+        ///
+        /// The conceding team free-kicks from its own 20 and that kick is returned,
+        /// so the scoring side starts around its own 40 in practice. This sim used
+        /// to hand the scoring team the ball on its OWN 20 — punishing the side that
+        /// had just made a play, and making a safety close to a wash.
+        /// </summary>
+        public const float SAFETY_FREE_KICK_RESULT_YARD_LINE = 40f;
 
         /// <summary>
         /// A drive may not start inside an end zone, so every computed line of
