@@ -1,46 +1,36 @@
 namespace PoFootball.Models
 {
     /// <summary>
-    /// Which policy a player is driven by. Six groups, so the trainer config
-    /// carries six behaviors each with its own self_play block and its own
-    /// Self-play/ELO curve (acceptance criterion #22).
+    /// Which policy a player runs. One entry per ML-Agents behavior name.
     ///
-    /// The string names must match the behavior keys in Config/FootballBase04.yaml
-    /// exactly, or the handshake succeeds but the agent never receives actions.
-    /// Systems_RoleTableTests asserts that mapping stays total and stable.
+    /// WENT FROM SIX TO THREE FOR MA-POCA, AND THE REASON IS A HARD CONSTRAINT
+    /// RATHER THAN A PREFERENCE. A SimpleMultiAgentGroup cannot span behavior
+    /// names: mlagents' TrainerController builds one AgentManager per
+    /// name_behavior_id and the groupmate dictionaries are instance fields on it,
+    /// so agents registered into one group from two behaviors never see each other
+    /// as team-mates. C# accepts the registration without complaint — the group is
+    /// a bare HashSet&lt;Agent&gt; — and you get a "centralized" critic centralized
+    /// over a fraction of the side, silently.
     ///
-    /// WHY SIX AND NOT FOUR
-    /// --------------------
-    /// Through football_base03 the quarterback shared OffenseSkill with the backs,
-    /// the receivers and the tight end. Only one of those five role types ever read
-    /// the play-call branch, the throw trigger or the aim vector, so:
+    /// So OffenseLine and OffenseSkill merged into <see cref="Offense"/>, and
+    /// DefenseLine, DefenseBox and DefenseSecondary merged into
+    /// <see cref="Defense"/>. All of them already shared an action space (two
+    /// continuous outputs) and an observation vector, and the player's role is a
+    /// one-hot inside that vector, so a merged policy can still tell a guard from a
+    /// receiver.
     ///
-    ///   - the gradient carrying "which play should I call" was diluted roughly
-    ///     five to one by players whose call output is never read;
-    ///   - four role types were trained on four continuous and two discrete
-    ///     outputs that do nothing, which is capacity spent learning to be ignored;
-    ///   - the entropy bonus was spread over six action heads at once, which is
-    ///     how Policy/Entropy stayed near 3.5 while the play-call branch collapsed
-    ///     to a single option 93% of the time.
-    ///
-    /// The quarterback is now alone on its own brain with the only non-trivial
-    /// action space in the game. The defensive cover brain split for the same
-    /// reason at lower stakes: a linebacker filling a gap and a safety playing
-    /// centre field want opposite things from the same observation.
+    /// The quarterback stayed separate, which is the whole point of keeping three
+    /// rather than two. It is the only behavior with discrete actions, and it was
+    /// split out of OffenseSkill in the first place because sharing diluted its
+    /// play-call gradient five to one and pinned its entropy bonus to whatever
+    /// suited four other players' steering. Merging it back to satisfy POCA would
+    /// have re-created the exact bug the split fixed, and would have forced ten
+    /// linemen and receivers to carry a discrete action space they never use.
     /// </summary>
     public enum Systems_BrainGroup
     {
-        OffenseLine = 0,
-        OffenseSkill = 1,
-        DefenseLine = 2,
-
-        /// <summary>Linebackers. Was folded into DefenseCover before base04.</summary>
-        DefenseBox = 3,
-
-        /// <summary>Cornerbacks and safeties. Was folded into DefenseCover before base04.</summary>
-        DefenseSecondary = 4,
-
-        /// <summary>The quarterback, alone. The only brain with discrete actions.</summary>
-        Quarterback = 5
+        Offense = 0,
+        Defense = 1,
+        Quarterback = 2
     }
 }

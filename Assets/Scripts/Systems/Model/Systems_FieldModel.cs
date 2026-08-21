@@ -42,10 +42,30 @@ namespace PoFootball.Models
 
         /// <summary>
         /// Line of scrimmage is drawn from this range each episode: from the
-        /// offense's own 10 to the opponent's 40 (acceptance criteria, Episode variety).
+        /// offense's own 10 to the opponent's 5.
+        ///
+        /// THE FAR END USED TO BE THE OPPONENT'S 40, AND THAT MADE THE FIELD GOAL
+        /// UNREACHABLE. A kick is in range when the attempt — distance to the goal
+        /// line plus Systems_GameRules.FIELD_GOAL_SNAP_YARDS — is inside
+        /// FIELD_GOAL_MAX_YARDS, which works out at the opponent's 38 or closer.
+        /// Capping the draw at the 40 meant every training snap in the project's
+        /// history was out of range, Agent_FootballPlayer masked FieldGoal off on
+        /// one hundred percent of plays, and `Call/FieldGoal` read exactly 0.0000
+        /// for the whole of base09's first attempt. The quarterback could not have
+        /// learned when to kick because it was never once allowed to.
+        ///
+        /// The same cap meant the offense had never taken a single rep in scoring
+        /// territory, which is its own problem and probably part of why earlier runs
+        /// produced such odd football: the red zone is where drives are decided and
+        /// no policy had ever seen it.
+        ///
+        /// The 5 keeps a snap clear of the goal line by more than
+        /// Systems_GameRules.MIN_YARDS_FROM_GOAL_LINE while putting spots on BOTH
+        /// sides of the field-goal boundary, which is what the kick-or-go decision
+        /// needs in order to be learnable at all.
         /// </summary>
         public const float LOS_MIN_Y = OWN_GOAL_LINE_Y + (10f * YARD);
-        public const float LOS_MAX_Y = ATTACKING_GOAL_LINE_Y - (40f * YARD);
+        public const float LOS_MAX_Y = ATTACKING_GOAL_LINE_Y - (5f * YARD);
 
         public bool IsOutsideSidelines(float x)
         {

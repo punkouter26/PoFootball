@@ -41,18 +41,13 @@ namespace PoFootball.Models
                 case Systems_PlayerRole.Quarterback:
                     return Systems_BrainGroup.Quarterback;
                 case Systems_PlayerRole.OffensiveLine:
-                    return Systems_BrainGroup.OffenseLine;
                 case Systems_PlayerRole.RunningBack:
                 case Systems_PlayerRole.Fullback:
                 case Systems_PlayerRole.WideReceiver:
                 case Systems_PlayerRole.TightEnd:
-                    return Systems_BrainGroup.OffenseSkill;
-                case Systems_PlayerRole.DefensiveLine:
-                    return Systems_BrainGroup.DefenseLine;
-                case Systems_PlayerRole.Linebacker:
-                    return Systems_BrainGroup.DefenseBox;
+                    return Systems_BrainGroup.Offense;
                 default:
-                    return Systems_BrainGroup.DefenseSecondary;
+                    return Systems_BrainGroup.Defense;
             }
         }
 
@@ -64,16 +59,10 @@ namespace PoFootball.Models
         {
             switch (group)
             {
-                case Systems_BrainGroup.OffenseLine:
-                    return "OffenseLine";
-                case Systems_BrainGroup.OffenseSkill:
-                    return "OffenseSkill";
-                case Systems_BrainGroup.DefenseLine:
-                    return "DefenseLine";
-                case Systems_BrainGroup.DefenseBox:
-                    return "DefenseBox";
-                case Systems_BrainGroup.DefenseSecondary:
-                    return "DefenseSecondary";
+                case Systems_BrainGroup.Offense:
+                    return "Offense";
+                case Systems_BrainGroup.Defense:
+                    return "Defense";
                 default:
                     return "Quarterback";
             }

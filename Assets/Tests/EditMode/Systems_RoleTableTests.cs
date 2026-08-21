@@ -15,12 +15,12 @@ namespace PoFootball.Tests
         /// run-id are paired by name (UNITY_RULES §1).
         /// </summary>
         /// <summary>
-        /// The current anchor config — see the note on the same constant in
-        /// Systems_ContractTests. It pointed at an archived file, so both tests
-        /// below have been failing on "config not found" rather than checking
-        /// anything.
+        /// Filename prefix of the anchor configs — see the matching note in
+        /// Systems_ContractTests. Discovered rather than hardcoded, because the
+        /// hardcoded form pointed at an archived file once and at a superseded one
+        /// again, and a guard that cannot find its config guards nothing.
         /// </summary>
-        private const string CONFIG_FILE_NAME = "FootballBase06.yaml";
+        private const string CONFIG_FILE_PREFIX = "FootballBase";
 
         /// <summary>
         /// The single highest-value assertion in the suite. Behavior names are
@@ -41,7 +41,7 @@ namespace PoFootball.Tests
                 Assert.That(
                     yaml.Contains($"  {behaviorName}:"),
                     Is.True,
-                    $"behavior '{behaviorName}' has no matching key in {CONFIG_FILE_NAME}");
+                    $"behavior '{behaviorName}' has no matching key in {CurrentConfigName()}");
             }
         }
 
@@ -102,7 +102,7 @@ namespace PoFootball.Tests
 
                 Assert.That(
                     known, Is.True,
-                    $"'{key}' is a behavior in {CONFIG_FILE_NAME} that no Systems_BrainGroup maps to");
+                    $"'{key}' is a behavior in {CurrentConfigName()} that no Systems_BrainGroup maps to");
             }
         }
 
@@ -130,12 +130,12 @@ namespace PoFootball.Tests
                 counts[(int)Systems_RoleTable.BrainOf(Systems_Formation.GetSlot(index).Role)]++;
             }
 
-            Assert.That(counts[(int)Systems_BrainGroup.OffenseLine], Is.EqualTo(5));
-            Assert.That(counts[(int)Systems_BrainGroup.OffenseSkill], Is.EqualTo(5));
+            // Ten and eleven, not five/five and four/three/four: the behaviours
+            // merged for MA-POCA, because a multi-agent group cannot span behavior
+            // names. The quarterback stays alone — see Systems_BrainGroup.
+            Assert.That(counts[(int)Systems_BrainGroup.Offense], Is.EqualTo(10));
             Assert.That(counts[(int)Systems_BrainGroup.Quarterback], Is.EqualTo(1));
-            Assert.That(counts[(int)Systems_BrainGroup.DefenseLine], Is.EqualTo(4));
-            Assert.That(counts[(int)Systems_BrainGroup.DefenseBox], Is.EqualTo(3));
-            Assert.That(counts[(int)Systems_BrainGroup.DefenseSecondary], Is.EqualTo(4));
+            Assert.That(counts[(int)Systems_BrainGroup.Defense], Is.EqualTo(11));
         }
 
         /// <summary>
@@ -331,12 +331,37 @@ namespace PoFootball.Tests
 
         private static string ReadTrainerConfig()
         {
-            string configPath = Path.Combine(
-                Application.dataPath, "..", "Config", CONFIG_FILE_NAME);
+            return File.ReadAllText(CurrentConfigPath());
+        }
 
-            Assert.That(File.Exists(configPath), Is.True, $"config not found at {configPath}");
+        private static string CurrentConfigName()
+        {
+            return Path.GetFileName(CurrentConfigPath());
+        }
 
-            return File.ReadAllText(configPath);
+        /// <summary>
+        /// The highest-numbered Config/FootballBase*.yaml. Config/archive/ is
+        /// deliberately not searched — a superseded config must not be able to
+        /// satisfy a guard about the contract the code implements today.
+        /// </summary>
+        private static string CurrentConfigPath()
+        {
+            string configDirectory = Path.Combine(Application.dataPath, "..", "Config");
+
+            Assert.That(
+                Directory.Exists(configDirectory), Is.True,
+                $"Config directory not found at {configDirectory}");
+
+            string[] candidates = Directory.GetFiles(
+                configDirectory, CONFIG_FILE_PREFIX + "*.yaml", SearchOption.TopDirectoryOnly);
+
+            Assert.That(
+                candidates.Length, Is.GreaterThan(0),
+                $"no {CONFIG_FILE_PREFIX}*.yaml in {configDirectory}");
+
+            Array.Sort(candidates, StringComparer.Ordinal);
+
+            return candidates[candidates.Length - 1];
         }
     }
 }

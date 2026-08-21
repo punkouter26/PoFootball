@@ -150,6 +150,35 @@ namespace PoFootball.Systems
                 return null;
             }
 
+            // AND IT MUST CLEAR THE LINE OF SCRIMMAGE. This is the rule that makes
+            // a passing game possible at all, and its absence produced a game of
+            // forty plays in which thirty-six were interceptions and not one pass
+            // was completed.
+            //
+            // The arithmetic: the quarterback drops DROPBACK_DEPTH_YARDS (7 yd,
+            // 6.4 m) behind the line, so MIN_CATCH_DISTANCE — measured from the
+            // THROW ORIGIN — expires while the ball is still three and a half metres
+            // BEHIND the line of scrimmage. The next bodies it meets are the two
+            // lines, and a 25 m/s throw is only about 1.7 m up as it crosses them,
+            // which FindCatcher could not tell anyway because it compares plane
+            // distance and never reads Height. So the first eligible catcher on
+            // every single pass was a defensive lineman standing in the trenches.
+            //
+            // It went unnoticed while offensive linemen were eligible receivers:
+            // they stand in front of the defensive line and simply won the
+            // nearest-body contest, turning those throws into bizarre completions to
+            // a guard instead of interceptions. Making them ineligible — which is
+            // correct, they are ineligible receivers — handed every one of those
+            // balls to the defender standing behind them.
+            //
+            // Requiring the ball to be past the line models it flying over the
+            // trenches, which is what actually happens on a forward pass. A defender
+            // who has dropped into coverage downfield can still take it.
+            if (_ball.Position.y < _play.LineOfScrimmageY)
+            {
+                return null;
+            }
+
             Systems_IPlayerHandle best = null;
             float bestDistance = Systems_SimConstants.CATCH_RADIUS;
 
@@ -167,7 +196,20 @@ namespace PoFootball.Systems
                     continue;
                 }
 
-                // Nor can an offensive lineman, who is an ineligible receiver.
+                // NOR CAN EITHER LINE. Linemen block and rush; they do not run
+                // routes and they do not cover. Excluding only the OFFENSIVE line
+                // was half a rule and it made the game unplayable: the defensive
+                // line stands a metre or two PAST the line of scrimmage, so it was
+                // still the first eligible body on nearly every throw even after
+                // catches were required to clear the line. Measured over forty
+                // plays: thirty interceptions, ten touchdowns, and not one
+                // incompletion or tackle — every pass was taken by a body in the
+                // trenches or sailed to an uncovered man behind the whole defense.
+                //
+                // A defensive lineman batting a ball down is real football; a
+                // defensive tackle leading the league in interceptions is not. The
+                // honest model here, with no height check in the catch test and no
+                // deflection mechanic, is that the trenches cannot catch.
                 // Excluding them from the TARGET list was not enough on its own:
                 // this method hands the ball to whoever is nearest inside the catch
                 // radius, and a pass thrown over the middle passes directly through
@@ -176,7 +218,8 @@ namespace PoFootball.Systems
                 // filtered; DefensiveLine is a separate role and keeps its
                 // interception, which is the whole reason a rusher batting a ball
                 // down has to stay possible.
-                if (candidate.Role == Systems_PlayerRole.OffensiveLine)
+                if (candidate.Role == Systems_PlayerRole.OffensiveLine
+                    || candidate.Role == Systems_PlayerRole.DefensiveLine)
                 {
                     continue;
                 }
@@ -241,7 +284,7 @@ namespace PoFootball.Systems
             Vector2 intent = aim.sqrMagnitude < 1e-4f ? Vector2.up : aim.normalized;
 
             Systems_IPlayerHandle target = null;
-            float bestAlignment = float.NegativeInfinity;
+            float bestOffRay = float.PositiveInfinity;
             Vector2 bestLead = Vector2.zero;
 
             for (int slotIndex = 0; slotIndex < Systems_PlayerRegistry.CAPACITY; slotIndex++)
@@ -264,11 +307,33 @@ namespace PoFootball.Systems
                     continue;
                 }
 
-                float alignment = Vector2.Dot(intent, toLead.normalized);
+                // HOW FAR OFF THE AIM RAY THIS RECEIVER SITS, not how well its
+                // BEARING matches.
+                //
+                // Scoring by bearing alone — a bare dot product — ignores distance
+                // entirely, so of two receivers nearly in line with the aim the
+                // deeper one wins on a rounding error. Every checkdown became a
+                // bomb, and a game of forty plays produced twelve touchdowns and
+                // twenty-seven interceptions with nothing whatsoever in between:
+                // either the deep man was uncovered or a safety took it.
+                //
+                // Perpendicular offset from the ray answers the question actually
+                // being asked — WHICH receiver was this thrown at — and a near
+                // target squarely on the ray now beats a distant one merely close
+                // to its bearing.
+                float along = Vector2.Dot(toLead, intent);
 
-                if (alignment > bestAlignment)
+                if (along <= 0f)
                 {
-                    bestAlignment = alignment;
+                    // Behind the throw. Not a forward pass to this man.
+                    continue;
+                }
+
+                float offRay = (toLead - (intent * along)).magnitude;
+
+                if (offRay < bestOffRay)
+                {
+                    bestOffRay = offRay;
                     target = candidate;
                     bestLead = toLead;
                 }

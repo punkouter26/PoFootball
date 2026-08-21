@@ -58,11 +58,37 @@ namespace PoFootball.Systems
             _registry = registry;
         }
 
+        /// <summary>
+        /// Installed by Agent_TeamGroups when MA-POCA groups exist. Null in a played
+        /// game and in an ungrouped run, and the per-agent path below is then used
+        /// exactly as before.
+        /// </summary>
+        private Systems_ITeamRewardSink _teamSink;
+
+        public void SetTeamRewardSink(Systems_ITeamRewardSink sink)
+        {
+            _teamSink = sink;
+        }
+
         public void EndEpisode(Systems_PlayOutcome outcome, float netYards, bool passCompleted)
         {
-            for (int slotIndex = 0; slotIndex < Systems_PlayerRegistry.CAPACITY; slotIndex++)
+            if (_teamSink == null)
             {
-                TrainingHandle(slotIndex)?.ApplyTerminalReward(outcome, netYards, passCompleted);
+                for (int slotIndex = 0; slotIndex < Systems_PlayerRegistry.CAPACITY; slotIndex++)
+                {
+                    TrainingHandle(slotIndex)?.ApplyTerminalReward(outcome, netYards, passCompleted);
+                }
+            }
+            else
+            {
+                // Once per side, not once per player. The sink fans it out through
+                // the multi-agent groups, which is what makes it a GROUP reward and
+                // therefore what the centralized critic actually attributes.
+                _teamSink.AddTeamTerminal(
+                    Systems_TeamSide.Offense, outcome, netYards, passCompleted);
+
+                _teamSink.AddTeamTerminal(
+                    Systems_TeamSide.Defense, outcome, netYards, passCompleted);
             }
 
             for (int slotIndex = 0; slotIndex < Systems_PlayerRegistry.CAPACITY; slotIndex++)

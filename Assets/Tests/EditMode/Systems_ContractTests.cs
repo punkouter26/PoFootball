@@ -30,14 +30,19 @@ namespace PoFootball.Tests
     public sealed class Systems_ContractTests
     {
         /// <summary>
-        /// The CURRENT anchor config. This said FootballBase04.yaml long after that
-        /// file moved to Config/archive/, and every test that reads it had been
-        /// failing on "config not found" ever since — which is to say the four
-        /// guards standing between the trainer config and the code contract were
-        /// dead, silently, in exactly the way the class note above describes.
-        /// Point it at whatever Config/ actually holds when the anchor moves.
+        /// Filename prefix of the anchor configs. The highest-numbered file matching
+        /// it is the current one.
+        ///
+        /// THIS USED TO BE A HARDCODED FILENAME AND IT WENT STALE TWICE. It said
+        /// FootballBase04.yaml long after that file moved to Config/archive/, so
+        /// every test reading it failed on "config not found" and the four guards
+        /// between the trainer config and the code contract were dead silently. It
+        /// was then updated to FootballBase06.yaml and went stale again the moment
+        /// base09 was written — this time failing loudly, but only because the
+        /// behaviour names happened to change in the same commit. Discovering the
+        /// newest file removes the failure mode instead of resetting its clock.
         /// </summary>
-        private const string CONFIG_FILE_NAME = "FootballBase06.yaml";
+        private const string CONFIG_FILE_PREFIX = "FootballBase";
 
         /// <summary>
         /// The undershoot case, which the existing size test cannot see: the caller
@@ -322,12 +327,32 @@ namespace PoFootball.Tests
 
         private static string ReadTrainerConfig()
         {
-            string configPath = Path.Combine(
-                Application.dataPath, "..", "Config", CONFIG_FILE_NAME);
+            return File.ReadAllText(CurrentConfigPath());
+        }
 
-            Assert.That(File.Exists(configPath), Is.True, $"config not found at {configPath}");
+        /// <summary>
+        /// The highest-numbered Config/FootballBase*.yaml. Config/archive/ is not
+        /// searched, which is the point — a superseded config must not be able to
+        /// satisfy a guard about the contract the code implements today.
+        /// </summary>
+        private static string CurrentConfigPath()
+        {
+            string configDirectory = Path.Combine(Application.dataPath, "..", "Config");
 
-            return File.ReadAllText(configPath);
+            Assert.That(
+                Directory.Exists(configDirectory), Is.True,
+                $"Config directory not found at {configDirectory}");
+
+            string[] candidates = Directory.GetFiles(
+                configDirectory, CONFIG_FILE_PREFIX + "*.yaml", SearchOption.TopDirectoryOnly);
+
+            Assert.That(
+                candidates.Length, Is.GreaterThan(0),
+                $"no {CONFIG_FILE_PREFIX}*.yaml in {configDirectory}");
+
+            Array.Sort(candidates, StringComparer.Ordinal);
+
+            return candidates[candidates.Length - 1];
         }
     }
 }

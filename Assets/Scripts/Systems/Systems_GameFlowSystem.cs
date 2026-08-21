@@ -212,11 +212,42 @@ namespace PoFootball.Systems
                 _game.YardsToGo,
                 clockBurned));
 
+            CountKick(result);
+            _resultCounts[(int)result]++;
+            _outcomeCounts[(int)message.Outcome]++;
+
+            // Progress tally, so a pathological game can be diagnosed without
+            // sitting through forty minutes of it to reach the final whistle.
+            if (_game.PlaysRun % PLAYS_PER_TALLY == 0)
+            {
+                Debug.Log(
+                    $"[PoFootball] After {_game.PlaysRun} plays / {_game.DriveIndex} drives"
+                    + $" — outcomes: {Tally<Systems_PlayOutcome>(_outcomeCounts)}"
+                    + $" | results: {Tally<Systems_DownResult>(_resultCounts)}");
+            }
+
             if (result == Systems_DownResult.EndOfGame)
             {
                 _game.SetPhase(Systems_GamePhase.Final);
                 _gameOverPublisher.Publish(
                     new Systems_GameOverMessage(_game.HomeScore, _game.AwayScore));
+
+                // The only machine-readable account of a finished game. The final
+                // overlay says all of this on screen, but the screen is UI Toolkit
+                // in Overlay mode and does not appear in any camera capture — so
+                // without this line the only way to check that a game reached the
+                // whistle with sane football in it is to sit and watch one.
+                //
+                // Game mode only, by registration: this whole class is absent from
+                // the container in Systems_SimMode.Training.
+                Debug.Log(
+                    $"[PoFootball] FINAL {_game.HomeScore}-{_game.AwayScore} "
+                    + $"after {_game.PlaysRun} plays, {_game.DriveIndex} drives. "
+                    + $"Punts {_punts}, FG {_fieldGoalsMade}/{_fieldGoalsAttempted}, "
+                    + $"safeties {_safeties}, turnovers on downs {_turnoversOnDowns}.");
+
+                Debug.Log($"[PoFootball] Down results: {Tally<Systems_DownResult>(_resultCounts)}");
+                Debug.Log($"[PoFootball] Play outcomes: {Tally<Systems_PlayOutcome>(_outcomeCounts)}");
             }
         }
 
@@ -349,6 +380,77 @@ namespace PoFootball.Systems
             }
 
             return spotY <= Systems_FieldModel.OWN_GOAL_LINE_Y;
+        }
+
+        /// <summary>
+        /// Every down result the game produced, indexed by Systems_DownResult, and
+        /// every play outcome indexed by Systems_PlayOutcome. Diagnostic: a final
+        /// score alone cannot tell you that a game reached the whistle by throwing
+        /// four hundred interceptions.
+        /// </summary>
+        private readonly int[] _resultCounts =
+            new int[System.Enum.GetValues(typeof(Systems_DownResult)).Length];
+
+        private readonly int[] _outcomeCounts =
+            new int[System.Enum.GetValues(typeof(Systems_PlayOutcome)).Length];
+
+        private const int PLAYS_PER_TALLY = 40;
+
+        private int _punts;
+        private int _fieldGoalsAttempted;
+        private int _fieldGoalsMade;
+        private int _safeties;
+        private int _turnoversOnDowns;
+
+        /// <summary>
+        /// Tallies the rare results, purely so the final log line can prove a game
+        /// actually exercised the rules rather than running forty handoffs.
+        /// </summary>
+        private void CountKick(Systems_DownResult result)
+        {
+            switch (result)
+            {
+                case Systems_DownResult.Punt:
+                    _punts++;
+                    break;
+                case Systems_DownResult.FieldGoalGood:
+                    _fieldGoalsAttempted++;
+                    _fieldGoalsMade++;
+                    break;
+                case Systems_DownResult.FieldGoalMissed:
+                    _fieldGoalsAttempted++;
+                    break;
+                case Systems_DownResult.Safety:
+                    _safeties++;
+                    break;
+                case Systems_DownResult.TurnoverOnDowns:
+                    _turnoversOnDowns++;
+                    break;
+            }
+        }
+
+        private static string Tally<TEnum>(int[] counts) where TEnum : System.Enum
+        {
+            System.Text.StringBuilder text = new System.Text.StringBuilder();
+
+            for (int index = 0; index < counts.Length; index++)
+            {
+                if (counts[index] == 0)
+                {
+                    continue;
+                }
+
+                if (text.Length > 0)
+                {
+                    text.Append(", ");
+                }
+
+                text.Append((TEnum)System.Enum.ToObject(typeof(TEnum), index));
+                text.Append(' ');
+                text.Append(counts[index]);
+            }
+
+            return text.Length == 0 ? "none" : text.ToString();
         }
 
         private static bool StopsClock(Systems_PlayOutcome outcome)

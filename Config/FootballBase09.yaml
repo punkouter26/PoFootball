@@ -73,8 +73,19 @@
 # split across four calls, and football_base05 collapsed to 0.10.
 #
 behaviors:
-  OffenseLine: &football_brain
-    trainer_type: ppo
+  # MA-POCA, not PPO. Every player on a side already received the SAME terminal
+  # reward through its OWN critic, which is the textbook multi-agent credit
+  # assignment problem: a lineman's block has no individual signal at all — its
+  # whole value is "the quarterback had time" — so Reward_Role had to hand-shape a
+  # proxy for it. POCA's centralized critic sees the group's observations and
+  # attributes the team outcome directly.
+  #
+  # Three behaviours, not six. A SimpleMultiAgentGroup cannot span behavior names
+  # (mlagents builds one AgentManager per behaviour and keeps groupmate tables as
+  # instance state), so OffenseLine+OffenseSkill merged into Offense and the three
+  # defensive brains into Defense. See Systems_BrainGroup.
+  Offense: &football_brain
+    trainer_type: poca
 
     hyperparameters:
       batch_size: 2048
@@ -94,7 +105,12 @@ behaviors:
                                   # normalization on top fights self-play because the
                                   # input distribution shifts with the opponent.
                                   # Systems_ContractTests asserts this stays off.
-      hidden_units: 512
+      # 256, NOT 512. MEASURED, twice. CLAUDE.md's own table has 512 at 404
+      # steps/s against 563 for 256 under PPO — a 39% throughput gain. That matters
+      # far more here than it did then, because MA-POCA's centralized critic costs
+      # roughly 7x per agent: this run measured 134 steps/s for Offense against
+      # base08's ~98 per agent slot under PPO, which put a 50M budget at four days.
+      hidden_units: 256
       num_layers: 2
       vis_encode_type: simple
 
@@ -109,7 +125,12 @@ behaviors:
     # been pruned by the time it was noticed, so the diverse-playbook policy was
     # unrecoverable. 100000 with keep_checkpoints 20 covers a 2M-step window.
     checkpoint_interval: 100000
-    max_steps: 50000000
+    # 8M, not 50M. At the POCA rate measured on this machine (134 steps/s for a
+    # ten-agent group with hidden_units 512, ~186 expected at 256) a 50M budget is
+    # over four days of wall clock. 8M is the largest number that finishes inside a
+    # day and still leaves the quarterback — the behaviour everything depends on —
+    # with a budget it can actually reach.
+    max_steps: 8000000
 
     # A play is capped at 750 physics ticks and agents decide every 5th tick
     # (Systems_PlayModel.MAX_DECISIONS = 150), so 150 keeps an entire play inside
@@ -120,7 +141,7 @@ behaviors:
     summary_freq: 20000
     threaded: false               # deterministic ordering (UNITY_RULES §2)
 
-  OffenseSkill:
+  Defense:
     <<: *football_brain
 
   # The only brain with discrete actions, and the only one whose exploration
@@ -135,20 +156,26 @@ behaviors:
   # makes this knob usable at all.
   Quarterback:
     <<: *football_brain
+    # PPO, not POCA. Its group has exactly one member, so a centralized critic is
+    # just an ordinary critic — POCA would add machinery and change nothing. It is
+    # still registered into a group on the C# side so the team terminal reaches it
+    # by the same path as everyone else.
+    trainer_type: ppo
     # THE QUARTERBACK NEEDS ITS OWN BUDGET, NOT THE ANCHOR'S.
     #
     # max_steps counts THIS behaviour's own experience, and there is one
-    # quarterback per env against five OffenseSkill players and five OffenseLine
-    # players. Measured on football_base08: OffenseSkill collected ~490 steps/s
-    # while Quarterback managed ~93 - a ratio of 5.3. Inheriting 50,000,000 from
-    # &football_brain therefore asked the quarterback for roughly 150 hours of wall
-    # clock against ~28 for the skill players, and every run so far has been
-    # abandoned long before it got there. base08 stopped at 700k: 1.4% of budget,
-    # on the one behaviour that decides whether any of this looks like football.
+    # quarterback per env against ten players in Offense and eleven in Defense.
+    # Measured on football_base08: each agent slot collects ~98 steps/s, so the
+    # quarterback managed ~93 while the five-man OffenseSkill brain did ~490.
+    # Merging for POCA made the gap wider, not narrower — Offense is now ten
+    # agents, so it collects roughly ten times the quarterback's rate rather than
+    # five.
     #
-    # 10,000,000 is 50M/5.3 rounded up - the number that has the quarterback
-    # finishing at roughly the same wall-clock moment as everyone else.
-    max_steps: 10000000
+    # 50M for Offense at ~980 steps/s is about fourteen hours. Matching that on
+    # ~93 steps/s is 5,000,000 steps, so every behaviour finishes at about the same
+    # wall-clock moment instead of the run being abandoned with the quarterback at
+    # one percent of budget, which is how base08 died.
+    max_steps: 800000
     hyperparameters:
       batch_size: 2048
       buffer_size: 20480
@@ -161,14 +188,8 @@ behaviors:
       beta_schedule: constant
       epsilon_schedule: constant
 
-  DefenseLine:
-    <<: *football_brain
 
-  DefenseBox:
-    <<: *football_brain
 
-  DefenseSecondary:
-    <<: *football_brain
 
 env_settings:
   # Set per-run on the command line, not here:

@@ -87,7 +87,7 @@ namespace PoFootball.Agents
         /// Agent_BrainTable.MatchesCurrentContract is false and every player falls
         /// back to Heuristic until a revision 5 run is trained and promoted.
         /// </summary>
-        public const int CONTRACT_REVISION = 6;
+        public const int CONTRACT_REVISION = 7;
 
         /// <summary>Continuous outputs every brain has: drive and steer.</summary>
         public const int BASE_CONTINUOUS_ACTIONS = 2;
