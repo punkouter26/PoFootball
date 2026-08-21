@@ -290,6 +290,58 @@ namespace PoFootball.Models
         public const float DROPBACK_DEPTH_YARDS = 7f;
 
         /// <summary>
+        /// How often the scripted quarterback takes a deep shot instead of the
+        /// safest throw: one pass play in this many. 2 means every other one.
+        ///
+        /// WHY THIS EXISTS. MostOpenReceiver scores candidates on separation alone,
+        /// so it always preferred a back in the flat with nobody near him over a
+        /// receiver twenty yards downfield with a safety five yards off. Every throw
+        /// was the checkdown, the ball never travelled, and net yards per play sat
+        /// negative because the offense had no deep threat to respect. Alternating
+        /// gives the defense both problems to solve.
+        ///
+        /// The choice is made from Systems_PlayModel.EpisodeIndex, not a random
+        /// draw, because execution here is deterministic — the same seed must
+        /// produce the same play, call for call.
+        ///
+        /// Read by the heuristic only. A trained policy chooses its own targets.
+        /// </summary>
+        public const int DEEP_SHOT_EVERY_N_PLAYS = 2;
+
+        /// <summary>
+        /// How far past the line of scrimmage a receiver must be, in yards, before
+        /// the scripted quarterback will count it as a deep target.
+        ///
+        /// Fifteen is past the safeties' usual depth and roughly 0.6 s of flight at
+        /// PASS_SPEED_MAX, which is long enough that the lead solve in LeadAim
+        /// actually matters. Anything shorter is the checkdown the deep shot exists
+        /// to avoid.
+        /// </summary>
+        public const float DEEP_SHOT_MIN_YARDS = 12f;
+
+        /// <summary>
+        /// The least separation, in metres, a deep receiver needs before the
+        /// scripted quarterback will throw it. Below this the ball is a gift to the
+        /// safety, so the quarterback takes the ordinary read instead.
+        ///
+        /// Three metres is two and a half CATCH_RADIUS — enough that the receiver
+        /// reaches the ball first without the throw being uncontested.
+        /// </summary>
+        public const float DEEP_SHOT_MIN_ROOM = 2.5f;
+
+        /// <summary>
+        /// The tick a deep shot is released on, against THROW_AT_TICK for an
+        /// ordinary throw.
+        ///
+        /// A fifteen-yard route needs longer to develop than a flat route, and
+        /// releasing on the same tick as the checkdown meant the deep receiver was
+        /// still eight yards downfield when the ball left. 110 ticks is 2.2 s at the
+        /// pinned 50 Hz — a realistic hold, and well inside THROW_WINDOW_TICKS so
+        /// the quarterback still throws rather than scrambling.
+        /// </summary>
+        public const int DEEP_SHOT_THROW_AT_TICK = 150;
+
+        /// <summary>
         /// How far goalside of a rusher a blocker tries to stand, in metres.
         ///
         /// WHY POSITION AND NOT FORCE. A blocker used to drive at the rusher's

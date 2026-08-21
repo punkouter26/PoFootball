@@ -1076,14 +1076,30 @@ namespace PoFootball.Agents
             }
 
             // Hold the ball a moment so the routes develop, then release inside the
-            // window OnActionReceived enforces.
-            if (_play.PhysicsTick < THROW_AT_TICK
+            // window OnActionReceived enforces. A deep shot holds longer, because a
+            // fifteen-yard route is still eight yards downfield at THROW_AT_TICK.
+            bool isDeepShot = IsDeepShotPlay();
+
+            int releaseTick = isDeepShot
+                ? Systems_SimConstants.DEEP_SHOT_THROW_AT_TICK
+                : THROW_AT_TICK;
+
+            if (_play.PhysicsTick < releaseTick
                 || _play.PhysicsTick > Systems_SimConstants.THROW_WINDOW_TICKS)
             {
                 return;
             }
 
-            Systems_IPlayerHandle target = MostOpenReceiver();
+            // On a deep play, look downfield first and only settle for the ordinary
+            // read if nobody got open deep. Without the fallback a covered deep
+            // route would hold the ball until the window shut and turn every deep
+            // call into a scramble.
+            Systems_IPlayerHandle target = isDeepShot ? DeepReceiver() : null;
+
+            if (target == null)
+            {
+                target = MostOpenReceiver();
+            }
 
             if (target == null)
             {
@@ -1091,6 +1107,7 @@ namespace PoFootball.Agents
             }
 
             Vector2 aim = LeadAim(target);
+
 
             discreteActions[1] = 1;
             continuousActions[2] = aim.x;
@@ -1219,6 +1236,94 @@ namespace PoFootball.Agents
         /// and downfield of the throw. Nothing clever, but it means a completion is
         /// a reward for the routes having spread rather than a coin flip.
         /// </summary>
+        /// <summary>
+        /// Whether this play is one of the scripted deep shots.
+        ///
+        /// Driven off the episode index rather than a random draw: execution here is
+        /// deterministic, so the same seed has to produce the same call every time.
+        /// </summary>
+        private bool IsDeepShotPlay()
+        {
+            return _play != null
+                && Systems_SimConstants.DEEP_SHOT_EVERY_N_PLAYS > 0
+                && (_play.EpisodeIndex % Systems_SimConstants.DEEP_SHOT_EVERY_N_PLAYS) == 0;
+        }
+
+        /// <summary>
+        /// The best target at least DEEP_SHOT_MIN_YARDS past the line of scrimmage,
+        /// or null if nobody is that deep with room to catch it.
+        ///
+        /// WHY THIS IS SEPARATE FROM MostOpenReceiver. That method ranks on
+        /// separation alone, and separation is exactly what a deep receiver does not
+        /// have — there is a safety over the top by design, while a back released
+        /// into the flat has the whole field to himself. So the most open receiver
+        /// was the shortest one on every single snap, the ball never travelled, and
+        /// the defense never had to respect anything behind it.
+        ///
+        /// The depth gate is measured from the line of scrimmage, not from the
+        /// quarterback, because the quarterback has retreated DROPBACK_DEPTH_YARDS by
+        /// the time it throws — measuring from where it stands would count the seven
+        /// yards of its own dropback as route depth and call a flat route deep.
+        /// </summary>
+        private Systems_IPlayerHandle DeepReceiver()
+        {
+            if (_registry == null || _play == null)
+            {
+                return null;
+            }
+
+            float depthGate = _play.LineOfScrimmageY
+                + (Systems_SimConstants.DEEP_SHOT_MIN_YARDS * Systems_FieldModel.YARD);
+
+            float roomGate = Systems_SimConstants.DEEP_SHOT_MIN_ROOM
+                * Systems_SimConstants.DEEP_SHOT_MIN_ROOM;
+
+            Systems_IPlayerHandle best = null;
+            float bestRoom = -1f;
+
+            for (int slotIndex = 0; slotIndex < Systems_PlayerRegistry.CAPACITY; slotIndex++)
+            {
+                Systems_IPlayerHandle candidate = _registry.Get(slotIndex);
+
+                if (candidate == null
+                    || candidate.Side != Systems_TeamSide.Offense
+                    || candidate.Id == Id
+                    || !IsEligibleReceiver(candidate.Role)
+                    || candidate.Position.y < depthGate)
+                {
+                    continue;
+                }
+
+                float room = float.MaxValue;
+
+                for (int other = 0; other < Systems_PlayerRegistry.CAPACITY; other++)
+                {
+                    Systems_IPlayerHandle defender = _registry.Get(other);
+
+                    if (defender == null || defender.Side != Systems_TeamSide.Defense)
+                    {
+                        continue;
+                    }
+
+                    room = Mathf.Min(
+                        room, (defender.Position - candidate.Position).sqrMagnitude);
+                }
+
+                if (room < roomGate)
+                {
+                    continue;
+                }
+
+                if (room > bestRoom)
+                {
+                    bestRoom = room;
+                    best = candidate;
+                }
+            }
+
+            return best;
+        }
+
         private Systems_IPlayerHandle MostOpenReceiver()
         {
             if (_registry == null)
