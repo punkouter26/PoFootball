@@ -12,8 +12,8 @@ Unity ML-Agents self-play.
 | ML-Agents (C#) | `com.unity.ml-agents` 4.1.0 — comms API **1.5.0** |
 | ML-Agents (Python) | `mlagents` 1.1.0 — comms API **1.5.0** |
 | Python | 3.10.11, venv at `.venv/` |
-| Torch | 2.5.1+cu121 — **CPU only**; needs `CUDA_VISIBLE_DEVICES=-1`, see below |
-| GPU | RTX 5070 Ti Laptop (Blackwell, sm_120) — **unusable** by this Torch build |
+| Torch | 2.11.0+cu128 — but training runs **on the CPU**; it is 6x faster here |
+| GPU | RTX 5070 Ti Laptop (Blackwell, sm_120) — works, and loses to the CPU |
 
 ---
 
@@ -125,25 +125,34 @@ mlagents-learn Config\FootballBase08.yaml --run-id=football_base08 `
 tensorboard --logdir results
 ```
 
-**`CUDA_VISIBLE_DEVICES=-1` is mandatory, and it is the ONLY thing that works.**
-The pinned `torch==2.5.1+cu121` carries no kernels for this machine's RTX 5070 Ti
-(Blackwell, sm_120), so any CUDA tensor dies with `CUDA error: no kernel image is
-available for execution on the device` while building the first layer.
+**Train on the CPU, and pass `CUDA_VISIBLE_DEVICES=-1` to make that stick.**
 
-Neither `--torch-device=cpu` nor `torch_settings: device: cpu` in the YAML prevents
-this — both were tried, and both still crashed. `mlagents/torch_utils/torch.py` calls
-`set_torch_config(TorchSettings(device=None))` at **import** time; with no device
-given it picks `"cuda" if torch.cuda.is_available() else "cpu"` and calls
-`torch.set_default_device("cuda")`. When your real config arrives moments later asking
+Measured on this machine, `OffenseSkill` steps 20k -> 60k, headless env:
+
+| setup | steps/s |
+|---|---|
+| Editor, 1 env | 243 |
+| headless, 3 envs | 395 |
+| headless, 6 envs | 337 |
+| headless, 12 envs | 404 |
+| headless, 12 envs, `hidden_units: 256` | 563 |
+| headless, 24 envs | **fails** — paging file too small |
+| headless, 6 envs, **on the GPU** | **55** |
+
+Two things fall out of that. The GPU is 6x *slower* — the net is 512 x 2 at batch
+2048, so launch overhead and host transfers cost more than the matmuls save. And
+env count barely matters, because the trainer is the bottleneck, not the game: at 6
+envs the six `PoFootball.exe` copies burned 81 CPU-seconds while python burned 2,877.
+Use a handful of envs and do not expect much from adding more. 24 envs does not run
+at all — each worker loads its own copy of torch and Windows runs out of paging file.
+
+`--torch-device=cpu` and `torch_settings: device: cpu` do NOT work on their own. Both
+were tried against live runs and both still died on CUDA. `mlagents/torch_utils/torch.py`
+calls `set_torch_config(TorchSettings(device=None))` at **import** time; with no device
+given it picks `"cuda"` whenever a GPU is visible and calls
+`torch.set_default_device("cuda")`. When the real config arrives moments later asking
 for `cpu`, the `else` branch only sets the dtype — it never puts the default device
-back. The process is on CUDA before your setting is ever read.
-
-Hiding the GPU from the process is what fixes it, because it makes
-`torch.cuda.is_available()` false at that import. Use `-1`; an empty string is ignored
-on Windows and `is_available()` stays true.
-
-The alternative is a CUDA 12.8 Torch build (`torch>=2.7`) — `mlagents` 1.1.0 only
-requires `torch>=1.13.1`, so a newer version is allowed.
+back. Hiding the GPU is what fixes it. Use `-1`; an empty string is ignored on Windows.
 
 `FootballBase06.yaml` (the current config) carries **six** behaviors. The quarterback has its own brain
 — it is the only one with discrete actions, and while it shared `OffenseSkill`

@@ -171,13 +171,17 @@ engine_settings:
   capture_frame_rate: 60
 
 torch_settings:
-  device: cpu                     # NOT cuda. This machine has an RTX 5070 Ti (Blackwell,
-                                  # sm_120) and the pinned torch 2.5.1+cu121 has no kernels
-                                  # for it. There is no fallback: is_available() returns True,
-                                  # so the trainer selects CUDA and dies building the first
-                                  # layer with 'no kernel image is available for execution on
-                                  # the device'. This key also OVERRIDES --torch-device on the
-                                  # command line, so the flag alone does not save you.
+  device: cpu                     # MEASURED: the CPU is 6x faster than the GPU for this
+                                  # network. 6 headless envs on CPU do 337 steps/s; the same
+                                  # run on an RTX 5070 Ti does 55. The net is tiny (512 units,
+                                  # 2 layers, batch 2048), so kernel-launch overhead and host
+                                  # transfers cost more than the matmuls save.
+                                  #
+                                  # This key alone does NOT work. mlagents calls
+                                  # set_torch_config(device=None) at import, resolves it to
+                                  # cuda whenever a GPU is visible, and its cpu branch never
+                                  # resets torch's default device. Always launch with
+                                  # CUDA_VISIBLE_DEVICES=-1 (use -1; "" is ignored on Windows).
 
 checkpoint_settings:
   results_dir: results
