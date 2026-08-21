@@ -26,6 +26,23 @@ namespace PoFootball.Views
     [DisallowMultipleComponent]
     public sealed class Systems_BallView : MonoBehaviour, Systems_IInjectableView
     {
+        /// <summary>
+        /// In front of every player (offense 1, defense 2) and the ball trail (4).
+        /// See <see cref="ApplyBallSkin"/> — the scene had this at 0, behind
+        /// everyone.
+        /// </summary>
+        private const int BALL_SORTING_ORDER = 5;
+
+        /// <summary>
+        /// Below the players so a ball passing over a defender casts its shadow
+        /// across him rather than sitting on him. Was expressed relative to the
+        /// ball's own order, which broke the moment that order moved to the front.
+        /// </summary>
+        private const int SHADOW_SORTING_ORDER = 0;
+
+        private const int BALL_TEXTURE_WIDTH = 40;
+        private const int BALL_TEXTURE_HEIGHT = 64;
+
         [SerializeField] private float _zOffset = -1f;
 
         /// <summary>
@@ -61,7 +78,130 @@ namespace PoFootball.Views
             _transform = transform;
             _renderer = GetComponent<SpriteRenderer>();
 
+            ApplyBallSkin();
             BuildShadow();
+        }
+
+        /// <summary>
+        /// Paints the ball a football: brown, with the two white stripes and the
+        /// laces, and puts it in front of every player.
+        ///
+        /// SORTING WAS THE REAL BUG. The scene left this renderer on order 0 while
+        /// Systems_RoleShapeApplier puts offense on 1 and defense on 2, so the ball
+        /// was BEHIND all twenty-two players — a pass crossing a defender
+        /// disappeared into him. It now sits above the trail (4) as well, so the
+        /// ball is always the front-most thing on the field, which is what a viewer
+        /// is actually tracking.
+        ///
+        /// The texture is generated rather than imported because this project has
+        /// no sprite pipeline for gameplay art — the players are built-in shapes
+        /// tinted at runtime and the audio is synthesised the same way. A 64x40
+        /// texture costs nothing and keeps the ball a code artifact like everything
+        /// else on the field.
+        /// </summary>
+        private void ApplyBallSkin()
+        {
+            if (_renderer == null)
+            {
+                return;
+            }
+
+            _renderer.sprite = BuildFootballSprite();
+
+            // Tint back to white: the sprite carries its own colour now, and any
+            // leftover tint from the scene would multiply against it.
+            _renderer.color = Color.white;
+            _renderer.sortingOrder = BALL_SORTING_ORDER;
+        }
+
+        /// <summary>
+        /// A football: brown prolate body, a white stripe near each point, and the
+        /// laces down the middle.
+        ///
+        /// The long axis runs along Y because the field runs along Y — a ball drawn
+        /// lengthwise across a portrait field reads as a pill rather than a
+        /// football. Pixels-per-unit is the texture height, so the sprite is exactly
+        /// one world unit long before the transform's own 0.36 scale, which keeps it
+        /// the size the round sprite used to be.
+        /// </summary>
+        private static Sprite BuildFootballSprite()
+        {
+            const float LEATHER_R = 0.44f;
+            const float LEATHER_G = 0.24f;
+            const float LEATHER_B = 0.11f;
+
+            Texture2D texture = new Texture2D(
+                BALL_TEXTURE_WIDTH, BALL_TEXTURE_HEIGHT, TextureFormat.RGBA32, false)
+            {
+                name = "PoFootball_Ball",
+                filterMode = FilterMode.Bilinear,
+                wrapMode = TextureWrapMode.Clamp,
+                hideFlags = HideFlags.HideAndDontSave,
+            };
+
+            Color leather = new Color(LEATHER_R, LEATHER_G, LEATHER_B, 1f);
+            Color rim = new Color(LEATHER_R * 0.55f, LEATHER_G * 0.55f, LEATHER_B * 0.55f, 1f);
+            Color clear = new Color(0f, 0f, 0f, 0f);
+
+            float halfWidth = BALL_TEXTURE_WIDTH * 0.5f;
+            float halfHeight = BALL_TEXTURE_HEIGHT * 0.5f;
+            Color[] pixels = new Color[BALL_TEXTURE_WIDTH * BALL_TEXTURE_HEIGHT];
+
+            for (int y = 0; y < BALL_TEXTURE_HEIGHT; y++)
+            {
+                for (int x = 0; x < BALL_TEXTURE_WIDTH; x++)
+                {
+                    // Normalised to the ellipse, so 1.0 is exactly the silhouette.
+                    float nx = (x + 0.5f - halfWidth) / halfWidth;
+                    float ny = (y + 0.5f - halfHeight) / halfHeight;
+                    float distance = Mathf.Sqrt((nx * nx) + (ny * ny));
+
+                    if (distance > 1f)
+                    {
+                        pixels[(y * BALL_TEXTURE_WIDTH) + x] = clear;
+                        continue;
+                    }
+
+                    Color colour = distance > 0.86f ? rim : leather;
+
+                    // The two white stripes, set in from each point.
+                    float absY = Mathf.Abs(ny);
+
+                    if (absY > 0.58f && absY < 0.70f)
+                    {
+                        colour = Color.white;
+                    }
+
+                    // Laces: a spine down the middle with four crossbars over it.
+                    bool onSpine = Mathf.Abs(nx) < 0.07f && absY < 0.34f;
+                    bool onCrossbar = Mathf.Abs(nx) < 0.24f
+                        && (Mathf.Abs(absY - 0.04f) < 0.035f
+                            || Mathf.Abs(absY - 0.19f) < 0.035f);
+
+                    if (onSpine || onCrossbar)
+                    {
+                        colour = Color.white;
+                    }
+
+                    // Feather only the outermost ring, so the silhouette is smooth
+                    // at the size this is actually drawn without blurring the laces.
+                    colour.a = Mathf.Clamp01((1f - distance) * BALL_TEXTURE_HEIGHT * 0.25f);
+                    pixels[(y * BALL_TEXTURE_WIDTH) + x] = colour;
+                }
+            }
+
+            texture.SetPixels(pixels);
+            texture.Apply();
+
+            Sprite sprite = Sprite.Create(
+                texture,
+                new Rect(0f, 0f, BALL_TEXTURE_WIDTH, BALL_TEXTURE_HEIGHT),
+                new Vector2(0.5f, 0.5f),
+                BALL_TEXTURE_HEIGHT);
+
+            sprite.name = "PoFootball_Ball";
+            sprite.hideFlags = HideFlags.HideAndDontSave;
+            return sprite;
         }
 
         /// <summary>
@@ -88,8 +228,10 @@ namespace PoFootball.Views
             _shadowRenderer.sortingLayerID = _renderer.sortingLayerID;
 
             // Under the players, so a ball passing over a defender shows its shadow
-            // crossing him rather than sitting on top of him.
-            _shadowRenderer.sortingOrder = _renderer.sortingOrder - 3;
+            // crossing him rather than sitting on top of him. An absolute order, not
+            // one relative to the ball's — the ball moved to the front, and "three
+            // behind the ball" would have dragged the shadow up there with it.
+            _shadowRenderer.sortingOrder = SHADOW_SORTING_ORDER;
             _shadowRenderer.color = new Color(0f, 0f, 0f, 0.35f);
 
             _shadowBaseScale = _transform.localScale * 0.8f;
@@ -110,13 +252,19 @@ namespace PoFootball.Views
             _transform.position = new Vector3(
                 position.x, position.y + (height * _heightToScreen), _zOffset);
 
-            // A held ball is redundant with the white carrier highlight, so only
-            // show the sprite when the ball is genuinely separate from a player.
+            // ALWAYS DRAWN, INCLUDING WHEN HELD. This used to hide the sprite
+            // unless the ball was in flight, on the grounds that the white carrier
+            // highlight already said who had it. It did not: the highlight says
+            // which SHAPE is the carrier, and a viewer looking for the ball found a
+            // white square with no ball anywhere near it. Where the ball physically
+            // is, is the single most important thing on the field, so it is now
+            // visible on every frame of every play and rides on top of whoever is
+            // carrying it.
             bool inFlight = _ball.IsInFlight;
 
             if (_renderer != null)
             {
-                _renderer.enabled = inFlight;
+                _renderer.enabled = true;
             }
 
             UpdateShadow(position, height, inFlight);

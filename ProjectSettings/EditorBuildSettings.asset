@@ -6,6 +6,12 @@ EditorBuildSettings:
   serializedVersion: 2
   m_Scenes:
   - enabled: 1
+    path: Assets/Scenes/SCN_MENU.unity
+    guid: 3065b79a774bf5544b6075c6e22571f6
+  - enabled: 1
+    path: Assets/Scenes/SCN_GAME.unity
+    guid: e15d584c12337404aafc8f01384a0bcd
+  - enabled: 1
     path: Assets/Scenes/SCN_TRAIN_FOOTBALL.unity
     guid: 15fe15d34f785b84fbf5255d2d4de83c
   m_configObjects:

@@ -166,6 +166,11 @@ STOP_TRAINING
 /[Aa]ssets/ML-Agents/Timers/
 /[Aa]ssets/ML-Agents/Timers.meta
 
+# The Unity Skills scene_screenshot tool writes captures here, under Assets/ and
+# therefore into the AssetDatabase. Run artifacts, never worth a diff.
+/[Aa]ssets/Screenshots/
+/[Aa]ssets/Screenshots.meta
+
 # MCP's Unity connectivity probe drops a GUID-named scene at the Assets root.
 /[Aa]ssets/InitTestScene*.unity
 /[Aa]ssets/InitTestScene*.unity.meta

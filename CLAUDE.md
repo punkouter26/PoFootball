@@ -7,7 +7,7 @@ Unity ML-Agents self-play.
 
 | Property | Value |
 |---|---|
-| Unity | 6000.5.6f1 |
+| Unity | 6000.5.8f1 |
 | Render pipeline | URP 17.6.0 |
 | ML-Agents (C#) | `com.unity.ml-agents` 4.1.0 — comms API **1.5.0** |
 | ML-Agents (Python) | `mlagents` 1.1.0 — comms API **1.5.0** |

@@ -185,15 +185,112 @@ namespace PoFootball.Systems
         /// </summary>
         public void Throw(Systems_IPlayerHandle thrower, Vector2 aim, float power)
         {
-            Vector2 direction = aim.sqrMagnitude < 1e-4f ? Vector2.up : aim.normalized;
-
             float speed = Mathf.Lerp(
                 Systems_SimConstants.PASS_SPEED_MIN,
                 Systems_SimConstants.PASS_SPEED_MAX,
                 Mathf.Clamp01((power + 1f) * 0.5f));
 
+            Vector2 direction = ResolveThrowDirection(thrower, aim, speed);
+
             thrower.SetCarrier(false);
             _ball.Throw(thrower.Id, thrower.Position, direction * speed);
+        }
+
+        /// <summary>
+        /// Turns the quarterback's aim vector into a throw at an actual eligible
+        /// receiver, led for the flight time.
+        ///
+        /// WHY THIS IS NOT JUST aim.normalized ANY MORE. It used to be, and the
+        /// consequence was a quarterback throwing at empty grass: the aim was a free
+        /// two-axis continuous action, so every direction on the field was equally
+        /// available and only the reward signal discouraged the 359 degrees with
+        /// nobody standing in them. Learning to point a continuous vector at a
+        /// moving team-mate is a far harder control problem than choosing which
+        /// team-mate to throw to, and it is not the problem this project is trying
+        /// to study.
+        ///
+        /// The aim now means "which of my receivers", read as a direction of intent:
+        /// the eligible receiver whose bearing best matches the aim wins the ball.
+        /// Every throw therefore goes to someone on the throwing side — it can still
+        /// be covered, late, or picked off, which is football, but it can no longer
+        /// be thrown at nobody. A degenerate or zero aim now picks whichever
+        /// receiver is most nearly straight downfield instead of firing at the
+        /// sideline.
+        ///
+        /// Linemen are excluded because they are ineligible receivers, and the
+        /// thrower is excluded because it cannot catch its own pass — the same rule
+        /// FindCatcher already enforces on the receiving end.
+        /// </summary>
+        private Vector2 ResolveThrowDirection(
+            Systems_IPlayerHandle thrower, Vector2 aim, float speed)
+        {
+            Vector2 intent = aim.sqrMagnitude < 1e-4f ? Vector2.up : aim.normalized;
+
+            Systems_IPlayerHandle target = null;
+            float bestAlignment = float.NegativeInfinity;
+            Vector2 bestLead = Vector2.zero;
+
+            for (int slotIndex = 0; slotIndex < Systems_PlayerRegistry.CAPACITY; slotIndex++)
+            {
+                Systems_IPlayerHandle candidate = _registry.Get(slotIndex);
+
+                if (candidate == null
+                    || candidate.Id == thrower.Id
+                    || candidate.Side != thrower.Side
+                    || !IsEligibleReceiver(candidate.Role))
+                {
+                    continue;
+                }
+
+                Vector2 lead = LeadPoint(thrower.Position, candidate, speed);
+                Vector2 toLead = lead - thrower.Position;
+
+                if (toLead.sqrMagnitude < 1e-4f)
+                {
+                    continue;
+                }
+
+                float alignment = Vector2.Dot(intent, toLead.normalized);
+
+                if (alignment > bestAlignment)
+                {
+                    bestAlignment = alignment;
+                    target = candidate;
+                    bestLead = toLead;
+                }
+            }
+
+            // No eligible receiver on the field at all — a formation this game never
+            // lines up, but the ball still has to go somewhere legal.
+            return target == null ? intent : bestLead.normalized;
+        }
+
+        /// <summary>
+        /// Where the receiver will be when the ball arrives. One pass of
+        /// distance-over-speed is enough: the correction is small relative to the
+        /// catch radius, and iterating it would chase a moving target for no
+        /// visible gain.
+        /// </summary>
+        private static Vector2 LeadPoint(
+            Vector2 origin, Systems_IPlayerHandle receiver, float speed)
+        {
+            if (speed <= 0f)
+            {
+                return receiver.Position;
+            }
+
+            float flightTime = Vector2.Distance(origin, receiver.Position) / speed;
+            return receiver.Position + (receiver.Velocity * flightTime);
+        }
+
+        /// <summary>
+        /// Everyone on offense except the line. The quarterback is filtered out by
+        /// the thrower check rather than here, so a trick play that hands off first
+        /// could still find it.
+        /// </summary>
+        private static bool IsEligibleReceiver(Systems_PlayerRole role)
+        {
+            return role != Systems_PlayerRole.OffensiveLine;
         }
     }
 }
