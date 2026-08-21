@@ -18,31 +18,32 @@
 mlagents==1.1.0
 mlagents-envs==1.1.0
 
-# --- Torch (CUDA 12.8 build) -------------------------------------------------
-# Needs the PyTorch index:
-#   pip install torch --index-url https://download.pytorch.org/whl/cu128
+# --- Torch (CUDA 12.1 build) -------------------------------------------------
+# Needs the PyTorch index; the plain PyPI wheel is CPU-only.
 #
-# Was torch==2.5.1+cu121, pinned for an RTX 2060. This machine has an RTX 5070 Ti
-# (Blackwell, sm_120); cu121 ships no kernels for it, so every run died building the
-# first Linear layer with "CUDA error: no kernel image is available for execution on
-# the device". 2.11.0+cu128 runs on the card correctly.
+# DO NOT UPGRADE THIS. torch 2.11.0+cu128 was installed and reverted the same day.
+# It ran fine for 80,000 steps and then killed the run at the first checkpoint:
 #
-# BUT TRAINING STILL RUNS ON THE CPU, AND THAT IS DELIBERATE. Measured on this
-# machine, 6 headless envs, steps 20k->60k:
+#     ModuleNotFoundError: No module named 'onnxscript'
 #
-#     CPU              337 steps/s
-#     RTX 5070 Ti       55 steps/s      <- 6x SLOWER
+# torch >= 2.6 exports ONNX through onnxscript, and onnxscript pulls onnx>=1.17,
+# which pulls numpy 2.x and protobuf 7.x — every load-bearing pin below. mlagents
+# 1.1.0 needs onnx 1.15.0, numpy 1.23.5 and protobuf 3.20.3, so the export path and
+# the trainer cannot both be satisfied. Promotion depends on that .onnx export, so a
+# trainer that cannot write one is useless however fast it runs.
 #
-# The network is 512 units x 2 layers at batch 2048. Kernel-launch overhead and host
-# transfers cost more than the matmuls save, so the GPU loses badly. Revisit only if
-# the network grows a lot.
+# The upgrade bought nothing anyway. This machine has an RTX 5070 Ti (Blackwell,
+# sm_120) and cu121 has no kernels for it, but training runs on the CPU by choice:
+# measured over steps 20k->60k with 6 headless envs, the CPU does 337 steps/s and the
+# GPU does 55 — 6x slower, because the net is 512 x 2 at batch 2048 and launch
+# overhead beats the matmuls.
 #
 # Launch every run with CUDA_VISIBLE_DEVICES=-1. Neither --torch-device=cpu nor
-# torch_settings.device: cpu works on its own: mlagents/torch_utils/torch.py calls
+# torch_settings.device: cpu works alone: mlagents/torch_utils/torch.py calls
 # set_torch_config(TorchSettings(device=None)) at import, resolves it to "cuda"
-# whenever a GPU is visible, calls torch.set_default_device("cuda"), and its cpu
-# branch never puts the default back. Use -1; "" is ignored on Windows.
-torch==2.11.0+cu128
+# whenever a GPU is visible, and its cpu branch never restores torch's default
+# device. Use -1; "" is ignored on Windows.
+torch==2.5.1+cu121
 
 # --- Pins that are load-bearing, not incidental ------------------------------
 # setuptools 81 removed pkg_resources, which mlagents.torch_utils imports at

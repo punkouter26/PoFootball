@@ -12,8 +12,8 @@ Unity ML-Agents self-play.
 | ML-Agents (C#) | `com.unity.ml-agents` 4.1.0 — comms API **1.5.0** |
 | ML-Agents (Python) | `mlagents` 1.1.0 — comms API **1.5.0** |
 | Python | 3.10.11, venv at `.venv/` |
-| Torch | 2.11.0+cu128 — but training runs **on the CPU**; it is 6x faster here |
-| GPU | RTX 5070 Ti Laptop (Blackwell, sm_120) — works, and loses to the CPU |
+| Torch | 2.5.1+cu121 — **do not upgrade**; 2.11 breaks the `.onnx` export |
+| GPU | RTX 5070 Ti Laptop (Blackwell, sm_120) — unused; the CPU is 6x faster |
 
 ---
 
@@ -124,6 +124,14 @@ mlagents-learn Config\FootballBase08.yaml --run-id=football_base08 `
 
 tensorboard --logdir results
 ```
+
+**Torch is pinned at 2.5.1+cu121 and upgrading it breaks promotion.** 2.11.0+cu128
+was tried: it trained happily for 80,000 steps, then died at the first checkpoint with
+`ModuleNotFoundError: No module named 'onnxscript'`. torch >= 2.6 exports ONNX via
+onnxscript, which pulls `onnx>=1.17` -> numpy 2.x and protobuf 7.x, against the
+`onnx==1.15.0` / `numpy==1.23.5` / `protobuf==3.20.3` that mlagents 1.1.0 requires. A
+trainer that cannot write an `.onnx` cannot feed `Tools/promote_brain.py`, so the
+faster-looking option is the useless one.
 
 **Train on the CPU, and pass `CUDA_VISIBLE_DEVICES=-1` to make that stick.**
 
