@@ -64,7 +64,91 @@ namespace PoFootball.Agents
         public int ContractRevision => _contractRevision;
 
         public bool MatchesCurrentContract =>
-            _contractRevision == Agent_ActionContract.CONTRACT_REVISION;
+            _contractRevision == Agent_ActionContract.CONTRACT_REVISION
+            && CoversEveryGroupExactlyOnce;
+
+        /// <summary>
+        /// True when the entry set is exactly the current <see cref="Systems_BrainGroup"/>
+        /// values, once each and nothing else.
+        ///
+        /// THE REVISION STAMP ALONE WAS NOT ENOUGH. It catches a table trained
+        /// against different code, which is the common case. It does not catch a
+        /// table whose GROUP SET has since changed shape, because the stamp is one
+        /// integer and says nothing about the entries under it. The table shipped in
+        /// Resources carried six entries numbered 0..5, from when there were six
+        /// brain groups; the enum now has three. Entries 3, 4 and 5 were not merely
+        /// unused, they were undefined enum values, and 0..2 pointed at models from
+        /// the six-group era — so "Offense" resolved to whatever had been group 0
+        /// back then. Only the revision mismatch stood between that table and a
+        /// silently scrambled load, and re-stamping the revision by hand — which is
+        /// exactly what someone does when they want the brains to load — would have
+        /// removed it.
+        ///
+        /// Checked here rather than in the registry so every reader gets it, and so
+        /// ModelFor cannot hand back a model for a group the build does not have.
+        /// </summary>
+        private bool CoversEveryGroupExactlyOnce
+        {
+            get
+            {
+                System.Array groups = System.Enum.GetValues(typeof(Systems_BrainGroup));
+
+                if (_entries == null || _entries.Length != groups.Length)
+                {
+                    return false;
+                }
+
+                for (int index = 0; index < groups.Length; index++)
+                {
+                    if (CountEntriesFor((Systems_BrainGroup)groups.GetValue(index)) != 1)
+                    {
+                        return false;
+                    }
+                }
+
+                return true;
+            }
+        }
+
+        private int CountEntriesFor(Systems_BrainGroup group)
+        {
+            int count = 0;
+
+            for (int index = 0; index < _entries.Length; index++)
+            {
+                if (_entries[index].Group == group)
+                {
+                    count++;
+                }
+            }
+
+            return count;
+        }
+
+        /// <summary>
+        /// Why the table was refused, for the one log line the registry prints.
+        /// Empty when it was not refused.
+        /// </summary>
+        public string RejectionReason
+        {
+            get
+            {
+                if (_contractRevision != Agent_ActionContract.CONTRACT_REVISION)
+                {
+                    return $"it is stamped contract revision {_contractRevision} but "
+                        + $"this build is revision {Agent_ActionContract.CONTRACT_REVISION}";
+                }
+
+                if (!CoversEveryGroupExactlyOnce)
+                {
+                    return $"its {(_entries == null ? 0 : _entries.Length)} entries do "
+                        + $"not cover the {System.Enum.GetValues(typeof(Systems_BrainGroup)).Length} "
+                        + "brain groups this build has, exactly once each";
+                }
+
+                return string.Empty;
+            }
+        }
 
         /// <summary>
         /// The model for a brain group, or null when the table is stale or has no

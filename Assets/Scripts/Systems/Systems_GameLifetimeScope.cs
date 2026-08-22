@@ -28,7 +28,16 @@ namespace PoFootball.Systems
     [DefaultExecutionOrder(-5000)]
     public sealed class Systems_GameLifetimeScope : LifetimeScope
     {
+        [Tooltip(
+            "Seed for the line-of-scrimmage RNG. Used verbatim in Training. In "
+            + "Game it is only the fallback for when Vary Seed Per Game is off.")]
         [SerializeField] private uint _episodeSeed = 1u;
+
+        [Tooltip(
+            "Game mode only: draw a fresh seed each session so no two playthroughs "
+            + "are identical. Always ignored in Training, where a reproducible spot "
+            + "sequence is the point.")]
+        [SerializeField] private bool _varySeedPerGame = true;
 
         [Tooltip(
             "Training: endless random-spot plays for mlagents-learn. "
@@ -43,7 +52,7 @@ namespace PoFootball.Systems
 
         protected override void Configure(IContainerBuilder builder)
         {
-            Systems_EpisodeSeed.Set(_episodeSeed);
+            Systems_EpisodeSeed.Set(ResolveSeed());
 
             // Registered in both modes. Every presentation view injects it and
             // switches itself off when it says no, which is why there is exactly
@@ -132,6 +141,34 @@ namespace PoFootball.Systems
         /// marker interfaces — Systems_IInjectableView derives from
         /// Systems_IInjectableBehaviour, so views are covered by the second test.
         /// </summary>
+        /// <summary>
+        /// The seed the line-of-scrimmage RNG starts from.
+        ///
+        /// TRAINING TAKES THE SERIALIZED VALUE, ALWAYS. A run has to be able to
+        /// replay its own spot sequence call for call — UNITY_RULES section 2 asks
+        /// for deterministic execution, and two runs of the same config that saw
+        /// different field positions are not comparable.
+        ///
+        /// A PLAYED GAME DOES NOT, AND THAT WAS A REAL BUG. Everything downstream
+        /// of this seed is deterministic: fixed delta time, seeded spots, and a
+        /// heuristic with no randomness in it. With the seed pinned at 1 as well,
+        /// every session of SCN_GAME played out identically — two runs produced the
+        /// same play tally to the digit and the same score. A game that cannot
+        /// surprise anyone twice is not much of a game.
+        ///
+        /// Time-derived rather than System.Random so there is no second RNG to seed;
+        /// zero is folded away because Systems_EpisodeSeed rejects it.
+        /// </summary>
+        private uint ResolveSeed()
+        {
+            if (_simMode != Systems_SimMode.Game || !_varySeedPerGame)
+            {
+                return _episodeSeed;
+            }
+
+            return (uint)System.DateTime.Now.Ticks;
+        }
+
         private void InjectSceneBehaviours(IObjectResolver container)
         {
             MonoBehaviour[] behaviours = FindObjectsByType<MonoBehaviour>(

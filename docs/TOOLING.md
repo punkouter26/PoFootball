@@ -43,6 +43,44 @@ it runs a local HTTP API inside the Editor (port 7800 by default). Without it th
 CLI can manage installs but cannot drive a running Editor. It also provides the
 `eval` / `eval_file` commands and the MCP server surfaced by `unity mcp`.
 
+## Running tests
+
+Both suites are driven through the pipeline. **Scope every run to this project's
+assemblies** — the filter is not optional in practice:
+
+```powershell
+# EditMode — 134 PoFootball tests. Blocks the Editor for the duration.
+unity command --timeout 600 run_tests --mode editor `
+  --filter PoFootball --filter_type assembly
+
+# PlayMode — 19 tests. MUST be async; entering play mode drops a sync request.
+unity command run_tests --mode playmode --async_tests `
+  --filter PoFootball --filter_type assembly
+unity command test_status        # poll until status is "completed"
+```
+
+Four things that cost time the hard way:
+
+**The flag is `--filter X --filter_type assembly`, not `--assembly`.** An unknown
+flag is silently ignored rather than rejected, so `--assembly PoFootball.Tests.EditMode`
+runs the WHOLE tree instead of the subset you asked for.
+
+**Unfiltered means 370 tests, not 134.** `com.besty.unity-skills` contributes 232 of
+them and one of those (`PerceptionSkillsTests.SceneSummarize_CountsObjectsCorrectly`)
+fails for reasons that have nothing to do with this project. An unfiltered run takes
+about five minutes and buries the only result that matters.
+
+**`run_tests` is `MainThreadRequired`, and sync mode holds the main thread.** The
+pipeline HTTP server lives there, so for the whole run `unity status` reports
+`unreachable` and every other command times out. That is expected. What is not
+recoverable is letting it hit its own 300 s `timeout` — the runner logs
+`Test execution timed out, cancelling...`, invalidates the run, and the server can
+stay wedged afterwards with the port still listening but nothing answering. Pass
+`--timeout` generously, or use `--async_tests` and poll.
+
+**Never start a test run while play mode is active.** It tears down the running
+scene, and an EditMode run additionally forces a domain reload out from under it.
+
 ## MCP servers
 
 | Server | Client | Points at |

@@ -85,7 +85,40 @@ namespace PoFootball.Agents
         /// checkpoints were fitted against the free-aim throw and will not load
         /// here — Resources/PoFootballBrains.asset still stamps revision 4, so
         /// Agent_BrainTable.MatchesCurrentContract is false and every player falls
-        /// back to Heuristic until a revision 5 run is trained and promoted.
+        /// back to Heuristic until a matching run is trained and promoted.
+        ///
+        /// Revision 6 changes the SHAPES, so unlike 2, 3, 4 and 5 it is caught by a
+        /// shape check as well as by this stamp. The observation vector grew 32 -> 36
+        /// (down and distance, for every player), and the quarterback's play-call
+        /// branch grew 5 -> 7 with Punt and FieldGoal. Both are resolved at the rules
+        /// layer rather than simulated, and both are masked out wherever they are
+        /// illegal — see Agent_FootballPlayer.WriteDiscreteActionMask — so the
+        /// quarterback learns WHEN to kick from the mask rather than from a penalty
+        /// for proposing the absurd.
+        ///
+        /// Training gained downs in the same revision, which is what made a punt
+        /// learnable at all: Systems_GameFlowSystem owns the chains and is a
+        /// Game-mode registration, so until then the training environment had no
+        /// down and no distance and a punt decision was not merely unlearned, it was
+        /// unrepresentable. Systems_RandomSpotProvider now draws a seeded down and
+        /// distance with every spot. A safety also became a distinct outcome rather
+        /// than an ordinary tackle for loss. results/football_base09 is the only run
+        /// against revision 6, and it did not finish — its workers died with a
+        /// BrokenPipeError partway through.
+        ///
+        /// Revision 7 collapses the BRAIN GROUPS from six to three: Offense, Defense
+        /// and Quarterback, in place of the OffenseLine / OffenseSkill / DefenseLine
+        /// / DefenseBox / DefenseSecondary split. Every shape is unchanged, so
+        /// nothing about an observation or an action vector would catch it — but a
+        /// six-entry table maps group 3, 4 and 5 onto enum values that no longer
+        /// exist, and maps 0, 1 and 2 onto entirely different populations than the
+        /// names suggest. That is exactly the silent behavioural mismatch this stamp
+        /// exists for, and Agent_BrainTable now checks the group SET as well as this
+        /// number, because the number alone cannot see it.
+        ///
+        /// NOTHING IS PROMOTED AGAINST REVISION 7. Every player runs Heuristic until
+        /// a revision 7 run is trained against the three-behavior config and
+        /// promoted with Tools/promote_brain.py.
         /// </summary>
         public const int CONTRACT_REVISION = 7;
 

@@ -65,21 +65,43 @@ Assets/Scripts/Systems/        Systems_*.cs    — referee, game flow, UI (no ML
 Assets/Scripts/Systems/View/   Systems_*.cs    — UI Toolkit screens, audio, shape presentation
 Assets/Scenes/                 SCN_*.unity, SCN_TRAIN_*.unity — these three only
 Assets/Resources/              PoFootballPanelSettings, PoFootballRoleShapes, M_PoFootball*.mat
+                               — no PoFootballBrains yet; Build Brain Table writes it
 Builds/<Name>Env/              headless training envs (git-ignored) — FootballEnv only
 Config/<Name><Phase><NN>.yaml  trainer configs, 1:1 with run-id <name>_<phase><nn>
 Config/archive/                configs for superseded contracts; they will NOT run
 results/<run-id>/MANIFEST.md   one per run — records --num-envs, which is part of the run's identity
 ```
 
-**No brain is currently promoted.** `Assets/Agents/Football_v01` was deleted: its
-four `.onnx` files came from the four-behavior base02 contract and are unloadable
-against the six-behavior contract, and the 44 `m_Model` references to them in
-`SCN_GAME` and `SCN_TRAIN_FOOTBALL` were already dead — `Agent_FootballPlayer`
-assigns `behaviorParameters.Model` from `Agent_BrainRegistry` at `Awake`,
-overwriting whatever the scene serialized. There is also no
-`Resources/PoFootballBrains.asset`, so `ModelFor` returns null and **every player
-runs `Heuristic`**. That is a supported, playable state, not a bug — but it means
-nothing you watch right now is a trained policy.
+**No brain is promoted, so every player runs `Heuristic`.** `Agent_BrainRegistry`
+finds no `Resources/PoFootballBrains.asset`, `ModelFor` returns null, and the
+built-in heuristic drives all 22 players.
+
+`Assets/Agents/Football_v01` and that table both existed until 2026-08-22 and were
+deleted, for the reason the stamp exists. They came from `football_base08` at
+**contract revision 4** against a build now on **revision 7**. The table was worse
+than merely old: it carried six entries numbered 0..5 from the six-brain-group era,
+and `Systems_BrainGroup` has had three members since revision 7, so entries 3-5 were
+undefined enum values and 0-2 pointed at entirely different populations than their
+names suggested. Only the revision mismatch stood between it and a silently
+scrambled load — and re-stamping the revision by hand, which is exactly what someone
+does when they want the brains to load, would have removed it.
+
+So `Agent_BrainTable.MatchesCurrentContract` now checks the **group set** as well as
+the revision stamp, because the stamp is one integer and cannot see the entries
+under it.
+
+To promote: train against `Config/FootballBase10.yaml`, run
+`Tools/promote_brain.py`, then **`Tools > PoFootball > Build Brain Table`** in the
+Editor. That last step is not optional — the Python side copies `.onnx` files but
+cannot write the ScriptableObject that lists them.
+
+Note that `m_Model` references serialized in the scenes are dead either way:
+`Agent_FootballPlayer` assigns `behaviorParameters.Model` from
+`Agent_BrainRegistry` at `Awake`, overwriting whatever the scene held.
+
+Heuristic-only is a supported, playable state, not a bug — but nothing you watch
+right now is a trained policy. **To change that, train a revision 7 run against the
+three-behavior config and promote it.**
 
 **Scenes.** `SCN_MENU` (front end) → `SCN_GAME` (a scored game) and
 `SCN_TRAIN_FOOTBALL` (the trainer's endless single plays). All three share one

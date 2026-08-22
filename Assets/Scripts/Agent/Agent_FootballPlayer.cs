@@ -67,6 +67,47 @@ namespace PoFootball.Agents
         /// </summary>
         private const int PLAY_CALL_BRANCH = 0;
 
+        // --- Heuristic play-call thresholds ----------------------------------
+        //
+        // These shape ChooseCall only. They are NOT part of the action contract and
+        // no promoted brain is fitted against them — a trained quarterback learns
+        // its own thresholds from the down-and-distance observations. They exist so
+        // that the heuristic, which is what runs whenever no brain matches the
+        // current contract revision, exercises the whole playbook.
+
+
+        /// <summary>
+        /// Throw error at zero range, in degrees. See ScatterAim — the total spread
+        /// is this plus a term that grows with the length of the throw.
+        /// </summary>
+        private const float THROW_SCATTER_BASE_DEGREES = 1.8f;
+
+        /// <summary>
+        /// Extra degrees of throw error per metre of flight. At the 1.2 m
+        /// CATCH_RADIUS this puts a fifteen-metre pass comfortably inside the
+        /// receiver and a thirty-metre one outside him about as often as not.
+        /// </summary>
+        private const float THROW_SCATTER_DEGREES_PER_METRE = 0.08f;
+
+        /// <summary>
+        /// Ticks of jitter either side of the scripted release. Small — it varies
+        /// how a play unfolds without moving the throw outside the window
+        /// OnActionReceived enforces.
+        /// </summary>
+        private const int THROW_RELEASE_JITTER_TICKS = 6;
+
+        /// <summary>
+        /// Fraction of the best receiver's SQUARED separation a receiver must have
+        /// to count as a live read. See PickFromReads.
+        /// </summary>
+        private const float ACCEPTABLE_READ_SHARE = 0.5f;
+
+        /// <summary>
+        /// Longest lead a pursuing defender will solve for, in seconds. See
+        /// InterceptOf — it bounds the intercept point when the carrier is faster.
+        /// </summary>
+        private const float MAX_PURSUIT_LEAD_SECONDS = 1.5f;
+
         private bool _hasQuarterbackActions;
         private bool _isBlocker;
 
@@ -1000,13 +1041,13 @@ namespace PoFootball.Agents
 
             if (carrier.Position.y > _play.LineOfScrimmageY)
             {
-                return carrier.Position;
+                return InterceptOf(carrier);
             }
 
             switch (_role)
             {
                 case Systems_PlayerRole.DefensiveLine:
-                    return carrier.Position;
+                    return InterceptOf(carrier);
 
                 case Systems_PlayerRole.Linebacker:
                     return LinebackerZone(carrier);
@@ -1016,8 +1057,58 @@ namespace PoFootball.Agents
                     return CoverageSpot(carrier);
 
                 default:
-                    return carrier.Position;
+                    return InterceptOf(carrier);
             }
+        }
+
+        /// <summary>
+        /// Where to run to actually MEET the carrier, rather than where he is now.
+        ///
+        /// PURE PURSUIT CANNOT CATCH ANYBODY. Steering at a runner's current
+        /// position means arriving where he has just been, so a defender only ever
+        /// closes if he is strictly faster — and Systems_RoleTable gives a corner
+        /// and a receiver the same 9.3 m/s, a linebacker and a back within a whisker
+        /// of each other. Once a carrier cleared the line he was, in practice,
+        /// uncatchable: a 40-play sample came back with eleven touchdowns and six
+        /// plays that hit the clock with nobody having laid a hand on him.
+        ///
+        /// This is the same mistake the blocker branch above already documents —
+        /// "driving at him meant arriving where he had just been" — and the same
+        /// fix. Solving for the intercept lets equal speed be enough, because the
+        /// defender cuts the angle instead of running the same path a step behind.
+        ///
+        /// Three Newton iterations, exactly as LeadAim does for a throw: the flight
+        /// time depends on the distance, which depends on the lead. It converges
+        /// immediately at these speeds and needs no closed form.
+        /// </summary>
+        private Vector2 InterceptOf(Systems_IPlayerHandle carrier)
+        {
+            float speed = Systems_RoleTable.TopSpeedOf(_role);
+
+            if (speed <= 0.01f)
+            {
+                return carrier.Position;
+            }
+
+            Vector2 origin = Position;
+            Vector2 carrierPosition = carrier.Position;
+            Vector2 carrierVelocity = carrier.Velocity;
+
+            Vector2 aim = carrierPosition;
+
+            for (int iteration = 0; iteration < 3; iteration++)
+            {
+                float seconds = (aim - origin).magnitude / speed;
+
+                // Capped so a runner who is briefly faster cannot throw the solution
+                // out to the far end of the field, which would turn a pursuit into a
+                // sprint at the end zone and give up the angle entirely.
+                seconds = Mathf.Min(seconds, MAX_PURSUIT_LEAD_SECONDS);
+
+                aim = carrierPosition + (carrierVelocity * seconds);
+            }
+
+            return aim;
         }
 
         /// <summary>
@@ -1150,6 +1241,11 @@ namespace PoFootball.Agents
                 ? Systems_SimConstants.DEEP_SHOT_THROW_AT_TICK
                 : THROW_AT_TICK;
 
+            // Jitter the release so the same call does not unfold tick for tick the
+            // way it did last time. Drawn once per play rather than per tick — a
+            // fresh draw every step would re-roll until it passed and defeat itself.
+            releaseTick += ReleaseJitterForThisPlay();
+
             if (_play.PhysicsTick < releaseTick
                 || _play.PhysicsTick > Systems_SimConstants.THROW_WINDOW_TICKS)
             {
@@ -1224,7 +1320,80 @@ namespace PoFootball.Agents
             // A receiver standing exactly on the quarterback has no direction to be
             // led in; straight downfield is the same fallback Systems_BallSystem
             // applies to a degenerate aim.
-            return aim.sqrMagnitude < 1e-4f ? Vector2.up : aim.normalized;
+            if (aim.sqrMagnitude < 1e-4f)
+            {
+                return Vector2.up;
+            }
+
+            return ScatterAim(aim.normalized, aim.magnitude);
+        }
+
+        /// <summary>
+        /// Rotates a throw off its perfect lead by a small random angle.
+        ///
+        /// WHY A PERFECT THROW IS THE WRONG DEFAULT. LeadAim solves the intercept
+        /// exactly — three Newton iterations against the receiver's current velocity
+        /// — so with a deterministic play call and deterministic routes, the same
+        /// down produced the same throw to the same receiver at the same tick, every
+        /// game. That is most of why a played game looked like it was repeating
+        /// itself: not that the calls repeated, but that each call unfolded
+        /// identically. It also made accuracy a step function — a pass was catchable
+        /// or it was not, with nothing in between and no notion of a hard throw.
+        ///
+        /// THE ERROR GROWS WITH DISTANCE, WHICH IS WHAT MAKES IT FOOTBALL. A miss is
+        /// an ANGLE, so the lateral error it produces is the angle times the throw
+        /// length: the same wobble that is harmless on a five-yard out is two metres
+        /// off on a forty-yard shot. Against a CATCH_RADIUS of 1.2 m that lands a
+        /// short pass inside the receiver almost always and a deep one outside him
+        /// often, so the completion rate falls off with depth on its own rather than
+        /// being tuned in per route.
+        ///
+        /// TRIANGULAR, NOT UNIFORM. Averaging two draws clusters the error near zero
+        /// and puts the badly missed throw in the tail, which is how a real
+        /// quarterback is distributed. A uniform draw would make every pass equally
+        /// likely to be terrible.
+        ///
+        /// The draw comes from the heuristic's own seeded stream, so a training run
+        /// with a pinned seed still replays exactly — see HeuristicRng.
+        /// </summary>
+        /// <summary>
+        /// This play's release-timing offset, drawn once and held for the play.
+        ///
+        /// HELD, NOT REDRAWN. HeuristicQuarterback runs every decision step, so a
+        /// fresh draw each tick would be re-rolled until one of them happened to
+        /// clear the threshold — which is not jitter, it is just the earliest tick
+        /// with a lucky draw, and the effect would collapse back to deterministic.
+        /// Keying the cached value on the episode index is what makes it one draw
+        /// per play.
+        /// </summary>
+        private int ReleaseJitterForThisPlay()
+        {
+            if (_releaseJitterEpisode != _play.EpisodeIndex)
+            {
+                _releaseJitterEpisode = _play.EpisodeIndex;
+
+                float unit = (NextHeuristicUnit() * 2f) - 1f;
+                _releaseJitterTicks = Mathf.RoundToInt(unit * THROW_RELEASE_JITTER_TICKS);
+            }
+
+            return _releaseJitterTicks;
+        }
+
+        private Vector2 ScatterAim(Vector2 aim, float throwDistance)
+        {
+            float spreadDegrees = THROW_SCATTER_BASE_DEGREES
+                + (throwDistance * THROW_SCATTER_DEGREES_PER_METRE);
+
+            // Two draws averaged: triangular on [-1, 1], peaked at 0.
+            float unit = (NextHeuristicUnit() + NextHeuristicUnit()) - 1f;
+            float radians = unit * spreadDegrees * Mathf.Deg2Rad;
+
+            float cos = Mathf.Cos(radians);
+            float sin = Mathf.Sin(radians);
+
+            return new Vector2(
+                (aim.x * cos) - (aim.y * sin),
+                (aim.x * sin) + (aim.y * cos));
         }
 
         /// <summary>
@@ -1268,20 +1437,102 @@ namespace PoFootball.Agents
                 (_callWindowCursor + 1) % Systems_SimConstants.CALL_HISTORY_PLAYS;
         }
 
+        /// <summary>
+        /// The heuristic's play call, chosen from down, distance and field position.
+        ///
+        /// WHY THIS READS THE DOWN AT ALL. It used to branch on yards-to-goal alone
+        /// — pass beyond the 25, alternate the two handoffs inside it — and so it
+        /// could never return Punt, FieldGoal or KeepQuarterback. That is not a
+        /// cosmetic gap: with no promoted brain every player falls back to
+        /// Heuristic, so those three calls, and the Punt, FieldGoal,
+        /// TurnoverOnDowns and Safety outcomes downstream of them, were unreachable
+        /// in the only mode the game can currently run. A 40-play sample produced
+        /// nothing but Tackle, Touchdown and Incompletion, and drives never ended in
+        /// anything but a score, which is most of why the scoreline ran away.
+        ///
+        /// EVERY BRANCH HERE MIRRORS WriteDiscreteActionMask. The mask is the
+        /// authority on what is legal — Punt on fourth down, FieldGoal on fourth
+        /// down and in range — and a heuristic that proposed a masked action would
+        /// have it silently overridden, which reads as the call being ignored. The
+        /// two are deliberately expressed the same way round so they stay in step.
+        /// </summary>
+        /// <summary>
+        /// The heuristic's own RNG, seeded once from <see cref="Systems_EpisodeSeed"/>.
+        ///
+        /// WHY THE HEURISTIC IS STOCHASTIC AT ALL. Everything under it is
+        /// deterministic by design — fixed delta time, seeded spots, a fixed
+        /// formation — so a play call chosen by slot parity made the whole game
+        /// deterministic too. With no promoted brain the heuristic IS the policy, and
+        /// two sessions of SCN_GAME produced the same play tally to the digit and the
+        /// same final score. Variety has to enter through the policy, because that is
+        /// the only part of the loop that is allowed to be stochastic: a trained
+        /// quarterback samples from a distribution every down, and this is the
+        /// stand-in for one.
+        ///
+        /// THE SIMULATION STAYS REPRODUCIBLE. The seed comes from
+        /// Systems_EpisodeSeed, which Systems_GameLifetimeScope pins in Training and
+        /// varies per session in Game. A training run therefore replays call for
+        /// call, which UNITY_RULES section 2 asks for; a played game does not, which
+        /// is what makes it a game. The slot index is folded in so 22 players do not
+        /// draw the same stream.
+        ///
+        /// Unity.Mathematics.Random is a struct, so this costs no allocation on a
+        /// path that runs every decision step.
+        /// </summary>
+        private Unity.Mathematics.Random _heuristicRng;
+
+        private bool _heuristicRngReady;
+
+        private int _releaseJitterEpisode = -1;
+
+        private int _releaseJitterTicks;
+
+        private Unity.Mathematics.Random HeuristicRng
+        {
+            get
+            {
+                if (!_heuristicRngReady)
+                {
+                    // Zero is not a legal xorshift state, so the slot is folded in
+                    // with an odd multiplier and the whole thing is forced non-zero.
+                    uint seed = Systems_EpisodeSeed.Value
+                        + ((uint)(_formationSlotIndex + 1) * 2654435761u);
+
+                    _heuristicRng = new Unity.Mathematics.Random(seed == 0u ? 1u : seed);
+                    _heuristicRngReady = true;
+                }
+
+                return _heuristicRng;
+            }
+        }
+
+        /// <summary>Draws once and writes the advanced state back.</summary>
+        private float NextHeuristicUnit()
+        {
+            Unity.Mathematics.Random rng = HeuristicRng;
+            float value = rng.NextFloat();
+            _heuristicRng = rng;
+            return value;
+        }
+
+        /// <summary>
+        /// Delegates to <see cref="Agent_PlayCaller"/>, which owns the judgement.
+        /// This method's whole job is turning agent state into the four numbers it
+        /// takes, and handing over the seeded draw so the policy stays reproducible
+        /// without owning an RNG of its own.
+        /// </summary>
         private Systems_PlayCall ChooseCall()
         {
             float yardsToGoal = _field == null
                 ? 50f
                 : _field.YardsToAttackingGoal(Position.y);
 
-            if (yardsToGoal > 25f)
-            {
-                return Systems_PlayCall.Pass;
-            }
-
-            return (_play.EpisodeIndex % 2 == 0)
-                ? Systems_PlayCall.HandoffHalfback
-                : Systems_PlayCall.HandoffFullback;
+            return Agent_PlayCaller.Choose(
+                _play.Down,
+                _play.YardsToGo,
+                yardsToGoal,
+                IsInFieldGoalRange(),
+                NextHeuristicUnit);
         }
 
         /// <summary>
@@ -1387,7 +1638,83 @@ namespace PoFootball.Agents
                 }
             }
 
-            return best;
+            if (best == null)
+            {
+                return null;
+            }
+
+            return PickFromReads(bestRoom, best);
+        }
+
+        /// <summary>
+        /// Chooses among the receivers who are comparably open, rather than always
+        /// the single most open one.
+        ///
+        /// WHY NOT JUST TAKE THE BEST. MostOpenReceiver ranks by separation and the
+        /// ranking is deterministic, so on a given play the same man came open by
+        /// the same margin and got the ball every single time. Watching it, the
+        /// offense looked like it was running one play on a loop. A quarterback does
+        /// not solve a maximum either — he works a progression and throws to a man
+        /// who is open, which on most snaps is more than one of them.
+        ///
+        /// ACCEPTABLE_READ_SHARE is applied to SQUARED separation, so 0.5 here is
+        /// about 71% of the best actual separation. Anyone that open is a live read;
+        /// anyone tighter than that is genuinely covered and stays out of it, which
+        /// keeps this from degenerating into throwing at random.
+        ///
+        /// Reservoir sampling so the pick is uniform over the live reads in one pass
+        /// and with no list to allocate — this runs on the decision-step path.
+        /// </summary>
+        private Systems_IPlayerHandle PickFromReads(
+            float bestRoom, Systems_IPlayerHandle best)
+        {
+            float threshold = bestRoom * ACCEPTABLE_READ_SHARE;
+
+            Systems_IPlayerHandle chosen = null;
+            int seen = 0;
+
+            for (int slotIndex = 0; slotIndex < Systems_PlayerRegistry.CAPACITY; slotIndex++)
+            {
+                Systems_IPlayerHandle candidate = _registry.Get(slotIndex);
+
+                if (candidate == null
+                    || candidate.Side != Systems_TeamSide.Offense
+                    || candidate.Id == Id
+                    || !IsEligibleReceiver(candidate.Role)
+                    || candidate.Position.y <= Position.y)
+                {
+                    continue;
+                }
+
+                float room = float.MaxValue;
+
+                for (int other = 0; other < Systems_PlayerRegistry.CAPACITY; other++)
+                {
+                    Systems_IPlayerHandle defender = _registry.Get(other);
+
+                    if (defender == null || defender.Side != Systems_TeamSide.Defense)
+                    {
+                        continue;
+                    }
+
+                    room = Mathf.Min(
+                        room, (defender.Position - candidate.Position).sqrMagnitude);
+                }
+
+                if (room < threshold)
+                {
+                    continue;
+                }
+
+                seen++;
+
+                if (NextHeuristicUnit() < 1f / seen)
+                {
+                    chosen = candidate;
+                }
+            }
+
+            return chosen ?? best;
         }
 
         private Systems_IPlayerHandle MostOpenReceiver()

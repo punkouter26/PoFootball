@@ -102,11 +102,21 @@ namespace PoFootball.Tests
             Rigidbody2D rigidbody = CreateConfiguredBody(role);
             float driveForce = Systems_RoleTable.DriveForceOf(role);
 
-            // 6 s at 50 Hz. The response is first-order with a time constant of
-            // 1/damping = 0.67 s, so this is nine time constants — the residual is
-            // ~1e-4 m/s, well inside the tolerance below. Three seconds is not
-            // enough: it lands short, which reads as a dynamics change.
-            for (int tick = 0; tick < 300; tick++)
+            // 12 s at 50 Hz. The response is first-order with a time constant of
+            // 1/LINEAR_DAMPING, so this is 9.6 time constants — the residual is
+            // ~7e-4 m/s, well inside the tolerance below.
+            //
+            // THE WINDOW IS DERIVED FROM THE DAMPING, NOT TYPED IN. It was a flat
+            // 300 ticks against the pre-revision-3 damping of 1.5 (tau = 0.67 s),
+            // where 6 s really was nine time constants. Revision 3 dropped damping
+            // to 0.8 and nearly doubled tau to 1.25 s without moving this loop, so
+            // 6 s became 4.8 time constants and left a 0.8% residual — every role
+            // landed just outside the tolerance and the failure read as a dynamics
+            // regression when the dynamics were exactly right. Computing the tick
+            // count keeps the two in step the next time damping moves.
+            int settleTicks = SettleTicks();
+
+            for (int tick = 0; tick < settleTicks; tick++)
             {
                 rigidbody.AddForce(rigidbody.transform.up * driveForce);
                 yield return new WaitForFixedUpdate();
@@ -256,6 +266,23 @@ namespace PoFootball.Tests
             Assert.That(cutting, Is.GreaterThan(cruising * 2f));
         }
 
+        /// <summary>
+        /// Fixed-update ticks needed for a first-order drive response to settle to
+        /// within a ten-thousandth of its terminal speed, derived from the damping
+        /// that sets the time constant rather than hard-coded against one value of
+        /// it. tau = 1 / LINEAR_DAMPING; SETTLE_TIME_CONSTANTS of those leave a
+        /// residual of e^-9.6, about 7e-4 of top speed.
+        /// </summary>
+        private static int SettleTicks()
+        {
+            const float SETTLE_TIME_CONSTANTS = 9.6f;
+
+            float timeConstant = 1f / Systems_SimConstants.LINEAR_DAMPING;
+            float seconds = SETTLE_TIME_CONSTANTS * timeConstant;
+
+            return Mathf.CeilToInt(seconds / Time.fixedDeltaTime);
+        }
+
         private Rigidbody2D CreateConfiguredBody(Systems_PlayerRole role)
         {
             _body = new GameObject("PhysicsContractBody");
@@ -283,3 +310,4 @@ namespace PoFootball.Tests
         }
     }
 }
+

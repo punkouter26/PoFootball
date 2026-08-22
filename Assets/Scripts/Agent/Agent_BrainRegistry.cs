@@ -58,13 +58,13 @@ namespace PoFootball.Agents
             if (!_table.MatchesCurrentContract)
             {
                 Debug.LogWarning(
-                    "[PoFootball] Brain table is stamped contract revision "
-                    + $"{_table.ContractRevision} but this build is revision "
-                    + $"{Agent_ActionContract.CONTRACT_REVISION}. Every brain in it is "
-                    + "ignored and every player is running the heuristic. Re-promote "
-                    + "against the current contract rather than editing the stamp — "
-                    + "the shapes really do not line up, and ML-Agents throws rather "
-                    + "than degrading when they do not.");
+                    $"[PoFootball] Brain table refused because {_table.RejectionReason}. "
+                    + "Every brain in it is ignored and every player is running the "
+                    + "heuristic. Re-promote against the current contract and rebuild "
+                    + "the table with Tools > PoFootball > Build Brain Table, rather "
+                    + "than editing the stamp by hand — the shapes really do not line "
+                    + "up, and ML-Agents throws rather than degrading when they do "
+                    + "not.");
                 return;
             }
 
