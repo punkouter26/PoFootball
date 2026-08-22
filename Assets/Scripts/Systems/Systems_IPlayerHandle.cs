@@ -61,6 +61,22 @@ namespace PoFootball.Systems
         void SetCarrier(bool isCarrier);
 
         /// <summary>
+        /// Stops the body dead where it stands, without moving or turning it.
+        ///
+        /// Called once, at the final whistle, and nowhere else. Agents already stop
+        /// driving the instant the play is not Live — Agent_FootballPlayer
+        /// .OnActionReceived returns early — so what was left after a game ended was
+        /// pure coasting momentum bleeding off against linear damping, which read on
+        /// screen as twenty-two players still wandering around underneath the
+        /// final-score overlay as though nobody had told them.
+        ///
+        /// Deliberately NOT ResetTo(Position): that zeroes velocity too, but it also
+        /// snaps every body back to its side's facing, so the last frame of the game
+        /// would jump. A game should end where it was actually being played.
+        /// </summary>
+        void Freeze();
+
+        /// <summary>
         /// Repaints this body's base team colour, and applies it immediately unless
         /// the player is currently carrying (the white carrier highlight wins until
         /// possession leaves it).

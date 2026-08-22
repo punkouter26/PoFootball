@@ -43,6 +43,8 @@ namespace PoFootball.Tests
 
             public void ClearFatigue() { }
 
+            public void Freeze() { }
+
             public void ResetTo(Vector2 position) => Position = position;
 
             // No ApplyTerminalReward or EndEpisodeNow: those moved to
@@ -92,8 +94,13 @@ namespace PoFootball.Tests
             _tackled = new StubPublisher<Systems_TackleMessage>();
             _scored = new StubPublisher<Systems_ScoreMessage>();
 
+            // The DETERMINISTIC model, deliberately: these tests pin the kicking
+            // rules a policy is fitted against, and a sampled curve would make them
+            // flaky for no gain. Systems_ProbabilisticKickModel is a Game-mode
+            // concern — see Systems_IKickModel.
             _referee = new Systems_Referee(
                 _play, _ball, _ballSystem, new Systems_FieldModel(), _registry,
+                new Systems_DeterministicKickModel(),
                 _ended, _tackled, _scored);
 
             _play.BeginEpisode(0f, _quarterback.Position.y, 1, Systems_GameRules.YARDS_TO_GAIN);

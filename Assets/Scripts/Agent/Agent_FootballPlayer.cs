@@ -744,6 +744,12 @@ namespace PoFootball.Agents
             _rigidbody.angularVelocity = 0f;
         }
 
+        public void Freeze()
+        {
+            _rigidbody.linearVelocity = Vector2.zero;
+            _rigidbody.angularVelocity = 0f;
+        }
+
         public void ApplyTerminalReward(
             Systems_PlayOutcome outcome, float netYards, bool passCompleted)
         {

@@ -73,7 +73,11 @@ namespace PoFootball.Tests
             _resolved = new StubPublisher<Systems_DownResolvedMessage>();
             _gameOver = new StubPublisher<Systems_GameOverMessage>();
 
-            _flow = new Systems_GameFlowSystem(_game, _play, _ended, _resolved, _gameOver);
+            // Deterministic, so the punt assertions below stay exact — see
+            // Systems_RefereeTests for the same reasoning.
+            _flow = new Systems_GameFlowSystem(
+                _game, _play, new Systems_DeterministicKickModel(),
+                _ended, _resolved, _gameOver);
             _flow.Start();
         }
 

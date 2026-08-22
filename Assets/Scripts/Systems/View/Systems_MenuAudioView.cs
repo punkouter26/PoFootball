@@ -19,8 +19,11 @@ namespace PoFootball.Views
     [DisallowMultipleComponent]
     public sealed class Systems_MenuAudioView : MonoBehaviour, Systems_IInjectableView
     {
+        // Cut by 80% on 2026-08-22 with the two gains in Systems_AudioView, so the
+        // menu bed keeps the same relationship to the game mix it always had.
+        // Was 0.12. SCN_MENU's serialized copy was edited to match.
         [Range(0f, 1f)]
-        [SerializeField] private float _crowdVolume = 0.12f;
+        [SerializeField] private float _crowdVolume = 0.024f;
 
         [Tooltip("Seconds for the bed to reach full level from silence.")]
         [Range(0.1f, 8f)]

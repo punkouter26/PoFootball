@@ -116,11 +116,32 @@ namespace PoFootball.Agents
         /// exists for, and Agent_BrainTable now checks the group SET as well as this
         /// number, because the number alone cannot see it.
         ///
-        /// NOTHING IS PROMOTED AGAINST REVISION 7. Every player runs Heuristic until
-        /// a revision 7 run is trained against the three-behavior config and
-        /// promoted with Tools/promote_brain.py.
+        /// Revision 8 changes the DYNAMICS, the way 3 and 4 did, and like them it
+        /// leaves every shape identical — so nothing about an observation or an
+        /// action vector would catch it and only this number can. Two constants
+        /// moved, both in Systems_SimConstants:
+        ///
+        ///     SUSTAINED_TACKLE_TICKS  10 -> 6    (0.2 s of contact -> 0.12 s)
+        ///     COVERAGE_CUSHION        1.5 -> 1.0 (metres goalside of a receiver)
+        ///
+        /// Both were measured off a complete played game rather than guessed at. The
+        /// game ended `FINAL 21-28 after 45 plays, 9 drives. Punts 0, FG 0/0,
+        /// safeties 0, turnovers on downs 0` with one incompletion and one
+        /// interception in the whole of it. An offense that converts on better than
+        /// half its snaps never reaches fourth down, so the entire kicking game —
+        /// Agent_PlayCaller.ChooseFourthDown, Systems_Referee.KickOutcome and the
+        /// Punt / FieldGoal / Safety / TurnoverOnDowns branches of
+        /// Systems_GameFlowSystem.Resolve — never executed once. The constants above
+        /// are where that came from: yards after contact, and a throw nobody
+        /// contested. Each is documented at its own declaration.
+        ///
+        /// NOTHING IS PROMOTED AGAINST REVISION 8, and nothing was against 7 either.
+        /// Every player runs Heuristic until a revision 8 run is trained against the
+        /// three-behavior config and promoted with Tools/promote_brain.py. Any
+        /// future `.onnx` trained before this stamp is fitted against different
+        /// dynamics and Agent_BrainTable will refuse it, which is the point.
         /// </summary>
-        public const int CONTRACT_REVISION = 7;
+        public const int CONTRACT_REVISION = 8;
 
         /// <summary>Continuous outputs every brain has: drive and steer.</summary>
         public const int BASE_CONTINUOUS_ACTIONS = 2;

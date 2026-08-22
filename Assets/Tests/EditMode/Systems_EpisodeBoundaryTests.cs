@@ -49,6 +49,8 @@ namespace PoFootball.Tests
 
             public void ClearFatigue() { }
 
+            public void Freeze() { }
+
             public void ResetTo(Vector2 position) => Position = position;
 
             public void SetCarrier(bool isCarrier) => IsCarrier = isCarrier;
@@ -93,6 +95,8 @@ namespace PoFootball.Tests
             public float Fatigue => 0f;
 
             public void ClearFatigue() { }
+
+            public void Freeze() { }
 
             public void ResetTo(Vector2 position) => Position = position;
 

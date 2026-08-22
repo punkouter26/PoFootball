@@ -200,7 +200,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 33fe2c4e7a541a1479151cf082434318, type: 3}
   m_Name: 
   m_EditorClassIdentifier: PoFootball.Views::PoFootball.Views.Systems_MenuAudioView
-  _crowdVolume: 0.12
+  _crowdVolume: 0.024
   _fadeInSeconds: 2.5
 --- !u!1 &1081534707
 GameObject:

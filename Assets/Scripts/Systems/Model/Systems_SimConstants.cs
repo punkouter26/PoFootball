@@ -41,14 +41,16 @@ namespace PoFootball.Models
         /// restores the threshold to the same fraction of a reachable speed it
         /// always represented.
         ///
-        /// SUSTAINED_TACKLE_TICKS is deliberately left alone. Two knobs moved at
-        /// once is two knobs neither of which can be attributed afterwards.
+        /// TACKLE_CLOSING_SPEED itself is left where the calibration above put it.
+        /// The knob that moved for contract revision 8 is SUSTAINED_TACKLE_TICKS
+        /// below, which governs a different thing — how long a carrier keeps going
+        /// after contact rather than what counts as contact.
         /// </summary>
         public const float TACKLE_CLOSING_SPEED = 0.8f;
 
         /// <summary>
         /// Consecutive physics ticks of contact that bring the carrier down
-        /// regardless of closing speed — 10 ticks = 0.2 s, a wrap-up tackle.
+        /// regardless of closing speed — 4 ticks = 0.08 s, a wrap-up tackle.
         ///
         /// Without this, pursuit tackles are impossible. Two bodies travelling the
         /// same direction at similar speed have a relative velocity near zero, so
@@ -57,8 +59,30 @@ namespace PoFootball.Models
         /// however long it stays in contact. Run football_base01 learned to exploit
         /// exactly that: the offense averaged tens of yards per play because only
         /// head-on hits could stop it.
+        ///
+        /// CUT FROM 10 TO 6 FOR CONTRACT REVISION 8, AND THIS IS THE KNOB THAT MAKES
+        /// FOURTH DOWN EXIST. A measured full game returned `Punts 0, FG 0/0,
+        /// safeties 0, turnovers on downs 0` — every kicking rule in the project,
+        /// and the whole of Agent_PlayCaller.ChooseFourthDown, went unexecuted for
+        /// an entire game. The cause was not the kicking code: the offense simply
+        /// never reached fourth down. 17 of 45 plays gained a first down outright
+        /// and 7 of 9 drives ended in a touchdown, against an NFL rate near 1 in 5.
+        ///
+        /// 0.2 s of contact is a long time at 9 m/s — nearly two metres of free
+        /// running after a defender has already arrived — and it is what turned
+        /// every stop into a four-yard gain and every set of downs into a formality.
+        ///
+        /// 10 -> 6 was measured and was not enough on its own: first downs fell from
+        /// one every 2.6 plays to one every 3.3, and punts appeared for the first
+        /// time, but 13 of 17 drives still ended in a touchdown. 6 -> 4 went in
+        /// alongside the linebacker and safety top speeds in Systems_RoleTable,
+        /// which is where the rest of that gap actually lived — a carrier the second
+        /// level could not catch was never going to be brought down by a shorter
+        /// contact window. 0.08 s still clears the pursuit case above comfortably:
+        /// a defender in contact from behind holds it for far longer than four
+        /// ticks.
         /// </summary>
-        public const int SUSTAINED_TACKLE_TICKS = 10;
+        public const int SUSTAINED_TACKLE_TICKS = 4;
 
         // --- Body dynamics ---------------------------------------------------
         /// <summary>
@@ -398,11 +422,19 @@ namespace PoFootball.Models
         /// react and the receiver does not. Standing between the receiver and the
         /// end zone means the defender is already where the play has to go.
         ///
-        /// 1.5 m is three body radii, so the two shapes read as covered rather than
-        /// overlapping, and it is inside CATCH_RADIUS * 1.25 — close enough that the
-        /// defender genuinely contests the ball when it arrives.
+        /// TIGHTENED FROM 1.5 TO 1.0 FOR CONTRACT REVISION 8. At 1.5 m the throw was
+        /// essentially uncontested: a measured full game produced ONE incompletion
+        /// and ONE interception in 45 plays, so a pass was very nearly a guaranteed
+        /// completion and the coverage the defense spends the whole play running was
+        /// worth nothing. Systems_BallSystem.FindCatcher awards the ball to the
+        /// nearest eligible body, and a defender parked a metre and a half away
+        /// simply never was the nearest.
+        ///
+        /// 1.0 m is two body radii — still goalside, still not occupying the
+        /// receiver's own square metre, and now inside the range where the defender
+        /// actually wins some of the contests it is in position for.
         /// </summary>
-        public const float COVERAGE_CUSHION = 1.5f;
+        public const float COVERAGE_CUSHION = 1.0f;
 
         /// <summary>
         /// How far beyond the line of scrimmage a linebacker sets up before the ball

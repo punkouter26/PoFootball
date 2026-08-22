@@ -1413,6 +1413,9 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: PoFootball.Views::PoFootball.Views.Systems_BallView
   _zOffset: -1
+  _heightToScreen: 0.6
+  _shadowMinScale: 0.45
+  _shadowFadeHeight: 4
 --- !u!114 &285598537
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -8884,6 +8887,7 @@ MonoBehaviour:
   autoRun: 1
   autoInjectGameObjects: []
   _episodeSeed: 1
+  _varySeedPerGame: 1
   _simMode: 1
   _presentationEffects: 1
 --- !u!1 &2008628098
@@ -8950,8 +8954,8 @@ MonoBehaviour:
   _touchdownOverride: {fileID: 0}
   _firstDownOverride: {fileID: 0}
   _turnoverOverride: {fileID: 0}
-  _effectsVolume: 0.9
-  _crowdVolume: 0.28
+  _effectsVolume: 0.18
+  _crowdVolume: 0.056
 --- !u!114 &2008628102
 MonoBehaviour:
   m_ObjectHideFlags: 0

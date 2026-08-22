@@ -68,6 +68,12 @@ namespace PoFootball.Views
         private Label _bannerDetail;
 
         private Systems_UiOverlay _finalOverlay;
+
+        /// <summary>
+        /// The down-and-distance pill. Held so the final whistle can take it down —
+        /// see <see cref="OnGameOver"/>. The clock beside it is deliberately left up.
+        /// </summary>
+        private VisualElement _situationPill;
         private Label _finalHeadline;
         private Label _finalScoreline;
         private Label _finalTotals;
@@ -136,12 +142,18 @@ namespace PoFootball.Views
             _bannerOverlay = BuildBanner();
             layer.Add(_bannerOverlay.Root);
 
+            // BELOW THE FINAL OVERLAY, AND THAT IS THE WHOLE POINT. This used to be
+            // added last, so QUIT drew ON TOP of the final scrim next to REMATCH and
+            // MENU — three buttons at the whistle, two of which looked identical and
+            // were not. MENU carries the finished game's numbers to the front end
+            // via Systems_GameSummary.From; QUIT calls the summary-less LoadMenu
+            // overload, so tapping the wrong one silently threw the LAST GAME card
+            // away. Ordering it under the overlay means the whistle covers it and
+            // the end of a game offers exactly the two endings it should.
+            layer.Add(BuildControlBar());
+
             _finalOverlay = BuildFinalOverlay();
             layer.Add(_finalOverlay.Root);
-
-            // Above the final overlay, so QUIT stays reachable either side of the
-            // whistle rather than only before it.
-            layer.Add(BuildControlBar());
 
             RefreshScoreboard(true);
         }
@@ -186,24 +198,22 @@ namespace PoFootball.Views
             // thing closest to the hole. Putting the quarter inline beside the
             // clock removes that row entirely, and "1ST 4:50" is how a broadcast
             // graphic would write it anyway.
-            VisualElement centre = Systems_UiTheme.Row();
-            centre.style.justifyContent = Justify.Center;
-
-            // flexBasis 0 with equal grow gives three columns that split the width
-            // evenly at any panel size. The old minWidth: 200 pushed the two teams
-            // hard into the corners on a narrow screen and left the clock adrift.
+            // AN EMPTY COLUMN, BECAUSE THE TOP CENTRE IS NOT OURS TO USE. The
+            // quarter and clock lived here, inline, specifically to avoid putting a
+            // second row under a punch-hole. It did not work: on a centre-cutout
+            // handset the hole clips the clock's LEADING DIGIT, so 1:07 reads ":07"
+            // and 14:22 loses the quarter-hour entirely. Verified on a 1440x3088
+            // centre punch-hole device at 1:39, 1:52 and 1:07.
+            //
+            // The safe-area inset is supposed to prevent exactly this and does not
+            // reach far enough here, so the layout no longer depends on it: the
+            // topmost row now spans the two scores at the OUTSIDE edges with
+            // nothing between them, and the clock has moved down beside the
+            // down-and-distance pill. A cutout can only ever eat empty space.
+            VisualElement centre = new VisualElement();
             centre.style.flexGrow = 1f;
             centre.style.flexBasis = 0f;
-
-            _quarter = Systems_UiTheme.Caption("1ST");
-            _quarter.style.marginRight = Systems_UiTheme.SPACE_S;
-
-            _clock = Systems_UiTheme.Text(
-                "5:00", Systems_UiTheme.TEXT_TITLE,
-                Systems_UiTheme.TextPrimary, FontStyle.Bold);
-
-            centre.Add(_quarter);
-            centre.Add(_clock);
+            centre.pickingMode = PickingMode.Ignore;
             scoreRow.Add(centre);
 
             scoreRow.Add(BuildTeamBlock(Systems_TeamId.Away, out _awayScore, out _awayPossession));
@@ -218,7 +228,22 @@ namespace PoFootball.Views
         {
             VisualElement situation = Systems_UiTheme.Row();
             situation.style.justifyContent = Justify.Center;
+            situation.style.alignItems = Align.Center;
             situation.style.marginTop = Systems_UiTheme.SPACE_S;
+
+            // The clock, relocated off the top-centre strip — see BuildScoreRow.
+            // Beside the situation pill it still reads as one broadcast lower-third
+            // and it is now a full row clear of any cutout.
+            _quarter = Systems_UiTheme.Caption("1ST");
+            _quarter.style.marginRight = Systems_UiTheme.SPACE_XS;
+
+            _clock = Systems_UiTheme.Text(
+                "5:00", Systems_UiTheme.TEXT_TITLE,
+                Systems_UiTheme.TextPrimary, FontStyle.Bold);
+            _clock.style.marginRight = Systems_UiTheme.SPACE_L;
+
+            situation.Add(_quarter);
+            situation.Add(_clock);
 
             VisualElement pill = Systems_UiTheme.Row();
             pill.style.backgroundColor = new Color(
@@ -238,6 +263,8 @@ namespace PoFootball.Views
             pill.Add(_downAndDistance);
             pill.Add(_fieldPosition);
             situation.Add(pill);
+
+            _situationPill = pill;
             return situation;
         }
 
@@ -568,6 +595,19 @@ namespace PoFootball.Views
             _finalTotals.text = BuildTotals();
 
             _bannerOverlay.Hide();
+
+            // THE DOWN AND DISTANCE IS NOT TRUE ANY MORE. Systems_GameFlowSystem
+            // resolves the last play like any other, so the chains are left showing
+            // whatever the next snap WOULD have been — a finished game sat under a
+            // "1st & 10 OPP 46" pill above a 0:00 clock, describing a down that will
+            // never be played. There is no next situation, so nothing should claim
+            // there is; the clock beside it stays, because 0:00 is the true and
+            // interesting fact about a game that has ended.
+            if (_situationPill != null)
+            {
+                _situationPill.style.display = DisplayStyle.None;
+            }
+
             _finalOverlay.Show();
         }
 

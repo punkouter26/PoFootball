@@ -24,8 +24,17 @@ namespace PoFootball.Views
     {
         protected override void BuildUi()
         {
+            // Behind everything, and full-bleed rather than inside the safe area —
+            // see BuildFieldBackdrop.
+            UnsafeRoot.Add(BuildFieldBackdrop());
+
             VisualElement screen = Systems_UiTheme.Screen();
             screen.style.justifyContent = Justify.Center;
+
+            // Transparent, so the backdrop shows through. Systems_UiTheme.Screen()
+            // paints the surface colour by default, which is what would keep this
+            // screen a flat black rectangle no matter what was placed behind it.
+            screen.style.backgroundColor = Color.clear;
 
             // The content block is capped at roughly the height of the 9:16 panel
             // this design was drawn for, and centred inside whatever it is actually
@@ -297,5 +306,119 @@ namespace PoFootball.Views
             return segment;
         }
 
+        /// <summary>
+        /// A field, seen from the same overhead angle the game is played at, dimmed
+        /// most of the way down to the surface colour.
+        ///
+        /// WHY THIS EXISTS. The front end was a flat black rectangle with a title
+        /// and a button in the middle of it and roughly two thirds of the display
+        /// carrying nothing at all. Every element on it was correctly placed — the
+        /// composition notes above are all still true — and it still read as an
+        /// unfinished screen, because a correct layout of three items cannot fill a
+        /// 9:16 handset on its own. There was also nothing anywhere on the opening
+        /// screen to say what the game was; "PO FOOTBALL" was doing that job alone.
+        ///
+        /// A backdrop is the cheapest honest answer: it says football before a word
+        /// is read, it uses the same yard lines and the same two team colours the
+        /// game itself does, and it costs no art. Everything here is a plain
+        /// VisualElement with a background colour.
+        ///
+        /// FULL-BLEED, SO IT GOES ON UnsafeRoot. Systems_ScreenView keeps that root
+        /// specifically for chrome that should reach the physical edge of the
+        /// display — a wash like this one looks wrong inset from a punch-hole, and
+        /// no text lives here to be clipped by one.
+        ///
+        /// KEPT WELL DOWN IN CONTRAST ON PURPOSE. This is behind a title and a
+        /// primary action, and a backdrop that competes with them has taken over the
+        /// screen rather than furnished it.
+        /// </summary>
+        private static VisualElement BuildFieldBackdrop()
+        {
+            const int YARD_LINE_COUNT = 11;
+            const float TURF_GREEN_R = 0.055f;
+            const float TURF_GREEN_G = 0.12f;
+            const float TURF_GREEN_B = 0.075f;
+
+            VisualElement backdrop = new VisualElement { name = "FieldBackdrop" };
+            Systems_UiTheme.FillParent(backdrop);
+            backdrop.style.backgroundColor =
+                new Color(TURF_GREEN_R, TURF_GREEN_G, TURF_GREEN_B, 1f);
+
+            // Non-pickable throughout: this is scenery, and a tap that lands on it
+            // must still reach whatever is underneath the pointer.
+            backdrop.pickingMode = PickingMode.Ignore;
+
+            // Yard lines, evenly spaced down the screen. Percent positions rather
+            // than pixels so the spacing holds from a small phone to a foldable
+            // without anyone having to know the height.
+            for (int index = 0; index < YARD_LINE_COUNT; index++)
+            {
+                float percent = (index + 0.5f) * (100f / YARD_LINE_COUNT);
+
+                VisualElement line = new VisualElement();
+                line.style.position = Position.Absolute;
+                line.style.left = 0;
+                line.style.right = 0;
+                line.style.top = Length.Percent(percent);
+                line.style.height = 2;
+
+                // The centre line is the halfway line, and it is the one line on a
+                // real field that is drawn differently.
+                bool isHalfway = index == YARD_LINE_COUNT / 2;
+
+                line.style.backgroundColor = new Color(
+                    0.85f, 0.95f, 0.88f, isHalfway ? 0.16f : 0.07f);
+
+                line.pickingMode = PickingMode.Ignore;
+                backdrop.Add(line);
+            }
+
+            // The two end zones, in the team colours the rest of the app already
+            // uses — the same pairing the wordmark's rule makes, at the two ends of
+            // the field where a real one puts them.
+            backdrop.Add(EndZone(Systems_TeamId.Home, true));
+            backdrop.Add(EndZone(Systems_TeamId.Away, false));
+
+            // A scrim over the whole thing. Without it the yard lines run straight
+            // under the title and the caption text loses its contrast; with it the
+            // field is present but clearly behind everything.
+            VisualElement scrim = new VisualElement();
+            Systems_UiTheme.FillParent(scrim);
+            scrim.style.backgroundColor = new Color(0.02f, 0.03f, 0.025f, 0.72f);
+            scrim.pickingMode = PickingMode.Ignore;
+            backdrop.Add(scrim);
+
+            return backdrop;
+        }
+
+        /// <summary>
+        /// A tinted band at one end of the backdrop field.
+        /// </summary>
+        private static VisualElement EndZone(Systems_TeamId team, bool atTop)
+        {
+            const float END_ZONE_PERCENT = 9f;
+
+            VisualElement zone = new VisualElement();
+            zone.style.position = Position.Absolute;
+            zone.style.left = 0;
+            zone.style.right = 0;
+            zone.style.height = Length.Percent(END_ZONE_PERCENT);
+
+            if (atTop)
+            {
+                zone.style.top = 0;
+            }
+            else
+            {
+                zone.style.bottom = 0;
+            }
+
+            Color teamColor = Systems_UiTheme.ColorOf(team);
+            zone.style.backgroundColor =
+                new Color(teamColor.r, teamColor.g, teamColor.b, 0.22f);
+
+            zone.pickingMode = PickingMode.Ignore;
+            return zone;
+        }
     }
 }

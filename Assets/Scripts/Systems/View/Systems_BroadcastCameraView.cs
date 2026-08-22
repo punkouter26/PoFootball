@@ -33,9 +33,25 @@ namespace PoFootball.Views
     public sealed class Systems_BroadcastCameraView : MonoBehaviour, Systems_IInjectableView
     {
         /// <summary>
-        /// Widest framing, in metres of half-height. Shows about 78 yards of field.
+        /// Widest framing, in metres of half-height. Shows about 65 yards of field.
         ///
-        /// WAS 46, AND THAT WAS THE ROOT OF THE FRAMING BUG. A portrait screen
+        /// WAS 36, AND BEFORE THAT 46. 36 was still far too wide to WATCH. At the
+        /// 9:16 the panel is designed for, half-width is only 0.466 x the ortho
+        /// size, so 36 put 78 yards of field down a 6-inch screen and every player
+        /// on it rendered about ten pixels across — the play read as a cluster of
+        /// dots drifting on green, and the ball was essentially invisible. Framing
+        /// is not a correctness bug so nothing failed; it just was not worth
+        /// looking at, which for a game whose whole proposition is "watch this" is
+        /// the more serious failure.
+        ///
+        /// The floor on both sizes is the FORMATION, not the field. Systems_Formation
+        /// splits its widest receivers to about x = +/-11 m, so the tight shot has to
+        /// cover 22 m of width to keep a snap whole: 22 / (2 x 0.466) = 23.6, which
+        /// is where TIGHT_SIZE 22 sits once the lateral tracking below is allowed to
+        /// carry the rest. Anything tighter starts cropping receivers off the snap.
+        ///
+        /// AND IT WAS 46 BEFORE THAT, WHICH IS WHERE THE ORIGINAL BUG LIVED. A
+        /// portrait screen
         /// cannot show the full 53.3 yd width without also showing most of the
         /// length — at 9:16 the visible width is only 1.125 x the ortho size, so
         /// covering the sidelines needs an ortho size around 43, which makes the
@@ -45,14 +61,14 @@ namespace PoFootball.Views
         /// sidelines was never worth that: both receivers are inside x = ±11 m at
         /// their widest split, and nothing important happens outside them.
         /// </summary>
-        private const float WIDE_SIZE = 36f;
+        private const float WIDE_SIZE = 30f;
 
         /// <summary>
-        /// Tightest framing — about 61 yards of field. Crops the outer few metres
-        /// of each sideline, which is empty grass at every formation this game
-        /// lines up.
+        /// Tightest framing — about 48 yards of field, down from 61. Crops the outer
+        /// few metres of each sideline, which is empty grass at every formation this
+        /// game lines up. See WIDE_SIZE for why it stops here and not tighter.
         /// </summary>
-        private const float TIGHT_SIZE = 28f;
+        private const float TIGHT_SIZE = 22f;
 
         /// <summary>Yards past the line of scrimmage at which the shot is fully wide.</summary>
         private const float FULL_WIDE_YARDS = 22f;
@@ -61,11 +77,37 @@ namespace PoFootball.Views
         private const float ZOOM_DAMPING = 2.4f;
 
         /// <summary>
-        /// How much of the ball's lateral position the camera tracks. Full
-        /// tracking makes a receiver running a crossing route swing the whole
-        /// field sideways; a third reads as the operator easing over.
+        /// How much of the ball's lateral position the camera tracks. Full tracking
+        /// makes a receiver running a crossing route swing the whole field sideways;
+        /// a third reads as the operator easing over.
+        ///
+        /// RAISED FROM 0.35 WITH THE ZOOM. The two numbers trade against each other:
+        /// a tighter shot shows less width, so it has to follow the ball further
+        /// across to keep it in frame. At 0.55 the carrier stays comfortably inside
+        /// the tighter rectangle without the field reading as though it is on rails.
         /// </summary>
-        private const float LATERAL_TRACKING = 0.35f;
+        private const float LATERAL_TRACKING = 0.55f;
+
+        /// <summary>
+        /// How far ahead of the ball the shot sits, as a fraction of the half-height
+        /// currently being framed.
+        ///
+        /// A camera centred exactly on the ball spends half its screen on the ground
+        /// the play has already left. Every operator covering football leads the
+        /// ball instead, so the room is in front of the carrier where the play is
+        /// about to happen — you want to see the defender he is running at, not the
+        /// one he beat.
+        ///
+        /// WHICH WAY IS "AHEAD" IS FREE HERE, AND THAT IS NOT LUCK. The offense
+        /// always attacks +Y — Systems_GameFlowSystem mirrors field position through
+        /// y -> -y on every change of possession precisely so that stays true — so
+        /// downfield is +Y on every snap of every drive for both teams, and this
+        /// needs no knowledge of who has the ball.
+        ///
+        /// Scaled by the live ortho size rather than fixed in metres, so the lead
+        /// grows as the shot opens up on a breaking run and stays modest at the snap.
+        /// </summary>
+        private const float DOWNFIELD_LEAD = 0.22f;
 
         private ISubscriber<Systems_PlaySnappedMessage> _snappedSubscriber;
         private IDisposable _snappedSubscription;
@@ -150,7 +192,10 @@ namespace PoFootball.Views
         private Vector2 FramingTarget()
         {
             Vector2 ball = _ball.Position;
-            return new Vector2(ball.x * LATERAL_TRACKING, ball.y);
+
+            float lead = _camera.orthographicSize * DOWNFIELD_LEAD;
+
+            return new Vector2(ball.x * LATERAL_TRACKING, ball.y + lead);
         }
 
         /// <summary>
@@ -241,8 +286,12 @@ namespace PoFootball.Views
             // field between plays.
             _camera.orthographicSize = TIGHT_SIZE;
 
+            // Same downfield lead the steady-state framing uses, or the shot would
+            // cut to the line of scrimmage and then immediately drift upfield by the
+            // lead on the next frame.
             Vector2 spot = ClampToField(
-                new Vector2(0f, message.LineOfScrimmageY), TIGHT_SIZE);
+                new Vector2(0f, message.LineOfScrimmageY + (TIGHT_SIZE * DOWNFIELD_LEAD)),
+                TIGHT_SIZE);
 
             _transform.position = new Vector3(spot.x, spot.y, _homeZ);
         }

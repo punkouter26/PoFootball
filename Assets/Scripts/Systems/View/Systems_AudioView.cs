@@ -53,12 +53,22 @@ namespace PoFootball.Views
         [SerializeField] private AudioClip _firstDownOverride;
         [SerializeField] private AudioClip _turnoverOverride;
 
+        // BOTH GAINS WERE CUT BY 80% ON 2026-08-22, AT THE OWNER'S REQUEST.
+        // These two floats are the whole mix: every one-shot is scaled by
+        // _effectsVolume in Play, and the looping bed is _crowdVolume outright, so
+        // scaling the pair by 0.2 is an exact 80% cut across every sound the game
+        // makes. The previous levels were 0.9 and 0.3.
+        //
+        // The scene carries its own serialized copies of both, and a serialized
+        // value wins over the initializer here — so SCN_GAME was edited to match.
+        // Changing only this file would have looked right in the diff and changed
+        // nothing you can hear.
         [Header("Mix")]
         [Range(0f, 1f)]
-        [SerializeField] private float _effectsVolume = 0.9f;
+        [SerializeField] private float _effectsVolume = 0.18f;
 
         [Range(0f, 1f)]
-        [SerializeField] private float _crowdVolume = 0.3f;
+        [SerializeField] private float _crowdVolume = 0.06f;
 
         private ISubscriber<Systems_DownResolvedMessage> _resolvedSubscriber;
         private ISubscriber<Systems_TackleMessage> _tackleSubscriber;

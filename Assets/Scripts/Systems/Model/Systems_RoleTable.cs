@@ -96,10 +96,25 @@ namespace PoFootball.Models
                     return 7.3f;
                 case Systems_PlayerRole.Quarterback:
                     return 7.6f;
+                // RAISED FOR CONTRACT REVISION 8, AND THE ORDER AGAINST THE BACK IS
+                // THE WHOLE POINT. At 8.0 and 8.7 both of these sat BELOW the
+                // running back's 8.9, so a carrier who cleared the line could not be
+                // run down by either of the two levels whose job that is — only a
+                // cornerback was faster, and corners are occupied covering the
+                // receivers. A measured game showed what that costs: 13 touchdowns
+                // in 17 drives, roughly 15 yards a play, and seven plays that hit
+                // the 750-tick cap with nobody having caught the carrier at all.
+                //
+                // The safety is now 9.2 — above the back, still below the corner's
+                // 9.3, so the depth chart is unchanged and the last line of defense
+                // can actually be the last line of defense. A real free safety is
+                // not faster than a feature back, but a real defense also has
+                // pursuit angles from eleven bodies rather than the handful this
+                // sim's spacing produces; 9.2 is buying back that geometry.
                 case Systems_PlayerRole.Linebacker:
-                    return 8.0f;
+                    return 8.5f;
                 case Systems_PlayerRole.Safety:
-                    return 8.7f;
+                    return 9.2f;
                 case Systems_PlayerRole.RunningBack:
                     return 8.9f;
                 default:

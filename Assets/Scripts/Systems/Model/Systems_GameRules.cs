@@ -18,12 +18,11 @@ namespace PoFootball.Models
         /// Seconds per quarter. Five minutes rather than fifteen, which is what
         /// makes the final whistle reachable in a sitting.
         ///
-        /// The arithmetic, since the previous note here had it badly wrong: nearly
-        /// all of a play's cost is HUDDLE_SECONDS, and a play is only live for a
-        /// few seconds on top of that. At roughly 28 s of game clock per down this
-        /// is about eleven plays a quarter and forty-odd in a game — not the
-        /// "~25 a quarter" claimed before, which assumed a huddle less than half
-        /// the length of the one two lines below it.
+        /// The arithmetic: nearly all of a play's cost is HUDDLE_SECONDS, and a play
+        /// is only live for a few seconds on top of that. At the 12 s huddle two
+        /// lines below — roughly 15 s of game clock per down — this is about twenty
+        /// plays a quarter and eighty in a game. It was forty-odd at the 25 s huddle
+        /// this used to carry, which was too few for a drive to develop.
         /// </summary>
         public const float QUARTER_SECONDS = 300f;
 
@@ -31,8 +30,20 @@ namespace PoFootball.Models
         /// Clock burned between snaps while the clock runs — the huddle. Without
         /// it a quarter would take hundreds of plays, because a play itself only
         /// consumes the handful of seconds it is physically live.
+        ///
+        /// CUT FROM 25 TO 12, AND THAT IS WHAT SETS THE LENGTH OF A GAME. A measured
+        /// full game came in at 45 plays across 9 drives — an NFL game is about 130
+        /// — because at 25 s a quarter can only physically contain eleven or twelve
+        /// snaps. Every drive was three to five plays, which is why so few of them
+        /// ever reached a fourth down, and a viewer barely saw the playbook.
+        ///
+        /// 12 s is a no-huddle pace rather than a leisurely one, and it roughly
+        /// doubles the game to the eighty or ninety snaps that let drives actually
+        /// develop. It costs nothing in real time — the wall-clock length of a game
+        /// is DEAD_BALL_TICKS plus live play, not this — so the game gets longer in
+        /// football and stays the same length in minutes.
         /// </summary>
-        public const float HUDDLE_SECONDS = 25f;
+        public const float HUDDLE_SECONDS = 12f;
 
         /// <summary>Seconds per physics tick. Mirrors the pinned fixed timestep.</summary>
         public const float SECONDS_PER_TICK = 0.02f;

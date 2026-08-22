@@ -37,6 +37,7 @@ namespace PoFootball.Systems
     {
         private readonly Systems_GameModel _game;
         private readonly Systems_PlayModel _play;
+        private readonly Systems_IKickModel _kickModel;
         private readonly ISubscriber<Systems_PlayEndedMessage> _endedSubscriber;
         private readonly IPublisher<Systems_DownResolvedMessage> _resolvedPublisher;
         private readonly IPublisher<Systems_GameOverMessage> _gameOverPublisher;
@@ -56,12 +57,14 @@ namespace PoFootball.Systems
         public Systems_GameFlowSystem(
             Systems_GameModel game,
             Systems_PlayModel play,
+            Systems_IKickModel kickModel,
             ISubscriber<Systems_PlayEndedMessage> endedSubscriber,
             IPublisher<Systems_DownResolvedMessage> resolvedPublisher,
             IPublisher<Systems_GameOverMessage> gameOverPublisher)
         {
             _game = game;
             _play = play;
+            _kickModel = kickModel;
             _endedSubscriber = endedSubscriber;
             _resolvedPublisher = resolvedPublisher;
             _gameOverPublisher = gameOverPublisher;
@@ -283,8 +286,12 @@ namespace PoFootball.Systems
                 // receiving team's own frame. A punt that reaches the end zone is a
                 // touchback at the 20 — which is a different yard line from a
                 // kickoff touchback, because they are different rules.
+                //
+                // The net comes from the kick model rather than the flat constant,
+                // so a played game gets a punt that varies and a training run gets
+                // the same 40 every time. See Systems_IKickModel.
                 float landing = _game.LineOfScrimmageY
-                    + (Systems_GameRules.PUNT_NET_YARDS * Systems_FieldModel.YARD);
+                    + (_kickModel.PuntNetYards() * Systems_FieldModel.YARD);
 
                 float receiverSpot =
                     landing >= Systems_FieldModel.ATTACKING_GOAL_LINE_Y

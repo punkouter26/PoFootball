@@ -154,6 +154,20 @@ namespace PoFootball.Systems
             if (!_spotProvider.HasNextPlay)
             {
                 _started = false;
+
+                // Park the bodies. Nothing is driving them any more — an agent
+                // returns early from OnActionReceived unless the play is Live — but
+                // whatever speed they carried into the whistle keeps bleeding off
+                // against linear damping for a second or two afterwards, and the
+                // final overlay goes up over twenty-two players still drifting
+                // about. The game is over; they should look like it.
+                for (int slotIndex = 0;
+                    slotIndex < Systems_PlayerRegistry.CAPACITY;
+                    slotIndex++)
+                {
+                    _registry.Get(slotIndex).Freeze();
+                }
+
                 return;
             }
 

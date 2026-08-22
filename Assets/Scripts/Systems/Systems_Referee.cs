@@ -25,6 +25,7 @@ namespace PoFootball.Systems
         private readonly Systems_BallSystem _ballSystem;
         private readonly Systems_FieldModel _field;
         private readonly Systems_PlayerRegistry _registry;
+        private readonly Systems_IKickModel _kickModel;
         private readonly IPublisher<Systems_PlayEndedMessage> _endedPublisher;
         private readonly IPublisher<Systems_TackleMessage> _tacklePublisher;
         private readonly IPublisher<Systems_ScoreMessage> _scorePublisher;
@@ -38,6 +39,7 @@ namespace PoFootball.Systems
             Systems_BallSystem ballSystem,
             Systems_FieldModel field,
             Systems_PlayerRegistry registry,
+            Systems_IKickModel kickModel,
             IPublisher<Systems_PlayEndedMessage> endedPublisher,
             IPublisher<Systems_TackleMessage> tacklePublisher,
             IPublisher<Systems_ScoreMessage> scorePublisher)
@@ -47,6 +49,7 @@ namespace PoFootball.Systems
             _ballSystem = ballSystem;
             _field = field;
             _registry = registry;
+            _kickModel = kickModel;
             _endedPublisher = endedPublisher;
             _tacklePublisher = tacklePublisher;
             _scorePublisher = scorePublisher;
@@ -117,9 +120,10 @@ namespace PoFootball.Systems
         }
 
         /// <summary>
-        /// A punt is always a punt. A field goal is good or short purely as a
-        /// function of its length, so the offense owns the outcome completely —
-        /// see Systems_GameRules.FIELD_GOAL_MAX_YARDS for why that is deterministic.
+        /// A punt is always a punt. Whether a field goal goes in is the kick model's
+        /// call — see Systems_IKickModel for why that stopped being a bare
+        /// comparison against Systems_GameRules.FIELD_GOAL_MAX_YARDS. In Training the
+        /// model is the deterministic one and this computes exactly what it used to.
         /// </summary>
         private Systems_PlayOutcome KickOutcome(Systems_PlayCall call)
         {
@@ -134,7 +138,7 @@ namespace PoFootball.Systems
 
             float attempt = yardsToGoalLine + Systems_GameRules.FIELD_GOAL_SNAP_YARDS;
 
-            return attempt <= Systems_GameRules.FIELD_GOAL_MAX_YARDS
+            return _kickModel.IsFieldGoalGood(attempt)
                 ? Systems_PlayOutcome.FieldGoalGood
                 : Systems_PlayOutcome.FieldGoalMissed;
         }

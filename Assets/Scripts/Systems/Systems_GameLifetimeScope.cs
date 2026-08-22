@@ -95,6 +95,11 @@ namespace PoFootball.Systems
                 builder.Register<
                     Systems_ITrainingEpisodeBoundary, Systems_NullEpisodeBoundary>(
                     Lifetime.Singleton);
+
+                // Kicks that are worth watching: a distance-weighted field goal and
+                // a punt that varies. Game only — see Systems_IKickModel.
+                builder.Register<Systems_IKickModel, Systems_ProbabilisticKickModel>(
+                    Lifetime.Singleton);
             }
             else
             {
@@ -103,6 +108,11 @@ namespace PoFootball.Systems
 
                 builder.Register<
                     Systems_ITrainingEpisodeBoundary, Systems_TrainingEpisodeBoundary>(
+                    Lifetime.Singleton);
+
+                // The pure function every brain was fitted against: good inside 55,
+                // 40-yard punts, no draw taken. Training dynamics are unchanged.
+                builder.Register<Systems_IKickModel, Systems_DeterministicKickModel>(
                     Lifetime.Singleton);
             }
 
