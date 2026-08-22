@@ -174,3 +174,16 @@ STOP_TRAINING
 # MCP's Unity connectivity probe drops a GUID-named scene at the Assets root.
 /[Aa]ssets/InitTestScene*.unity
 /[Aa]ssets/InitTestScene*.unity.meta
+
+# Unity Test Framework transients.
+#
+# The performance-test runner writes these into Assets/ when a PlayMode run starts
+# and removes them when it ends, so they exist only while a run is in flight. They
+# were committed once on 2026-08-22 by a run that happened to be mid-flight, and
+# then showed up as deletions the moment it finished.
+Assets/Resources/PerformanceTestRunInfo.json
+Assets/Resources/PerformanceTestRunInfo.json.meta
+Assets/Resources/PerformanceTestRunSettings.json
+Assets/Resources/PerformanceTestRunSettings.json.meta
+Assets/packages-merged-link/
+Assets/packages-merged-link.meta

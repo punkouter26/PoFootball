@@ -252,8 +252,8 @@ baseline.
 | Item | Status |
 |---|---|
 | Presentation layer (`PoFootball.Views`) | **Built.** `Systems_MenuView` (title, PLAY, version stamp), `Systems_HudView` (score, quarter, clock, down and distance, field position, result banner, final overlay, QUIT), `Systems_BroadcastCameraView`, `Systems_BallTrailView`, `Systems_RoleShapeApplier`, `Systems_AudioView`. All UI Toolkit, built from C# against `PoFootballPanelSettings`, safe-area inset per handset |
-| EditMode tests | **Done — 134 tests, 134 passing** (2026-08-22). `Assets/Tests/EditMode`, assembly `PoFootball.Tests.EditMode` |
-| PlayMode tests | **Done — 19 tests, 19 passing** (2026-08-22). `Assets/Tests/PlayMode`: physics contract, possession tint, screen build |
+| EditMode tests | **Done — 147 tests, 147 passing** (2026-08-22). `Assets/Tests/EditMode`, assembly `PoFootball.Tests.EditMode`. Scope every run with `--filter PoFootball --filter_type assembly` — see docs/TOOLING.md |
+| PlayMode tests | **Done — 18 tests, 18 passing** (2026-08-22). `Assets/Tests/PlayMode`: physics contract, possession tint, screen build |
 | Acceptance criteria 2, 3, 4, 5, 6, 12, 14 | **Verified by test.** Includes the two negative tests (#3 sub-threshold contact, and the wrap-up regression) |
 | Acceptance criteria 10, 17, 18, 19, 20 | **Still unverified** — all need PlayMode tests or profiling. Criteria 1, 7, 8, 9, 11, 13, 15, 16, 21, 22 hold by construction or are observed working |
 | Criterion #23 (< 20% `TimeExpired`) | **Now measured** via `Play/TimeExpiredRate`. Sitting at ~0.21–0.23 in run 02 and still falling |
@@ -262,10 +262,13 @@ baseline.
 | Sprite atlas | Not created — see the Developer Setup Steps in the brief. Still one draw call per shape |
 | `Systems_EpisodeSeed` static | All envs share seed 1, so all four see the same LOS sequence. Harmless (PPO action sampling still diverges them) but not ideal |
 
-The largest gap is now **a brain promoted against the current contract**. The
-contract is at revision 7 and nothing on disk matches it, so every player in every
+The largest gap is still **a brain promoted against the current contract**, but it
+is now in progress: `football_base10` is training against revision 7 (see
+`results/football_base10/MANIFEST.md`). Until it promotes, every player in every
 scene runs `Heuristic` — see CLAUDE.md. `results/football_base09` is the only
-revision 6 run and it died partway with a `BrokenPipeError` across its workers.
+revision 6 run and it died partway with a `BrokenPipeError` across its workers,
+which is why `Tools/watch_training.ps1` now checks env count and step progress
+rather than only whether the trainer process exists.
 
 Telemetry over `StatsRecorder` is in place via `Agent_Telemetry`; the HTTP half
 CLAUDE.md §4 also asks for is still missing. The play mix is now answerable
