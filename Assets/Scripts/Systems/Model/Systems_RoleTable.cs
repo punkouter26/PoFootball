@@ -96,29 +96,82 @@ namespace PoFootball.Models
                     return 7.3f;
                 case Systems_PlayerRole.Quarterback:
                     return 7.6f;
-                // RAISED FOR CONTRACT REVISION 8, AND THE ORDER AGAINST THE BACK IS
-                // THE WHOLE POINT. At 8.0 and 8.7 both of these sat BELOW the
-                // running back's 8.9, so a carrier who cleared the line could not be
-                // run down by either of the two levels whose job that is — only a
-                // cornerback was faster, and corners are occupied covering the
-                // receivers. A measured game showed what that costs: 13 touchdowns
-                // in 17 drives, roughly 15 yards a play, and seven plays that hit
-                // the 750-tick cap with nobody having caught the carrier at all.
+                // THE SAFETY IS FASTER THAN THE BACK. THE LINEBACKER IS NOT. That
+                // split is measured, not assumed, and both halves of it were got
+                // wrong first.
                 //
-                // The safety is now 9.2 — above the back, still below the corner's
-                // 9.3, so the depth chart is unchanged and the last line of defense
-                // can actually be the last line of defense. A real free safety is
-                // not faster than a feature back, but a real defense also has
-                // pursuit angles from eleven bodies rather than the handful this
-                // sim's spacing produces; 9.2 is buying back that geometry.
+                // Raising BOTH (8.5 and 9.2) was tried early and made the game
+                // clearly worse — plays ending TimeExpired doubled. The reason was
+                // not speed: LinebackerZone and CoverageSpot return a spot to HOLD,
+                // and Agent_FootballPlayer.Steer had no arrival damping, so a faster
+                // body aimed at a fixed point overshot it and oscillated. That is
+                // fixed now (ZONE_SETTLE_RADIUS), and the carrier's perfect
+                // sidestep — the real cause of the long runs — is fixed too
+                // (Systems_SimConstants.EVASION_LATERAL).
+                //
+                // Retested against those fixes, over three-game batches:
+                //
+                //     safety 8.7 -> 9.2   yards/play 9.6 -> 7.5, punts 2.7 -> 4.7
+                //     linebacker 8.0 -> 8.5   yards/play 7.5 -> 9.8, punts 4.7 -> 3.3
+                //
+                // The safety is the last man and has to be able to run down a back
+                // who has broken through, so 9.2 puts him above the back's 8.9 and
+                // still below the corner's 9.3 — the depth chart is unchanged. The
+                // linebacker is a zone player who wins by being in the right place,
+                // and making him faster only makes him wrong sooner.
                 case Systems_PlayerRole.Linebacker:
-                    return 8.5f;
+                    return 8.0f;
                 case Systems_PlayerRole.Safety:
                     return 9.2f;
                 case Systems_PlayerRole.RunningBack:
                     return 8.9f;
                 default:
                     return 9.3f;
+            }
+        }
+
+        /// <summary>
+        /// Physics ticks of sustained contact needed to bring this role down, once
+        /// a defender has hold of it.
+        ///
+        /// NOT EVERY CARRIER GOES DOWN THE SAME WAY, and until this existed every
+        /// one of them did — a single scale for all twenty-two bodies, on top of a
+        /// Systems_SimConstants.TACKLE_CLOSING_SPEED so low that most tackles never
+        /// reached the sustained rule at all. A halfback lowering his shoulder and a
+        /// receiver caught in the open field were the same event.
+        ///
+        /// The two backs are the point of the table. A fullback is the hardest body
+        /// on the field to bring down and takes better than a third of a second of
+        /// wrap-up; a halfback is close behind. That is what makes a handoff into
+        /// contact a real gain rather than a coin toss, and it is why the run is
+        /// worth calling at the rate Agent_PlayCaller now calls it.
+        ///
+        /// The quarterback deliberately sits exactly on the base constant. He is not
+        /// a power runner, and it keeps one role where the plain constant IS the
+        /// answer, which the referee tests pin against.
+        ///
+        /// Defensive roles are here only so the function is total — an interception
+        /// ends the play on the catch, so no defender is ever the carrier.
+        /// </summary>
+        public static int TackleTicksOf(Systems_PlayerRole role)
+        {
+            switch (role)
+            {
+                case Systems_PlayerRole.Fullback:
+                    return Systems_SimConstants.SUSTAINED_TACKLE_TICKS * 2;
+
+                case Systems_PlayerRole.RunningBack:
+                    return (Systems_SimConstants.SUSTAINED_TACKLE_TICKS * 7) / 4;
+
+                case Systems_PlayerRole.OffensiveLine:
+                case Systems_PlayerRole.TightEnd:
+                    return (Systems_SimConstants.SUSTAINED_TACKLE_TICKS * 5) / 4;
+
+                case Systems_PlayerRole.WideReceiver:
+                    return (Systems_SimConstants.SUSTAINED_TACKLE_TICKS * 3) / 4;
+
+                default:
+                    return Systems_SimConstants.SUSTAINED_TACKLE_TICKS;
             }
         }
 

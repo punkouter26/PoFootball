@@ -24,9 +24,16 @@ namespace PoFootball.Views
     {
         protected override void BuildUi()
         {
-            // Behind everything, and full-bleed rather than inside the safe area —
-            // see BuildFieldBackdrop.
-            UnsafeRoot.Add(BuildFieldBackdrop());
+            // INSERT AT 0, NOT Add — the difference is the whole screen. Systems_
+            // ScreenView puts the safe-area root into UnsafeRoot before it calls
+            // BuildUi, so appending here lands the backdrop AFTER the content in the
+            // child order, and UI Toolkit paints later siblings on top. The first
+            // version used Add: the field rendered perfectly and its scrim covered
+            // the wordmark, the PLAY button and the version stamp completely, so the
+            // menu came up as an empty field with nothing on it and no way to start
+            // a game. Full-bleed chrome that is meant to sit BEHIND has to be
+            // inserted at the front of the child list.
+            UnsafeRoot.Insert(0, BuildFieldBackdrop());
 
             VisualElement screen = Systems_UiTheme.Screen();
             screen.style.justifyContent = Justify.Center;
@@ -396,7 +403,7 @@ namespace PoFootball.Views
         /// </summary>
         private static VisualElement EndZone(Systems_TeamId team, bool atTop)
         {
-            const float END_ZONE_PERCENT = 9f;
+            const float END_ZONE_PERCENT = 7f;
 
             VisualElement zone = new VisualElement();
             zone.style.position = Position.Absolute;
@@ -413,9 +420,12 @@ namespace PoFootball.Views
                 zone.style.bottom = 0;
             }
 
+            // KEPT WELL DOWN. At 0.22 the two bands read as a flag rather than a
+            // field — strong enough to be the first thing the eye went to, on a
+            // screen whose whole job is to point at one button. This is scenery.
             Color teamColor = Systems_UiTheme.ColorOf(team);
             zone.style.backgroundColor =
-                new Color(teamColor.r, teamColor.g, teamColor.b, 0.22f);
+                new Color(teamColor.r, teamColor.g, teamColor.b, 0.10f);
 
             zone.pickingMode = PickingMode.Ignore;
             return zone;

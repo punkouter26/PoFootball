@@ -108,6 +108,25 @@ namespace PoFootball.Agents
         /// </summary>
         private const float MAX_PURSUIT_LEAD_SECONDS = 1.5f;
 
+        /// <summary>
+        /// Metres from a ZONE spot at which a defender starts easing off the throttle
+        /// rather than driving at it flat out.
+        ///
+        /// A zone is a place to STAND, and Steer had no notion of arriving anywhere —
+        /// it drove at whatever TargetPoint returned under full force regardless of
+        /// how close it already was. For a target that runs away from you that is
+        /// correct and you want to hit it at speed. For a fixed point it means the
+        /// body overshoots, turns around, overshoots the other way, and oscillates
+        /// about the spot it is supposed to be sitting on.
+        ///
+        /// THIS IS WHY RAISING LINEBACKER AND SAFETY TOP SPEEDS MADE THE GAME WORSE.
+        /// That change is recorded in Systems_RoleTable: 8.0 -> 8.5 and 8.7 -> 9.2
+        /// doubled the plays that ended TimeExpired, because a faster body aimed at
+        /// a fixed point overshoots it harder. The speeds were the wrong lever; this
+        /// is the thing that was actually broken.
+        /// </summary>
+        private const float ZONE_SETTLE_RADIUS = 3.5f;
+
         private bool _hasQuarterbackActions;
         private bool _isBlocker;
 
@@ -125,6 +144,15 @@ namespace PoFootball.Agents
         // Rolling play-call history behind the repetition penalty. Quarterback
         // only; every other agent allocates two small arrays it never touches,
         // which is cheaper than branching on role to avoid it.
+        /// <summary>
+        /// Metres of arrival damping for the CURRENT target, or 0 for a target that
+        /// should be driven at flat out. Set by TargetPoint each decision, read by
+        /// Steer. A field rather than a parameter because TargetPoint already
+        /// returns the one value Steer takes and the branch that knows which kind of
+        /// target it is are several frames deep in DefensiveTarget.
+        /// </summary>
+        private float _settleRadius;
+
         private readonly int[] _callCounts =
             new int[Sensor_FootballState.PLAY_CALL_BRANCH_SIZE];
 
@@ -845,6 +873,11 @@ namespace PoFootball.Agents
                 return;
             }
 
+            // Cleared before TargetPoint, which sets it again only for the zone
+            // branches. Full throttle is the default and anything that wants
+            // damping has to ask for it.
+            _settleRadius = 0f;
+
             Steer(continuousActions, TargetPoint());
 
             if (_hasQuarterbackActions)
@@ -900,12 +933,29 @@ namespace PoFootball.Agents
 
             if (_isCarrier)
             {
+                // THE CARRIER JUKES, BUT HE IS NOT UNCATCHABLE. This used to be a
+                // binary: any opponent within six metres vertically produced a full
+                // eight-metre sidestep directly away from him, recomputed every
+                // decision. That is a perfect evasion policy against the nearest
+                // defender — it never mistimes, never commits the wrong way, and
+                // flips instantly the moment someone else becomes nearest. Measured
+                // at 11.2 yards per play with one fourth down in an entire game.
+                //
+                // Now the cut is PROPORTIONAL to how close the man actually is and
+                // half the size, so a defender who has the angle can still close it
+                // off. A back running free in space is barely deflected; one with a
+                // defender on his hip cuts hard.
                 Systems_IPlayerHandle chaser = NearestOpponent();
                 float lateral = 0f;
 
-                if (chaser != null && Mathf.Abs(chaser.Position.y - position.y) < 6f)
+                if (chaser != null)
                 {
-                    lateral = position.x < chaser.Position.x ? -8f : 8f;
+                    float distance = Vector2.Distance(position, chaser.Position);
+                    float closeness =
+                        1f - Mathf.Clamp01(distance / Systems_SimConstants.EVASION_RANGE);
+
+                    lateral = (position.x < chaser.Position.x ? -1f : 1f)
+                        * Systems_SimConstants.EVASION_LATERAL * closeness;
                 }
 
                 return new Vector2(
@@ -1055,11 +1105,15 @@ namespace PoFootball.Agents
                 case Systems_PlayerRole.DefensiveLine:
                     return InterceptOf(carrier);
 
+                // The two branches that return a SPOT rather than a body. Both ease
+                // in rather than charging — see ZONE_SETTLE_RADIUS.
                 case Systems_PlayerRole.Linebacker:
+                    _settleRadius = ZONE_SETTLE_RADIUS;
                     return LinebackerZone(carrier);
 
                 case Systems_PlayerRole.Cornerback:
                 case Systems_PlayerRole.Safety:
+                    _settleRadius = ZONE_SETTLE_RADIUS;
                     return CoverageSpot(carrier);
 
                 default:
@@ -1212,7 +1266,16 @@ namespace PoFootball.Agents
             continuousActions[1] = Mathf.Clamp(error / 45f, -1f, 1f);
 
             float alignment = Mathf.Cos(error * Mathf.Deg2Rad);
-            continuousActions[0] = Mathf.Clamp01(alignment);
+            float drive = Mathf.Clamp01(alignment);
+
+            // Ease off approaching a spot that is not going anywhere, so the body
+            // settles onto it instead of oscillating across it.
+            if (_settleRadius > 0f)
+            {
+                drive *= Mathf.Clamp01(toTarget.magnitude / _settleRadius);
+            }
+
+            continuousActions[0] = drive;
         }
 
         /// <summary>

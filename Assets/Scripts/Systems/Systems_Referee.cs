@@ -200,9 +200,11 @@ namespace PoFootball.Systems
 
         /// <summary>
         /// Called by the carrier on every physics tick it remains in contact with
-        /// an opponent. Contact sustained for SUSTAINED_TACKLE_TICKS consecutive
-        /// ticks ends the play whatever the closing speed — this is the wrap-up
-        /// tackle, and it is what makes a pursuit from behind possible at all.
+        /// an opponent. Contact sustained for the carrier's own tick count — see
+        /// Systems_RoleTable.TackleTicksOf — ends the play whatever the closing
+        /// speed. This is the wrap-up tackle, it is what makes a pursuit from behind
+        /// possible at all, and since TACKLE_CLOSING_SPEED was raised to mean a real
+        /// collision it is now the ordinary way a down ends rather than the fallback.
         ///
         /// Several defenders touching the carrier on the same tick each call in;
         /// the tick guard counts that as one tick of contact, not several.
@@ -224,7 +226,16 @@ namespace PoFootball.Systems
             _contactRunTicks = tick == _lastContactTick + 1 ? _contactRunTicks + 1 : 1;
             _lastContactTick = tick;
 
-            if (_contactRunTicks < Systems_SimConstants.SUSTAINED_TACKLE_TICKS)
+            // How long THIS carrier takes to bring down, not a single number for
+            // everybody — a fullback fights through better than twice the contact a
+            // receiver does. See Systems_RoleTable.TackleTicksOf.
+            Systems_IPlayerHandle carrier = CurrentCarrier();
+
+            int ticksNeeded = carrier == null
+                ? Systems_SimConstants.SUSTAINED_TACKLE_TICKS
+                : Systems_RoleTable.TackleTicksOf(carrier.Role);
+
+            if (_contactRunTicks < ticksNeeded)
             {
                 return;
             }

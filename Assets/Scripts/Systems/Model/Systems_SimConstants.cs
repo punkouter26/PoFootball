@@ -41,16 +41,26 @@ namespace PoFootball.Models
         /// restores the threshold to the same fraction of a reachable speed it
         /// always represented.
         ///
-        /// TACKLE_CLOSING_SPEED itself is left where the calibration above put it.
-        /// The knob that moved for contract revision 8 is SUSTAINED_TACKLE_TICKS
-        /// below, which governs a different thing — how long a carrier keeps going
-        /// after contact rather than what counts as contact.
+        /// RAISED FROM 0.8 TO 4.0 FOR CONTRACT REVISION 8, AND THAT IS A CHANGE OF
+        /// MEANING, NOT A RECALIBRATION. At 0.8 m/s this path was a ONE-TOUCH
+        /// TACKLE: essentially any defender who brushed the carrier while moving
+        /// ended the down on that tick, so the sustained-contact rule below almost
+        /// never got to run and no carrier ever fought through anything.
+        ///
+        /// This path now means what its name says — a genuine collision. Two bodies
+        /// meeting head-on at 8-9 m/s close at something like 17 m/s, so a real hit
+        /// still ends the play instantly; a defender running the carrier down from
+        /// behind closes at well under 1 m/s and now has to WRAP HIM UP, which is
+        /// the sustained rule below and is where per-role resistance lives.
         /// </summary>
-        public const float TACKLE_CLOSING_SPEED = 0.8f;
+        public const float TACKLE_CLOSING_SPEED = 4.0f;
 
         /// <summary>
         /// Consecutive physics ticks of contact that bring the carrier down
-        /// regardless of closing speed — 4 ticks = 0.08 s, a wrap-up tackle.
+        /// regardless of closing speed — the BASE count, 8 ticks = 0.16 s. What a
+        /// given carrier actually needs is Systems_RoleTable.TackleTicksOf(role),
+        /// which scales this: a fullback takes more than twice as long to bring
+        /// down as a receiver does.
         ///
         /// Without this, pursuit tackles are impossible. Two bodies travelling the
         /// same direction at similar speed have a relative velocity near zero, so
@@ -72,17 +82,21 @@ namespace PoFootball.Models
         /// running after a defender has already arrived — and it is what turned
         /// every stop into a four-yard gain and every set of downs into a formality.
         ///
-        /// 10 -> 6 was measured and was not enough on its own: first downs fell from
-        /// one every 2.6 plays to one every 3.3, and punts appeared for the first
-        /// time, but 13 of 17 drives still ended in a touchdown. 6 -> 4 went in
-        /// alongside the linebacker and safety top speeds in Systems_RoleTable,
-        /// which is where the rest of that gap actually lived — a carrier the second
-        /// level could not catch was never going to be brought down by a shorter
-        /// contact window. 0.08 s still clears the pursuit case above comfortably:
-        /// a defender in contact from behind holds it for far longer than four
-        /// ticks.
+        /// THE HISTORY IS WORTH KEEPING, BECAUSE TWO OF THESE MOVES WERE WRONG.
+        /// 10 -> 6 helped: first downs fell from one every 2.6 plays to one every
+        /// 3.3 and punts appeared for the first time. 6 -> 4, together with faster
+        /// linebackers and safeties, made it WORSE — plays ending TimeExpired
+        /// doubled — and the speeds were reverted (see Systems_RoleTable).
+        ///
+        /// The number then went UP to 8, on a different argument. Chasing a lower
+        /// tick count was chasing the wrong thing: with TACKLE_CLOSING_SPEED at 0.8
+        /// almost every tackle was being made on the instant-contact path anyway, so
+        /// this constant was barely load-bearing. With that bar raised to a real
+        /// collision, sustained contact is now the ordinary way a play ends, and it
+        /// should take a beat and depend on WHO IS CARRYING — which is what
+        /// Systems_RoleTable.TackleTicksOf adds.
         /// </summary>
-        public const int SUSTAINED_TACKLE_TICKS = 4;
+        public const int SUSTAINED_TACKLE_TICKS = 8;
 
         // --- Body dynamics ---------------------------------------------------
         /// <summary>
@@ -412,6 +426,20 @@ namespace PoFootball.Models
         /// </summary>
         public const float POCKET_LANE_X = 3.0f;
 
+        // --- Ball carrier (heuristic offense) --------------------------------
+        /// <summary>
+        /// Metres at which a chasing defender starts to make the carrier cut. Beyond
+        /// it he runs straight at the goal line and ignores everybody.
+        /// </summary>
+        public const float EVASION_RANGE = 6f;
+
+        /// <summary>
+        /// Widest sidestep the carrier will aim for, in metres, reached only when a
+        /// defender is right on top of him. Was effectively 8 and unconditional —
+        /// see the carrier branch of Agent_FootballPlayer.TargetPoint.
+        /// </summary>
+        public const float EVASION_LATERAL = 4f;
+
         // --- Coverage (heuristic defense) ------------------------------------
         /// <summary>
         /// How far goalside of its assigned receiver a cover defender tries to
@@ -443,23 +471,47 @@ namespace PoFootball.Models
         /// Linebackers are the one group with no man assignment and no pass rush, so
         /// without a landmark they simply joined the rush — which is what turned the
         /// whole defense into eleven bodies converging on the quarterback and left
-        /// every receiver running free. Five yards is downhill enough to meet a run
-        /// at the line and deep enough to be in the way of a short throw.
+        /// every receiver running free.
+        ///
+        /// PULLED IN FROM 5 TO 3.5, AND THIS IS THE CONSTANT THAT MADE FOURTH DOWN A
+        /// REAL EVENT. At five yards the second level was consistently arriving after
+        /// the run had already made the line to gain: fourth downs faced went from
+        /// 2.3 a game to 8.7 on this change alone, and it is the first setting under
+        /// which the field-goal code in Systems_IKickModel ever executed, because an
+        /// offense has to actually stall in the opponent's half to attempt one.
+        ///
+        /// It costs something and the cost is honest: a linebacker this close is
+        /// beaten more completely when he IS beaten, so the yardage distribution gets
+        /// more bimodal. SAFETY_DEPTH_YARDS below is what covers that.
         /// </summary>
-        public const float LINEBACKER_DROP_YARDS = 5f;
+        public const float LINEBACKER_DROP_YARDS = 3.5f;
 
         /// <summary>
         /// How far beyond the line of scrimmage the free safety plays, in yards.
         /// Deep enough that nothing gets behind it, which is the entire job.
+        ///
+        /// BROUGHT UP FROM 14 TO 11 — the counterweight to LINEBACKER_DROP_YARDS. A
+        /// shallower second level lets more runs break clean, and at 14 the safety
+        /// was too far off to clean them up: yards per play sat at 7.5 with the
+        /// linebackers pulled in. At 11 it fell to 6.2 and touchdowns per drive to
+        /// 0.36, which is inside the range a real season posts.
+        ///
+        /// 9 was tried and is worse than either — yards per play 9.6. A safety that
+        /// shallow is no longer the last man, and anything past him is a touchdown.
+        /// The number is a genuine optimum rather than a direction to keep pushing.
         /// </summary>
-        public const float SAFETY_DEPTH_YARDS = 14f;
+        public const float SAFETY_DEPTH_YARDS = 11f;
 
         /// <summary>
         /// How much of the ball's lateral position a zone defender leans toward,
         /// as a fraction. Leaning, not tracking: a linebacker that mirrors the
         /// quarterback step for step vacates the middle it is standing in.
+        ///
+        /// Raised 0.35 -> 0.5 alongside LINEBACKER_DROP_YARDS. A second level playing
+        /// this close to the line has to flow to the ball harder to be worth being
+        /// there; at 0.35 it was downhill but stationary, which is the worst of both.
         /// </summary>
-        public const float ZONE_BALL_LEAN = 0.35f;
+        public const float ZONE_BALL_LEAN = 0.5f;
 
         // --- Passing rewards -------------------------------------------------
         /// <summary>

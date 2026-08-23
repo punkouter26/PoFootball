@@ -179,6 +179,12 @@ namespace PoFootball.Systems
             bool clockStops = StopsClock(message.Outcome);
             int pointsScored = 0;
 
+            // Read before Resolve, which advances or resets it. Counting fourth
+            // downs is the single most direct measure of whether drives actually
+            // stall — an offense that never faces one can never punt or kick, which
+            // is exactly the pathology these tallies were added to chase.
+            int downBefore = _game.Down;
+
             Systems_DownResult result = Resolve(
                 message.Outcome, spotY, offense, ref pointsScored);
 
@@ -217,6 +223,22 @@ namespace PoFootball.Systems
 
             CountKick(result);
             _resultCounts[(int)result]++;
+
+            if (downBefore >= Systems_GameRules.DOWNS_PER_SERIES)
+            {
+                _fourthDowns++;
+            }
+
+            // Scrimmage plays only. A kick is spotted at the line by the referee so
+            // it contributes zero yards by construction, and counting it would drag
+            // the average down without describing anything the offense did.
+            if (message.Outcome != Systems_PlayOutcome.Punt
+                && message.Outcome != Systems_PlayOutcome.FieldGoalGood
+                && message.Outcome != Systems_PlayOutcome.FieldGoalMissed)
+            {
+                _scrimmagePlays++;
+                _scrimmageYards += yardsGained;
+            }
             _outcomeCounts[(int)message.Outcome]++;
 
             // Progress tally, so a pathological game can be diagnosed without
@@ -248,6 +270,24 @@ namespace PoFootball.Systems
                     + $"after {_game.PlaysRun} plays, {_game.DriveIndex} drives. "
                     + $"Punts {_punts}, FG {_fieldGoalsMade}/{_fieldGoalsAttempted}, "
                     + $"safeties {_safeties}, turnovers on downs {_turnoversOnDowns}.");
+
+                float yardsPerPlay = _scrimmagePlays > 0
+                    ? _scrimmageYards / _scrimmagePlays
+                    : 0f;
+
+                float touchdownsPerDrive = _game.DriveIndex > 0
+                    ? _resultCounts[(int)Systems_DownResult.Touchdown] / (float)_game.DriveIndex
+                    : 0f;
+
+                // THE THREE NUMBERS THAT SAY WHETHER THIS IS FOOTBALL. Real football
+                // runs about 5.5 yards a play, faces a fourth down on roughly one
+                // series in three, and scores a touchdown on about one drive in five.
+                // Everything else in these logs is detail; this line is the verdict.
+                Debug.Log(
+                    $"[PoFootball] REALISM  yards/play {yardsPerPlay:F2}"
+                    + $" | 4th downs faced {_fourthDowns}"
+                    + $" | TD/drive {touchdownsPerDrive:F2}"
+                    + $" | scrimmage plays {_scrimmagePlays}");
 
                 Debug.Log($"[PoFootball] Down results: {Tally<Systems_DownResult>(_resultCounts)}");
                 Debug.Log($"[PoFootball] Play outcomes: {Tally<Systems_PlayOutcome>(_outcomeCounts)}");
@@ -404,6 +444,9 @@ namespace PoFootball.Systems
         private const int PLAYS_PER_TALLY = 40;
 
         private int _punts;
+        private int _fourthDowns;
+        private int _scrimmagePlays;
+        private float _scrimmageYards;
         private int _fieldGoalsAttempted;
         private int _fieldGoalsMade;
         private int _safeties;

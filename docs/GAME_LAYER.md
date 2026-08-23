@@ -79,10 +79,12 @@ game.
 |---|---|
 | Downs | 4 downs, 10 yards, chains tracked against a first-down marker |
 | Touchdown | 7 — six plus an **awarded** try (there is no kicking model, and a random one would put noise in the score no policy can influence) |
+| Field goal | **Distance-weighted odds in a game, a hard cliff at 55 yards in training** — see `Systems_IKickModel`. The seam is the one `Systems_ISpotProvider` already established: training keeps the pure function every policy was fitted against, a played game gets the version worth watching |
+| Punt | Net yards drawn around 40 in a game, flat 40 in training — same seam, same reason |
 | Safety | 2 to the defense, recognised at the rules layer purely from where the ball stopped. The physics layer still has no concept of one |
 | Interception / turnover on downs | Possession flips, spot mirrored |
 | Incompletion | Ball returns to the previous spot, clock stops |
-| Clock | Ticks live during a play; a 25 s huddle is charged at the whistle only when the clock kept running |
+| Clock | Ticks live during a play; a **12 s** huddle is charged at the whistle only when the clock kept running. Was 25 s, which capped a quarter at eleven or twelve snaps and made a whole game 45 plays against an NFL game's ~130 |
 | Quarter end | The down finishes first — expiry is remembered and acted on at the whistle |
 | Halftime | Ball to whoever did not receive the opening kickoff, own 25 |
 | Overtime | **Not implemented.** A tie stays a tie |
@@ -90,6 +92,36 @@ game.
 Clock and scoring constants live in `Systems_GameRules`, deliberately separate
 from `Systems_SimConstants`. Nothing in `Systems_GameRules` can change what an
 `.onnx` was fitted against, so it is safe to tune between builds.
+
+---
+
+## Is it actually football?
+
+`Systems_GameFlowSystem` logs a verdict at every final whistle:
+
+```
+[PoFootball] REALISM  yards/play 6.24 | 4th downs faced 10 | TD/drive 0.36 | scrimmage plays 71
+```
+
+Real football runs about **5.5 yards a play**, faces a fourth down on roughly **one
+series in three**, and scores a touchdown on about **one drive in five**.
+
+This layer was measured against those numbers and the simulation underneath it was
+changed until it met them. Before that work (contract revision 7) a complete game
+read:
+
+```
+FINAL 21-28 after 45 plays, 9 drives. Punts 0, FG 0/0, safeties 0, turnovers on downs 0.
+REALISM  yards/play 11.20 | 4th downs faced 1 | TD/drive 0.82
+```
+
+Eleven yards a play and one fourth down in an entire game — which meant every
+kicking rule in this document was unreachable code. Every branch of `Resolve` now
+executes in an ordinary game, and finals read like 19-35, 14-24, 23-21.
+
+The changes were in the simulation, not here: `Agent_ActionContract` revision 8
+lists them. Nothing in `Systems_GameRules` can change what an `.onnx` was fitted
+against, which is why `HUDDLE_SECONDS` could be halved without touching the stamp.
 
 ---
 

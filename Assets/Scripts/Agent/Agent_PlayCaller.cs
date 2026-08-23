@@ -49,12 +49,27 @@ namespace PoFootball.Agents
         /// </summary>
         internal const float RED_ZONE_YARDS = 25f;
 
-        /// <summary>Share of first downs run. Early downs lean run; see RunShareFor.</summary>
-        internal const float RUN_SHARE_FIRST_DOWN = 0.65f;
+        /// <summary>
+        /// Share of first downs run. Early downs lean run; see RunShareFor.
+        ///
+        /// ALL THREE RAISED — 0.65 / 0.50 / 0.25 BEFORE. The ball was not getting to
+        /// the halfback and the fullback often enough for either of them to be a
+        /// presence in a game, and the running game is the half of the playbook this
+        /// simulation actually models well: a handoff is real bodies meeting, where
+        /// a pass resolves through Systems_BallSystem.FindCatcher and is largely
+        /// decided the moment it leaves the quarterback's hand.
+        ///
+        /// It also pairs with the per-role tackle resistance in
+        /// Systems_RoleTable.TackleTicksOf. A fullback who takes a third of a second
+        /// to wrap up is worth handing the ball to, and neither change means much on
+        /// its own — the backs were hard to bring down but rarely carried, or they
+        /// carried often and went down on first contact like anyone else.
+        /// </summary>
+        internal const float RUN_SHARE_FIRST_DOWN = 0.78f;
 
-        internal const float RUN_SHARE_SECOND_DOWN = 0.5f;
+        internal const float RUN_SHARE_SECOND_DOWN = 0.65f;
 
-        internal const float RUN_SHARE_LATE_DOWN = 0.25f;
+        internal const float RUN_SHARE_LATE_DOWN = 0.40f;
 
         /// <summary>
         /// Picks the call.

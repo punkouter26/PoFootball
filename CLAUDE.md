@@ -90,7 +90,7 @@ So `Agent_BrainTable.MatchesCurrentContract` now checks the **group set** as wel
 the revision stamp, because the stamp is one integer and cannot see the entries
 under it.
 
-To promote: train against `Config/FootballBase10.yaml`, run
+To promote: train against `Config/FootballBase11.yaml` (revision 8), run
 `Tools/promote_brain.py`, then **`Tools > PoFootball > Build Brain Table`** in the
 Editor. That last step is not optional — the Python side copies `.onnx` files but
 cannot write the ScriptableObject that lists them.
@@ -100,8 +100,8 @@ Note that `m_Model` references serialized in the scenes are dead either way:
 `Agent_BrainRegistry` at `Awake`, overwriting whatever the scene held.
 
 Heuristic-only is a supported, playable state, not a bug — but nothing you watch
-right now is a trained policy. **To change that, train a revision 7 run against the
-three-behavior config and promote it.**
+right now is a trained policy. **To change that, train a revision 8 run against the
+three-behavior config and promote it.** `football_base11` is that run.
 
 **Scenes.** `SCN_MENU` (front end) → `SCN_GAME` (a scored game) and
 `SCN_TRAIN_FOOTBALL` (the trainer's endless single plays). All three share one
@@ -137,15 +137,40 @@ different dynamics than it was fitted against.
 
 # In-editor smoke test: start the trainer, then press Play.
 $env:CUDA_VISIBLE_DEVICES = "-1"     # MANDATORY on this machine. See below.
-mlagents-learn Config\FootballBase08.yaml --run-id=football_base08
+mlagents-learn Config\FootballBase11.yaml --run-id=football_base11
 
 # Headless sweep — envs take CONSECUTIVE ports from --base-port.
-mlagents-learn Config\FootballBase08.yaml --run-id=football_base08 `
+# REBUILD Builds/FootballEnv FIRST whenever the contract revision moved:
+#   Unity: Tools > PoFootball > Build Training Env
+# Revision 8 changed the DYNAMICS with every shape left identical, so a stale env
+# is NOT refused by the handshake. That rebuild is on you, not on the stamp.
+mlagents-learn Config\FootballBase11.yaml --run-id=football_base11 `
   --env=Builds\FootballEnv\PoFootball.exe --no-graphics `
-  --base-port=5010 --num-envs=6
+  --base-port=5400 --num-envs=12
 
 tensorboard --logdir results
 ```
+
+### Judging whether the SIMULATION is football
+
+`Systems_GameFlowSystem` logs a verdict line at every final whistle:
+
+```
+[PoFootball] REALISM  yards/play 6.24 | 4th downs faced 10 | TD/drive 0.36 | scrimmage plays 71
+```
+
+Reference values from real football: **~5.5 yards a play, a fourth down on roughly
+one series in three, and 0.20-0.35 touchdowns per drive.**
+
+Balance changes are judged on that line and nothing else — four were reasoned about
+confidently during the revision 8 work and two of them made the game measurably
+worse. **Single games are very noisy** (4.48 to 7.37 yards/play on one config), so
+compare three-game means.
+
+`Tools > PoFootball > Sim Speed > 8x` (editor-only, `Assets/Editor/Systems_SimSpeed.cs`)
+turns a full game from ~10 minutes into ~100 seconds. It raises `Time.timeScale`
+only — `fixedDeltaTime` is untouched, so it is the same measurement — and it always
+resets to 1x on leaving play mode.
 
 **Torch is pinned at 2.5.1+cu121 and upgrading it breaks promotion.** 2.11.0+cu128
 was tried: it trained happily for 80,000 steps, then died at the first checkpoint with
@@ -184,7 +209,8 @@ given it picks `"cuda"` whenever a GPU is visible and calls
 for `cpu`, the `else` branch only sets the dtype — it never puts the default device
 back. Hiding the GPU is what fixes it. Use `-1`; an empty string is ignored on Windows.
 
-`FootballBase06.yaml` (the current config) carries **six** behaviors. The quarterback has its own brain
+`FootballBase06.yaml` (long superseded — the current config is
+`FootballBase11.yaml`, three behaviors, revision 8) carries **six** behaviors. The quarterback has its own brain
 — it is the only one with discrete actions, and while it shared `OffenseSkill`
 with the backs and receivers its play-call gradient was diluted five to one and
 its entropy bonus could not be raised without injecting noise into four other

@@ -118,28 +118,46 @@ namespace PoFootball.Agents
         ///
         /// Revision 8 changes the DYNAMICS, the way 3 and 4 did, and like them it
         /// leaves every shape identical — so nothing about an observation or an
-        /// action vector would catch it and only this number can. Two constants
-        /// moved, both in Systems_SimConstants:
+        /// action vector would catch it and only this number can.
         ///
-        ///     SUSTAINED_TACKLE_TICKS  10 -> 6    (0.2 s of contact -> 0.12 s)
-        ///     COVERAGE_CUSHION        1.5 -> 1.0 (metres goalside of a receiver)
+        /// It exists because a measured full game was not football. It ended
+        /// `FINAL 21-28 after 45 plays, 9 drives. Punts 0, FG 0/0, safeties 0,
+        /// turnovers on downs 0` at 11.2 yards per play, with ONE fourth down in the
+        /// entire game and 82% of drives ending in a touchdown. The whole kicking
+        /// game — Agent_PlayCaller.ChooseFourthDown, Systems_Referee.KickOutcome and
+        /// the Punt / FieldGoal / Safety branches of Systems_GameFlowSystem.Resolve —
+        /// never executed once, because an offense that converts on half its snaps
+        /// never reaches fourth down.
         ///
-        /// Both were measured off a complete played game rather than guessed at. The
-        /// game ended `FINAL 21-28 after 45 plays, 9 drives. Punts 0, FG 0/0,
-        /// safeties 0, turnovers on downs 0` with one incompletion and one
-        /// interception in the whole of it. An offense that converts on better than
-        /// half its snaps never reaches fourth down, so the entire kicking game —
-        /// Agent_PlayCaller.ChooseFourthDown, Systems_Referee.KickOutcome and the
-        /// Punt / FieldGoal / Safety / TurnoverOnDowns branches of
-        /// Systems_GameFlowSystem.Resolve — never executed once. The constants above
-        /// are where that came from: yards after contact, and a throw nobody
-        /// contested. Each is documented at its own declaration.
+        /// What moved, all in Systems_SimConstants and Systems_RoleTable:
+        ///
+        ///     TACKLE_CLOSING_SPEED     0.8 -> 4.0   (no more one-touch tackles)
+        ///     SUSTAINED_TACKLE_TICKS   10 -> 8      (now a BASE; see TackleTicksOf)
+        ///     TackleTicksOf            new          (FB 2x, HB 1.75x, WR 0.75x)
+        ///     COVERAGE_CUSHION         1.5 -> 1.0
+        ///     LINEBACKER_DROP_YARDS    5 -> 3.5
+        ///     SAFETY_DEPTH_YARDS       14 -> 11
+        ///     ZONE_BALL_LEAN           0.35 -> 0.5
+        ///     Safety top speed         8.7 -> 9.2   (linebacker deliberately not)
+        ///
+        /// Measured over three-game batches, that took the game from 11.2 yards a
+        /// play, 1 fourth down and 0.82 touchdowns per drive to 6.2, 10.3 and 0.36 —
+        /// against real-football reference values of about 5.5, one series in three,
+        /// and 0.20-0.35. Punts, field goals, missed field goals, safeties and
+        /// turnovers on downs all now occur in an ordinary game.
+        ///
+        /// Two further changes were part of the same work and are NOT dynamics: the
+        /// ball carrier's evasion and the zone defenders' arrival damping both live
+        /// in Agent_FootballPlayer's Heuristic path, which a trained policy never
+        /// runs. They were the single largest effect of the lot — the carrier used to
+        /// sidestep the nearest defender perfectly on every tick — and they cost the
+        /// contract nothing, which is why they are recorded there rather than here.
         ///
         /// NOTHING IS PROMOTED AGAINST REVISION 8, and nothing was against 7 either.
         /// Every player runs Heuristic until a revision 8 run is trained against the
         /// three-behavior config and promoted with Tools/promote_brain.py. Any
-        /// future `.onnx` trained before this stamp is fitted against different
-        /// dynamics and Agent_BrainTable will refuse it, which is the point.
+        /// `.onnx` trained before this stamp is fitted against different dynamics and
+        /// Agent_BrainTable will refuse it, which is the point.
         /// </summary>
         public const int CONTRACT_REVISION = 8;
 
