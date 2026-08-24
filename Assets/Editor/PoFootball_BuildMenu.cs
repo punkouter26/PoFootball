@@ -3,7 +3,6 @@ using UnityEditor;
 using UnityEditor.Build;
 using UnityEditor.Build.Reporting;
 using UnityEngine;
-using UnityEngine.Rendering;
 
 namespace PoFootball.EditorTools
 {
@@ -160,12 +159,23 @@ namespace PoFootball.EditorTools
             PlayerSettings.allowedAutorotateToLandscapeLeft = false;
             PlayerSettings.allowedAutorotateToLandscapeRight = false;
 
-            // Vulkan first: this is a 2D URP game and Vulkan is the better path on
-            // modern hardware, with GLES3 kept as the fallback for older devices.
-            PlayerSettings.SetUseDefaultGraphicsAPIs(BuildTarget.Android, false);
-            PlayerSettings.SetGraphicsAPIs(
-                BuildTarget.Android,
-                new[] { GraphicsDeviceType.Vulkan, GraphicsDeviceType.OpenGLES3 });
+            // GRAPHICS APIs ARE LEFT AT UNITY'S DEFAULTS, DELIBERATELY.
+            //
+            // This used to force Vulkan first with GLES3 behind it, on the reasoning
+            // that Vulkan is the better path on modern hardware. That reasoning was
+            // never tested and the build it produced DID NOT RUN: on a Pixel 9 Pro
+            // the player reached "Device Model ..." in logcat and then went silent —
+            // no GfxDevice line, no scene load, a black screen and a process sitting
+            // there until it was killed. Graphics device creation never completed.
+            //
+            // Unity already picks a per-version, per-device-appropriate order. There
+            // is no evidence this project needs a different one, and overriding it
+            // cost a working build.
+            //
+            // Asserted rather than merely omitted: the override is persisted into
+            // ProjectSettings by whichever build last set it, so deleting the code
+            // that wrote it would leave the bad value in place.
+            PlayerSettings.SetUseDefaultGraphicsAPIs(BuildTarget.Android, true);
 
             PlayerSettings.Android.minSdkVersion = AndroidSdkVersions.AndroidApiLevel24;
 

@@ -170,6 +170,7 @@ PlayerSettings:
   androidMaxAspectRatio: 2.4
   androidMinAspectRatio: 1
   applicationIdentifier:
+    Android: com.punkouter.pofootball
     Standalone: com.DefaultCompany.2D-URP
   buildNumber:
     Standalone: 0
@@ -402,7 +403,10 @@ PlayerSettings:
   m_BuildTargetShaderSettings: []
   m_BuildTargetGraphicsJobs: []
   m_BuildTargetGraphicsJobMode: []
-  m_BuildTargetGraphicsAPIs: []
+  m_BuildTargetGraphicsAPIs:
+  - m_BuildTarget: AndroidPlayer
+    m_APIs: 150000000b000000
+    m_Automatic: 1
   m_DefaultShaderChunkSizeInMB: 16
   m_DefaultShaderChunkCount: 0
   openGLRequireES31: 0
@@ -687,7 +691,7 @@ PlayerSettings:
   webWasm2023: 0
   webEnableSubmoduleStrippingCompatibility: 0
   scriptingDefineSymbols:
-    Android: UNITY_MCP_READY;UNITY_MCP_DEPS_2
+    Android: SENTIS_ANALYTICS_ENABLED;UNITY_MCP_READY;UNITY_MCP_DEPS_2
     EmbeddedLinux: UNITY_MCP_READY;UNITY_MCP_DEPS_2
     GameCoreScarlett: UNITY_MCP_READY;UNITY_MCP_DEPS_2
     GameCoreXboxOne: UNITY_MCP_READY;UNITY_MCP_DEPS_2
