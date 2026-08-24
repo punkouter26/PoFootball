@@ -15,7 +15,10 @@ namespace PoFootball.Models
         /// <summary>Between the second and third quarters.</summary>
         Halftime = 2,
 
+        /// <summary>Regulation ended level; sudden death is being played.</summary>
+        Overtime = 3,
+
         /// <summary>Regulation over. The box score is final.</summary>
-        Final = 3
+        Final = 4
     }
 }

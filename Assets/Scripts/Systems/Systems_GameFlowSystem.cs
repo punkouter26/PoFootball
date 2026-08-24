@@ -81,8 +81,7 @@ namespace PoFootball.Systems
         /// </summary>
         public void FixedTick()
         {
-            if (_game.Phase != Systems_GamePhase.Playing
-                || _play.Phase != Systems_PlayPhase.Live)
+            if (!IsLive(_game.Phase) || _play.Phase != Systems_PlayPhase.Live)
             {
                 return;
             }
@@ -98,6 +97,17 @@ namespace PoFootball.Systems
             {
                 _quarterExpiredMidPlay = true;
             }
+        }
+
+        /// <summary>
+        /// Phases in which the ball can be snapped and the clock can run. Overtime
+        /// is as live as regulation; Halftime deliberately is not, which is what
+        /// keeps the clock still across the interval.
+        /// </summary>
+        private static bool IsLive(Systems_GamePhase phase)
+        {
+            return phase == Systems_GamePhase.Playing
+                || phase == Systems_GamePhase.Overtime;
         }
 
         public void Start()
@@ -146,6 +156,14 @@ namespace PoFootball.Systems
             if (_game.Phase == Systems_GamePhase.Final)
             {
                 return Situation();
+            }
+
+            // The first snap of the second half ends the interval. Halftime is a
+            // real phase rather than a decorative one — the clock does not run
+            // through it, which is why Systems_GamePhase.Halftime exists at all.
+            if (_game.Phase == Systems_GamePhase.Halftime)
+            {
+                _game.SetPhase(Systems_GamePhase.Playing);
             }
 
             _game.CountPlay();
@@ -210,6 +228,15 @@ namespace PoFootball.Systems
                 result = AdvanceQuarter(result);
             }
 
+            // SUDDEN DEATH. Any score in overtime ends it on the spot — checked
+            // after Resolve so the points are already on the board, and after
+            // AdvanceQuarter so an overtime clock expiring on the same play does not
+            // get to overrule a winning score.
+            if (_game.Phase == Systems_GamePhase.Overtime && pointsScored > 0)
+            {
+                result = Systems_DownResult.EndOfGame;
+            }
+
             _resolvedPublisher.Publish(new Systems_DownResolvedMessage(
                 result,
                 offense,
@@ -269,7 +296,8 @@ namespace PoFootball.Systems
                     $"[PoFootball] FINAL {_game.HomeScore}-{_game.AwayScore} "
                     + $"after {_game.PlaysRun} plays, {_game.DriveIndex} drives. "
                     + $"Punts {_punts}, FG {_fieldGoalsMade}/{_fieldGoalsAttempted}, "
-                    + $"safeties {_safeties}, turnovers on downs {_turnoversOnDowns}.");
+                    + $"safeties {_safeties}, turnovers on downs {_turnoversOnDowns}, "
+                    + $"fumbles lost {_fumblesLost}.");
 
                 float yardsPerPlay = _scrimmagePlays > 0
                     ? _scrimmageYards / _scrimmagePlays
@@ -311,12 +339,7 @@ namespace PoFootball.Systems
                     + Systems_GameRules.EXTRA_POINT_POINTS;
                 _game.AddPoints(offense, pointsScored);
 
-                // Conceding team takes over at its own 25 — which, in its own
-                // attacking frame, needs no mirroring: "own 25" is the same number
-                // whoever says it.
-                _game.GiveBallTo(
-                    offense.Opponent(),
-                    OwnYardLineToY(Systems_GameRules.KICKOFF_TOUCHBACK_YARD_LINE));
+                KickOffTo(offense);
                 return Systems_DownResult.Touchdown;
             }
 
@@ -347,11 +370,7 @@ namespace PoFootball.Systems
                 pointsScored = Systems_GameRules.FIELD_GOAL_POINTS;
                 _game.AddPoints(offense, pointsScored);
 
-                // A score is followed by a kickoff, so the conceding team takes over
-                // at the kickoff touchback spot — the 35, not the punt's 20.
-                _game.GiveBallTo(
-                    offense.Opponent(),
-                    OwnYardLineToY(Systems_GameRules.KICKOFF_TOUCHBACK_YARD_LINE));
+                KickOffTo(offense);
                 return Systems_DownResult.FieldGoalGood;
             }
 
@@ -367,6 +386,14 @@ namespace PoFootball.Systems
                 _game.GiveBallTo(
                     offense.Opponent(), ClampSeriesStart(Mirror(spotOfKick)));
                 return Systems_DownResult.FieldGoalMissed;
+            }
+
+            if (outcome == Systems_PlayOutcome.FumbleLost)
+            {
+                // Same shape as an interception: the defense takes over exactly
+                // where the ball came loose, mirrored into its own frame.
+                _game.GiveBallTo(offense.Opponent(), ClampSeriesStart(Mirror(spotY)));
+                return Systems_DownResult.FumbleLost;
             }
 
             if (outcome == Systems_PlayOutcome.Interception)
@@ -451,6 +478,7 @@ namespace PoFootball.Systems
         private int _fieldGoalsMade;
         private int _safeties;
         private int _turnoversOnDowns;
+        private int _fumblesLost;
 
         /// <summary>
         /// Tallies the rare results, purely so the final log line can prove a game
@@ -475,6 +503,9 @@ namespace PoFootball.Systems
                     break;
                 case Systems_DownResult.TurnoverOnDowns:
                     _turnoversOnDowns++;
+                    break;
+                case Systems_DownResult.FumbleLost:
+                    _fumblesLost++;
                     break;
             }
         }
@@ -511,6 +542,7 @@ namespace PoFootball.Systems
                 case Systems_PlayOutcome.OutOfBounds:
                 case Systems_PlayOutcome.Touchdown:
                 case Systems_PlayOutcome.Interception:
+                case Systems_PlayOutcome.FumbleLost:
                 // Every kick changes possession, and the clock stops on a change of
                 // possession. A safety stops it too — the free kick that follows is
                 // a fresh start, not a continuation of the drive.
@@ -533,10 +565,36 @@ namespace PoFootball.Systems
             // A score at the buzzer still counts; announce the score, not the
             // period, and let the quarter roll silently underneath.
             bool announceScore = resultSoFar == Systems_DownResult.Touchdown
-                || resultSoFar == Systems_DownResult.Safety;
+                || resultSoFar == Systems_DownResult.Safety
+                || resultSoFar == Systems_DownResult.FieldGoalGood;
+
+            // Overtime expiring ends the game however it stands. The NFL regular
+            // season allows a tie after one overtime period and so does this.
+            if (_game.Phase == Systems_GamePhase.Overtime)
+            {
+                return Systems_DownResult.EndOfGame;
+            }
 
             if (_game.Quarter >= Systems_GameRules.QUARTER_COUNT)
             {
+                // LEVEL AFTER FOUR QUARTERS IS NOT THE END ANY MORE. A measured game
+                // finished 28-28 and simply stopped, because this returned EndOfGame
+                // regardless of the score. Sudden death now settles it — see
+                // Systems_GameRules.OVERTIME_SECONDS for why sudden death rather
+                // than the real possession-owed rule.
+                if (_game.HomeScore == _game.AwayScore)
+                {
+                    _game.BeginOvertime();
+
+                    // The team that did not receive the opening kickoff receives
+                    // again, standing in for the overtime coin toss.
+                    _game.GiveBallTo(
+                        _game.OpeningPossession.Opponent(),
+                        OwnYardLineToY(Systems_GameRules.KICKOFF_TOUCHBACK_YARD_LINE));
+
+                    return Systems_DownResult.EndOfQuarter;
+                }
+
                 return Systems_DownResult.EndOfGame;
             }
 
@@ -548,12 +606,74 @@ namespace PoFootball.Systems
             // and fourth, only the period changes — the drive carries on.
             if (nextQuarter == 3)
             {
+                _game.SetPhase(Systems_GamePhase.Halftime);
+
                 _game.GiveBallTo(
                     _game.OpeningPossession.Opponent(),
                     OwnYardLineToY(Systems_GameRules.KICKOFF_TOUCHBACK_YARD_LINE));
             }
 
             return announceScore ? resultSoFar : Systems_DownResult.EndOfQuarter;
+        }
+
+        /// <summary>
+        /// The kickoff that follows a score, resolved at the rules layer the same
+        /// way a punt and a field goal already are — it is not a snap anybody plays.
+        ///
+        /// <paramref name="scorer"/> is the team that just scored, so it is the team
+        /// KICKING. Normally the ball goes to its opponent wherever the return ended.
+        ///
+        /// THE ONSIDE KICK IS THE POINT OF THIS METHOD. Before it, every score handed
+        /// the conceding team the ball on its own 35 and a team two scores down with
+        /// a minute left had no way whatsoever to get the ball back — the single
+        /// largest strategic hole in the simulation. A side that is trailing badly
+        /// and nearly out of time now kicks short: recover it and the drive
+        /// continues, miss and the opponent starts near midfield, which is what
+        /// makes it a desperation call rather than a free roll.
+        /// </summary>
+        private void KickOffTo(Systems_TeamId scorer)
+        {
+            Systems_TeamId receiver = scorer.Opponent();
+
+            if (ShouldTryOnside(scorer))
+            {
+                if (_kickModel.IsOnsideRecovered())
+                {
+                    // The kicking team keeps it, at the spot a short kick travels to.
+                    _game.GiveBallTo(
+                        scorer, OwnYardLineToY(Systems_GameRules.ONSIDE_FAILED_YARD_LINE));
+                    return;
+                }
+
+                _game.GiveBallTo(
+                    receiver, OwnYardLineToY(Systems_GameRules.ONSIDE_FAILED_YARD_LINE));
+                return;
+            }
+
+            _game.GiveBallTo(receiver, OwnYardLineToY(_kickModel.KickoffReturnYardLine()));
+        }
+
+        /// <summary>
+        /// Whether the team that just scored should kick short: it is still behind by
+        /// more than one score, and there is not enough time left to get the ball
+        /// back any other way.
+        /// </summary>
+        private bool ShouldTryOnside(Systems_TeamId scorer)
+        {
+            if (_game.Quarter < Systems_GameRules.QUARTER_COUNT
+                || _game.Phase == Systems_GamePhase.Overtime)
+            {
+                return false;
+            }
+
+            if (_game.SecondsRemaining > Systems_GameRules.ONSIDE_SECONDS_REMAINING)
+            {
+                return false;
+            }
+
+            int deficit = _game.ScoreOf(scorer.Opponent()) - _game.ScoreOf(scorer);
+
+            return deficit > Systems_GameRules.ONSIDE_TRAILING_BY;
         }
 
         /// <summary>

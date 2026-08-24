@@ -100,6 +100,11 @@ namespace PoFootball.Systems
                 // a punt that varies. Game only — see Systems_IKickModel.
                 builder.Register<Systems_IKickModel, Systems_ProbabilisticKickModel>(
                     Lifetime.Singleton);
+
+                // A strip that is a chance rather than a certainty, for the same
+                // reason — see Systems_IFumbleModel.
+                builder.Register<Systems_IFumbleModel, Systems_ProbabilisticFumbleModel>(
+                    Lifetime.Singleton);
             }
             else
             {
@@ -113,6 +118,11 @@ namespace PoFootball.Systems
                 // The pure function every brain was fitted against: good inside 55,
                 // 40-yard punts, no draw taken. Training dynamics are unchanged.
                 builder.Register<Systems_IKickModel, Systems_DeterministicKickModel>(
+                    Lifetime.Singleton);
+
+                // A fumble trigger that is a pure function of the hit, so a policy
+                // can learn to avoid it rather than being taxed at random.
+                builder.Register<Systems_IFumbleModel, Systems_DeterministicFumbleModel>(
                     Lifetime.Singleton);
             }
 

@@ -64,6 +64,13 @@ namespace PoFootball.Rewards
                 case Systems_PlayOutcome.Interception:
                     return -Systems_SimConstants.INTERCEPTION_REWARD;
 
+                // Priced exactly like an interception, because it is one: the
+                // defense takes over at the spot. Without this the switch fell
+                // through to `default` and a lost fumble cost the offense NOTHING,
+                // which would teach a carrier that running into a crowd is free.
+                case Systems_PlayOutcome.FumbleLost:
+                    return -Systems_SimConstants.INTERCEPTION_REWARD;
+
                 // Flat, and deliberately not stacked with the yardage term the way
                 // Tackle is. A safety is already the worst thing on this list; how
                 // far backwards the carrier went to get there does not make it

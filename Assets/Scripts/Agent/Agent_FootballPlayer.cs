@@ -80,14 +80,21 @@ namespace PoFootball.Agents
         /// Throw error at zero range, in degrees. See ScatterAim — the total spread
         /// is this plus a term that grows with the length of the throw.
         /// </summary>
-        private const float THROW_SCATTER_BASE_DEGREES = 1.8f;
+        /// NUDGED FROM 1.8, NOT DOUBLED. Measured games completed about 84% of
+        /// throws with almost no interceptions, against real football's 65% and a
+        /// 2-3% pick rate, so the quarterback was too accurate for coverage to
+        /// matter. But 3.0 with a doubled per-metre term WAS MEASURED AND WAS WORSE:
+        /// throws stopped arriving at all, the quarterback held the ball, and 38% of
+        /// scrimmage plays ran to the tick cap with nobody having resolved anything.
+        /// Accuracy is a small dial with a large blast radius.
+        private const float THROW_SCATTER_BASE_DEGREES = 2.2f;
 
         /// <summary>
         /// Extra degrees of throw error per metre of flight. At the 1.2 m
         /// CATCH_RADIUS this puts a fifteen-metre pass comfortably inside the
         /// receiver and a thirty-metre one outside him about as often as not.
         /// </summary>
-        private const float THROW_SCATTER_DEGREES_PER_METRE = 0.08f;
+        private const float THROW_SCATTER_DEGREES_PER_METRE = 0.10f;
 
         /// <summary>
         /// Ticks of jitter either side of the scripted release. Small — it varies
@@ -550,6 +557,22 @@ namespace PoFootball.Agents
             }
 
             if (_play.PhysicsTick > Systems_SimConstants.THROW_WINDOW_TICKS)
+            {
+                return;
+            }
+
+            // A FORWARD PASS MUST BE THROWN FROM BEHIND THE LINE OF SCRIMMAGE.
+            // Nothing here used to check that, so a quarterback was free to scramble
+            // ten yards downfield and still throw — an illegal forward pass, and one
+            // of the few outright rule violations left in the simulation. It went
+            // unnoticed because the scripted quarterback holds the pocket
+            // (IsHoldingThePocket) and never crosses the line while the throw window
+            // is open; a trained policy is under no such habit and would find it.
+            //
+            // There is no penalty system here, so the honest model is that the throw
+            // simply is not available: past the line the quarterback has tucked it
+            // and is a runner, which is what a real one does.
+            if (Position.y > _play.LineOfScrimmageY)
             {
                 return;
             }

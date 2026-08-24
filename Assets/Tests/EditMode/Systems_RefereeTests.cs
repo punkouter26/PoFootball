@@ -98,9 +98,13 @@ namespace PoFootball.Tests
             // rules a policy is fitted against, and a sampled curve would make them
             // flaky for no gain. Systems_ProbabilisticKickModel is a Game-mode
             // concern — see Systems_IKickModel.
+            // Same reasoning for the fumble model: the deterministic one is a pure
+            // function of the hit, so a tackle test cannot randomly become a
+            // turnover. Systems_ProbabilisticFumbleModel is Game-mode only.
             _referee = new Systems_Referee(
                 _play, _ball, _ballSystem, new Systems_FieldModel(), _registry,
                 new Systems_DeterministicKickModel(),
+                new Systems_DeterministicFumbleModel(),
                 _ended, _tackled, _scored);
 
             _play.BeginEpisode(0f, _quarterback.Position.y, 1, Systems_GameRules.YARDS_TO_GAIN);
@@ -371,18 +375,91 @@ namespace PoFootball.Tests
             Assert.That(_play.Phase, Is.EqualTo(Systems_PlayPhase.Live));
         }
 
+        /// <summary>
+        /// THIS TEST USED TO ASSERT THE OPPOSITE, and the rule it pinned is the one
+        /// that made a measured game average 9.3 yards a play. Three defenders
+        /// wrapping a carrier up were collapsed into "one tick of contact", so help
+        /// arriving was worth precisely nothing and a back only ever had to beat one
+        /// man. In real football the second defender is the whole point.
+        ///
+        /// The wrap-up is now divided between everyone with a hand on him, so a
+        /// gang tackle ends the down in a fraction of the ticks one defender needs.
+        /// </summary>
         [Test]
-        public void SeveralDefendersOnOneTick_CountAsOneTickOfContact()
+        public void SeveralDefendersOnOneTick_BringTheCarrierDownFaster()
         {
-            for (int tick = 0; tick < Systems_SimConstants.SUSTAINED_TACKLE_TICKS - 1; tick++)
+            int alone = Systems_RoleTable.TackleTicksOf(_quarterback.Role);
+
+            for (int tick = 0; tick < alone - 1; tick++)
             {
                 _referee.FixedTick();
                 _referee.ReportSustainedContact(11, 0f);
                 _referee.ReportSustainedContact(12, 0f);
                 _referee.ReportSustainedContact(13, 0f);
+
+                if (_play.Phase == Systems_PlayPhase.Dead)
+                {
+                    Assert.That(
+                        tick + 1,
+                        Is.LessThan(alone),
+                        "three tacklers must need fewer ticks than one");
+                    return;
+                }
+            }
+
+            Assert.Fail(
+                $"three tacklers failed to bring the carrier down inside {alone} ticks");
+        }
+
+        /// <summary>
+        /// The other half of the same rule: one defender still has to do the whole
+        /// job, so the division above cannot be reached by a single man hanging on.
+        /// </summary>
+        [Test]
+        public void OneDefender_StillNeedsTheFullWrapUp()
+        {
+            int needed = Systems_RoleTable.TackleTicksOf(_quarterback.Role);
+
+            for (int tick = 0; tick < needed - 1; tick++)
+            {
+                _referee.FixedTick();
+                _referee.ReportSustainedContact(11, 0f);
             }
 
             Assert.That(_play.Phase, Is.EqualTo(Systems_PlayPhase.Live));
+        }
+
+        /// <summary>
+        /// Contact survives the separation the collision impulse itself causes. Two
+        /// discs meeting push each other apart, so requiring strictly consecutive
+        /// ticks meant a tackle that had genuinely been made reset to zero and the
+        /// carrier ran on.
+        /// </summary>
+        [Test]
+        public void ContactBrokenForATickOrTwo_DoesNotRestartTheWrapUp()
+        {
+            int needed = Systems_RoleTable.TackleTicksOf(_quarterback.Role);
+
+            // One tick of contact, then a gap inside the grace window, then contact
+            // again — the run must carry across the gap rather than restarting.
+            for (int tick = 0; tick < needed * 3; tick++)
+            {
+                _referee.FixedTick();
+
+                bool skip = tick % 3 == 1;
+
+                if (!skip)
+                {
+                    _referee.ReportSustainedContact(11, 0f);
+                }
+
+                if (_play.Phase == Systems_PlayPhase.Dead)
+                {
+                    return;
+                }
+            }
+
+            Assert.Fail("a wrap-up broken only by the collision bounce never completed");
         }
 
         // --- Boundaries and clock --------------------------------------------

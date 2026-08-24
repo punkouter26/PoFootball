@@ -108,11 +108,15 @@ behaviors:
     # with a budget it can actually reach.
     max_steps: 8000000
 
-    # A play is capped at 750 physics ticks and agents decide every 5th tick
-    # (Systems_PlayModel.MAX_DECISIONS = 150), so 150 keeps an entire play inside
+    # A play is capped at 600 physics ticks and agents decide every 5th tick
+    # (Systems_PlayModel.MAX_DECISIONS = 120), so 120 keeps an entire play inside
     # one horizon and lets credit for a touchdown reach back to the snap — and,
     # now, back to the play call that set it up.
-    time_horizon: 150
+    #
+    # WAS 150, AGAINST A 750-TICK CAP. The cap came down to 600 because a
+    # fifteen-second down is not football; Systems_ContractTests pins the two
+    # together so this can never drift from Systems_PlayModel again.
+    time_horizon: 120
 
     summary_freq: 20000
     threaded: false               # deterministic ordering (UNITY_RULES §2)

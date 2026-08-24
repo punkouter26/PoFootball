@@ -42,6 +42,29 @@ namespace PoFootball.Systems
         /// team next snaps it.
         /// </summary>
         float PuntNetYards();
+
+        /// <summary>
+        /// Own yard line the receiving team takes over on after a kickoff — i.e.
+        /// where the return ended.
+        ///
+        /// KICKOFFS USED TO NOT EXIST. Every score handed the conceding team the
+        /// ball on its own 35 and that was the whole of it, which is fine as far as
+        /// field position goes and catastrophic for the shape of a game: a team
+        /// eight points down with a minute left had NO MECHANISM to get the ball
+        /// back. The onside kick is the only reason a late deficit is ever
+        /// recoverable, and there was nothing here to recover.
+        ///
+        /// Resolved at the rules layer rather than simulated, exactly as a punt and
+        /// a field goal already are — a kickoff is not a snap the offense plays.
+        /// </summary>
+        float KickoffReturnYardLine();
+
+        /// <summary>
+        /// Whether an onside kick is recovered by the KICKING team. Real recovery
+        /// rates sit near one in five when the receiving team is expecting it, which
+        /// is always the case in the only situation this simulation calls one.
+        /// </summary>
+        bool IsOnsideRecovered();
     }
 
     /// <summary>
@@ -59,6 +82,22 @@ namespace PoFootball.Systems
         public float PuntNetYards()
         {
             return Systems_GameRules.PUNT_NET_YARDS;
+        }
+
+        /// <summary>The touchback spot, every time — what training always saw.</summary>
+        public float KickoffReturnYardLine()
+        {
+            return Systems_GameRules.KICKOFF_TOUCHBACK_YARD_LINE;
+        }
+
+        /// <summary>
+        /// Never. Training has no score and no clock, so it never reaches the
+        /// situation that calls one, and a random turnover is exactly the noise the
+        /// deterministic models exist to keep out.
+        /// </summary>
+        public bool IsOnsideRecovered()
+        {
+            return false;
         }
     }
 
@@ -124,6 +163,34 @@ namespace PoFootball.Systems
             float net = Systems_GameRules.PUNT_NET_YARDS + (unit * PUNT_SPREAD_YARDS);
 
             return UnityEngine.Mathf.Clamp(net, PUNT_MIN_YARDS, PUNT_MAX_YARDS);
+        }
+
+        /// <summary>
+        /// Where the return ends. Most kickoffs are touchbacks under the current
+        /// rule; the rest are a return that usually dies short of the touchback spot
+        /// and occasionally breaks for real field position.
+        /// </summary>
+        public float KickoffReturnYardLine()
+        {
+            if (_rng.NextFloat() < Systems_GameRules.KICKOFF_TOUCHBACK_CHANCE)
+            {
+                return Systems_GameRules.KICKOFF_TOUCHBACK_YARD_LINE;
+            }
+
+            // Triangular around the touchback spot, wider on the downside: a return
+            // brought out is usually a worse outcome than taking the knee, which is
+            // why the touchback rule was written the way it was.
+            float unit = (_rng.NextFloat() + _rng.NextFloat()) - 1f;
+
+            float line = Systems_GameRules.KICKOFF_TOUCHBACK_YARD_LINE
+                + (unit * Systems_GameRules.KICKOFF_RETURN_SPREAD_YARDS);
+
+            return UnityEngine.Mathf.Clamp(line, 8f, 75f);
+        }
+
+        public bool IsOnsideRecovered()
+        {
+            return _rng.NextFloat() < Systems_GameRules.ONSIDE_RECOVERY_CHANCE;
         }
 
         /// <summary>

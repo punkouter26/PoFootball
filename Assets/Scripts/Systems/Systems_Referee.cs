@@ -26,12 +26,21 @@ namespace PoFootball.Systems
         private readonly Systems_FieldModel _field;
         private readonly Systems_PlayerRegistry _registry;
         private readonly Systems_IKickModel _kickModel;
+        private readonly Systems_IFumbleModel _fumbleModel;
         private readonly IPublisher<Systems_PlayEndedMessage> _endedPublisher;
         private readonly IPublisher<Systems_TackleMessage> _tacklePublisher;
         private readonly IPublisher<Systems_ScoreMessage> _scorePublisher;
 
         private int _lastContactTick = -1;
         private int _contactRunTicks;
+
+        /// <summary>
+        /// Formation slots of every opponent in contact with the carrier on
+        /// <see cref="_lastContactTick"/>, one bit per slot. A bitmask rather than a
+        /// collection because this is written several times per physics tick and
+        /// must not allocate.
+        /// </summary>
+        private uint _contactMask;
 
         public Systems_Referee(
             Systems_PlayModel play,
@@ -40,6 +49,7 @@ namespace PoFootball.Systems
             Systems_FieldModel field,
             Systems_PlayerRegistry registry,
             Systems_IKickModel kickModel,
+            Systems_IFumbleModel fumbleModel,
             IPublisher<Systems_PlayEndedMessage> endedPublisher,
             IPublisher<Systems_TackleMessage> tacklePublisher,
             IPublisher<Systems_ScoreMessage> scorePublisher)
@@ -50,6 +60,7 @@ namespace PoFootball.Systems
             _field = field;
             _registry = registry;
             _kickModel = kickModel;
+            _fumbleModel = fumbleModel;
             _endedPublisher = endedPublisher;
             _tacklePublisher = tacklePublisher;
             _scorePublisher = scorePublisher;
@@ -60,6 +71,7 @@ namespace PoFootball.Systems
         {
             _lastContactTick = -1;
             _contactRunTicks = 0;
+            _contactMask = 0u;
         }
 
         public void FixedTick()
@@ -206,8 +218,25 @@ namespace PoFootball.Systems
         /// possible at all, and since TACKLE_CLOSING_SPEED was raised to mean a real
         /// collision it is now the ordinary way a down ends rather than the fallback.
         ///
-        /// Several defenders touching the carrier on the same tick each call in;
-        /// the tick guard counts that as one tick of contact, not several.
+        /// TWO THINGS HERE USED TO MAKE THE CARRIER FAR TOO HARD TO STOP, and
+        /// together they are most of why a measured game averaged 9.3 yards a play
+        /// against real football's 5.5.
+        ///
+        /// A SECOND TACKLER COUNTED FOR NOTHING. Every defender in contact called in
+        /// on the same tick and the tick guard collapsed them all into one tick of
+        /// contact, so three men wrapping up a back was worth exactly as much as
+        /// one. In real football the second defender is the whole point — a runner
+        /// breaks an arm tackle and is stopped dead by the man arriving behind it.
+        /// Contact is now counted per DISTINCT TACKLER (<see cref="_contactMask"/>)
+        /// and the wrap-up they owe is divided between them, so a gang tackle ends
+        /// the play in a fraction of the time one defender needs.
+        ///
+        /// AND CONTACT HAD TO BE STRICTLY CONSECUTIVE. Two discs colliding push each
+        /// other apart, so a defender who landed a hit bounced off, missed a tick,
+        /// and the run counter reset to one — the carrier shrugged off a tackle that
+        /// had actually been made. A short grace window
+        /// (Systems_SimConstants.CONTACT_GRACE_TICKS) keeps the wrap alive across
+        /// the separation the collision impulse itself causes.
         /// </summary>
         public void ReportSustainedContact(int tacklerId, float closingSpeed)
         {
@@ -218,13 +247,22 @@ namespace PoFootball.Systems
 
             int tick = _play.PhysicsTick;
 
-            if (tick == _lastContactTick)
+            if (tick != _lastContactTick)
             {
-                return;
+                // A new tick of contact. The run survives a gap of up to
+                // CONTACT_GRACE_TICKS — see the summary — and restarts beyond it.
+                bool continues = tick - _lastContactTick
+                    <= Systems_SimConstants.CONTACT_GRACE_TICKS;
+
+                _contactRunTicks = continues ? _contactRunTicks + 1 : 1;
+                _lastContactTick = tick;
+                _contactMask = 0u;
             }
 
-            _contactRunTicks = tick == _lastContactTick + 1 ? _contactRunTicks + 1 : 1;
-            _lastContactTick = tick;
+            if (tacklerId >= 0 && tacklerId < Systems_PlayerRegistry.CAPACITY)
+            {
+                _contactMask |= 1u << tacklerId;
+            }
 
             // How long THIS carrier takes to bring down, not a single number for
             // everybody — a fullback fights through better than twice the contact a
@@ -235,12 +273,65 @@ namespace PoFootball.Systems
                 ? Systems_SimConstants.SUSTAINED_TACKLE_TICKS
                 : Systems_RoleTable.TackleTicksOf(carrier.Role);
 
+            // Help shortens the wrap-up but does not collapse it. Dividing straight
+            // by the tackler count was MEASURED AND WAS FAR TOO STRONG: three men
+            // arriving cut the requirement to a third, a carrier went down the
+            // instant a crowd formed, and a full game came back at 2.93 yards a play
+            // against real football's 5.5 — with five safeties in it, because the
+            // offense could not get off its own goal line.
+            //
+            // 2n/(n+1) is the gentler curve: two tacklers need two thirds of the
+            // ticks one does, three need a half, and it never falls below half
+            // however many arrive. The second man still matters, which is the whole
+            // point; he just does not end the down by himself.
+            int tacklers = TacklerCount(_contactMask);
+
+            if (tacklers > 1)
+            {
+                ticksNeeded = Mathf.Max(1, (ticksNeeded * 2) / (tacklers + 1));
+            }
+
             if (_contactRunTicks < ticksNeeded)
             {
                 return;
             }
 
             CompleteTackle(tacklerId, closingSpeed);
+        }
+
+        /// <summary>
+        /// How many opponents have a hand on the carrier RIGHT NOW. The mask is only
+        /// meaningful for the tick it was built on, so a tackle arriving by the
+        /// instant-collision path (ReportContactWithCarrier, which never touches the
+        /// mask) reads one — the man who just hit him — rather than a stale count
+        /// from an earlier tick.
+        /// </summary>
+        private int TacklersOnCarrier()
+        {
+            if (_lastContactTick != _play.PhysicsTick)
+            {
+                return 1;
+            }
+
+            return Mathf.Max(1, TacklerCount(_contactMask));
+        }
+
+        /// <summary>
+        /// Population count of the contact mask — how many distinct opponents have a
+        /// hand on the carrier this tick. Kernighan's method: loops once per SET bit
+        /// rather than once per slot, and allocates nothing.
+        /// </summary>
+        private static int TacklerCount(uint mask)
+        {
+            int count = 0;
+
+            while (mask != 0u)
+            {
+                mask &= mask - 1u;
+                count++;
+            }
+
+            return count;
         }
 
         /// <summary>A ball in the air cannot be tackled — there is nobody holding it.</summary>
@@ -268,10 +359,22 @@ namespace PoFootball.Systems
             // from the spot when it awards the two points, so this changes no rule —
             // it makes the outcome say what happened, which is what lets
             // Reward_Terminal price it as the disaster it is.
+            //
+            // Safety takes precedence over a strip: a ball coming loose in your own
+            // end zone is a whole rule of its own (the defense recovering it is a
+            // touchdown) and this simulation has no model for it. Two points and the
+            // ball is the right answer and already the worst outcome available.
+            if (spot.y <= Systems_FieldModel.OWN_GOAL_LINE_Y)
+            {
+                EndPlay(Systems_PlayOutcome.Safety, spot);
+                return;
+            }
+
+            bool stripped = _fumbleModel.IsFumbleLost(
+                closingSpeed, TacklersOnCarrier(), carrier.Role);
+
             EndPlay(
-                spot.y <= Systems_FieldModel.OWN_GOAL_LINE_Y
-                    ? Systems_PlayOutcome.Safety
-                    : Systems_PlayOutcome.Tackle,
+                stripped ? Systems_PlayOutcome.FumbleLost : Systems_PlayOutcome.Tackle,
                 spot);
         }
 

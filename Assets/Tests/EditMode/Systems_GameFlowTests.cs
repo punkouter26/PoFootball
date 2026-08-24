@@ -363,21 +363,108 @@ namespace PoFootball.Tests
         [Test]
         public void FourthQuarterExpiring_EndsTheGameOnce()
         {
-            for (int quarter = 0; quarter < 4; quarter++)
-            {
-                BurnQuarterToZero();
-                EndPlayAt(OwnYard(28f));
-            }
+            PlayToFinalWhistle();
 
             Assert.That(_game.Phase, Is.EqualTo(Systems_GamePhase.Final));
             Assert.That(_gameOver.Count, Is.EqualTo(1));
 
             // Further whistles must not keep scoring after the final gun.
             int playsBefore = _resolved.Count;
+            int scoreAtFinal = _game.HomeScore + _game.AwayScore;
+
             EndPlayAt(Systems_FieldModel.ATTACKING_GOAL_LINE_Y, Systems_PlayOutcome.Touchdown);
 
             Assert.That(_resolved.Count, Is.EqualTo(playsBefore));
-            Assert.That(_game.HomeScore, Is.Zero);
+            Assert.That(_game.HomeScore + _game.AwayScore, Is.EqualTo(scoreAtFinal));
+        }
+
+        // --- Overtime ----------------------------------------------------------
+
+        /// <summary>
+        /// A measured game finished 28-28 and simply stopped, because four quarters
+        /// expiring returned EndOfGame whatever the score.
+        /// </summary>
+        [Test]
+        public void RegulationEndingLevel_GoesToOvertimeRatherThanEndingTied()
+        {
+            for (int quarter = 0; quarter < Systems_GameRules.QUARTER_COUNT; quarter++)
+            {
+                BurnQuarterToZero();
+                EndPlayAt(OwnYard(28f));
+            }
+
+            Assert.That(_game.HomeScore, Is.EqualTo(_game.AwayScore), "test premise");
+            Assert.That(_game.Phase, Is.EqualTo(Systems_GamePhase.Overtime));
+            Assert.That(_gameOver.Count, Is.Zero, "overtime is not the final whistle");
+            Assert.That(
+                _game.SecondsRemaining,
+                Is.EqualTo(Systems_GameRules.OVERTIME_SECONDS).Within(0.01f));
+            Assert.That(_flow.HasNextPlay, Is.True);
+        }
+
+        [Test]
+        public void AScoreInOvertime_EndsTheGameImmediately()
+        {
+            for (int quarter = 0; quarter < Systems_GameRules.QUARTER_COUNT; quarter++)
+            {
+                BurnQuarterToZero();
+                EndPlayAt(OwnYard(28f));
+            }
+
+            Assert.That(_game.Phase, Is.EqualTo(Systems_GamePhase.Overtime), "test premise");
+
+            EndPlayAt(
+                Systems_FieldModel.ATTACKING_GOAL_LINE_Y, Systems_PlayOutcome.Touchdown);
+
+            Assert.That(_game.Phase, Is.EqualTo(Systems_GamePhase.Final));
+            Assert.That(_gameOver.Count, Is.EqualTo(1));
+            Assert.That(_game.HomeScore, Is.Not.EqualTo(_game.AwayScore));
+        }
+
+        /// <summary>
+        /// One overtime period and no more. The NFL regular season allows a tie
+        /// after it and so does this — what was wrong before was ending level
+        /// without ever playing one.
+        /// </summary>
+        [Test]
+        public void OvertimeExpiringStillLevel_EndsTheGameTied()
+        {
+            for (int quarter = 0; quarter < Systems_GameRules.QUARTER_COUNT; quarter++)
+            {
+                BurnQuarterToZero();
+                EndPlayAt(OwnYard(28f));
+            }
+
+            Assert.That(_game.Phase, Is.EqualTo(Systems_GamePhase.Overtime), "test premise");
+
+            BurnClockToZero();
+            EndPlayAt(OwnYard(28f));
+
+            Assert.That(_game.Phase, Is.EqualTo(Systems_GamePhase.Final));
+            Assert.That(_game.HomeScore, Is.EqualTo(_game.AwayScore));
+        }
+
+        // --- Fumbles -----------------------------------------------------------
+
+        [Test]
+        public void ALostFumble_FlipsPossessionAndMirrorsTheSpot()
+        {
+            float spot = OwnYard(42f);
+
+            EndPlayAt(spot, Systems_PlayOutcome.FumbleLost);
+
+            Assert.That(_game.Possession, Is.EqualTo(Systems_TeamId.Away));
+            Assert.That(_game.Down, Is.EqualTo(1));
+            Assert.That(
+                YardLineOf(_game.LineOfScrimmageY), Is.EqualTo(100f - 42f).Within(0.1f));
+        }
+
+        [Test]
+        public void ALostFumble_StopsTheClockLikeAnyChangeOfPossession()
+        {
+            EndPlayAt(OwnYard(42f), Systems_PlayOutcome.FumbleLost);
+
+            Assert.That(_game.IsClockRunning, Is.False);
         }
 
         // --- The game loop's end state -----------------------------------------
@@ -426,13 +513,29 @@ namespace PoFootball.Tests
         }
 
         /// <summary>Burns all four quarters, ending each on a whistle.</summary>
+        /// <summary>
+        /// Regulation, played out to a DECIDED result.
+        ///
+        /// The score has to be broken first now that a level game goes to overtime —
+        /// before that this ran four quarters from 0-0 and expected FINAL, which is
+        /// exactly the tie Systems_GameRules.OVERTIME_SECONDS was added to remove.
+        /// </summary>
         private void PlayToFinalWhistle()
         {
+            BreakTheTie();
+
             for (int quarter = 0; quarter < Systems_GameRules.QUARTER_COUNT; quarter++)
             {
                 BurnQuarterToZero();
                 EndPlayAt(OwnYard(28f));
             }
+        }
+
+        /// <summary>Puts one score on the board so regulation cannot end level.</summary>
+        private void BreakTheTie()
+        {
+            EndPlayAt(
+                Systems_FieldModel.ATTACKING_GOAL_LINE_Y, Systems_PlayOutcome.Touchdown);
         }
 
         /// <summary>
@@ -441,12 +544,22 @@ namespace PoFootball.Tests
         /// </summary>
         private void BurnQuarterToZero()
         {
+            BurnClockToZero();
+        }
+
+        /// <summary>
+        /// Runs whatever period is currently on the clock down to 0:00 with the ball
+        /// live. Sized off SecondsRemaining rather than QUARTER_SECONDS so it works
+        /// for an overtime period too.
+        /// </summary>
+        private void BurnClockToZero()
+        {
             _play.BeginEpisode(_game.LineOfScrimmageY, _game.LineOfScrimmageY, 1, Systems_GameRules.YARDS_TO_GAIN);
             _play.Snap();
 
             int guard = 0;
             int maximumTicks =
-                Mathf.CeilToInt(Systems_GameRules.QUARTER_SECONDS / 0.02f) + 10;
+                Mathf.CeilToInt(_game.SecondsRemaining / 0.02f) + 10;
 
             while (_game.SecondsRemaining > 0f && guard < maximumTicks)
             {

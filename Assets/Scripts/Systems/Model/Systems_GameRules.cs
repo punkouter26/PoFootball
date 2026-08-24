@@ -15,6 +15,21 @@ namespace PoFootball.Models
         public const int QUARTER_COUNT = 4;
 
         /// <summary>
+        /// Seconds of overtime when regulation ends level. Scaled from the NFL's
+        /// ten minutes by the same factor QUARTER_SECONDS scales a quarter by
+        /// (300 / 900), which puts it at 200.
+        ///
+        /// Overtime here is SUDDEN DEATH — the first score of any kind wins. The
+        /// real rule is more elaborate (both teams get a possession unless the first
+        /// is a touchdown) and modelling it would need a notion of "possession
+        /// owed" that nothing else in this game has. Sudden death is the honest
+        /// simplification: it ends the game, it rewards scoring, and it removes the
+        /// tie — which is what was actually wrong. A game measured 28-28 and simply
+        /// stopped.
+        /// </summary>
+        public const float OVERTIME_SECONDS = 200f;
+
+        /// <summary>
         /// Seconds per quarter. Five minutes rather than fifteen, which is what
         /// makes the final whistle reachable in a sitting.
         ///
@@ -137,6 +152,43 @@ namespace PoFootball.Models
         /// every score.
         /// </summary>
         public const float KICKOFF_TOUCHBACK_YARD_LINE = 35f;
+
+        /// <summary>
+        /// Share of kickoffs that are simply taken as a touchback. High, because
+        /// under the 2025 dynamic-kickoff rule that is what most of them are.
+        /// </summary>
+        public const float KICKOFF_TOUCHBACK_CHANCE = 0.7f;
+
+        /// <summary>Spread of a returned kickoff around the touchback spot, yards.</summary>
+        public const float KICKOFF_RETURN_SPREAD_YARDS = 9f;
+
+        /// <summary>
+        /// Chance the kicking team recovers an onside kick. Real rates are about one
+        /// in five once the receiving team knows it is coming, and it always does
+        /// here — this is only ever called when trailing late.
+        /// </summary>
+        public const float ONSIDE_RECOVERY_CHANCE = 0.20f;
+
+        /// <summary>
+        /// Where the receiving team takes over after an onside kick that FAILS: the
+        /// kicking team's own 45, because a short kick hands over excellent field
+        /// position. That cost is the entire reason an onside kick is a desperation
+        /// call rather than a free roll.
+        /// </summary>
+        public const float ONSIDE_FAILED_YARD_LINE = 45f;
+
+        /// <summary>
+        /// A team trailing by more than this with the clock nearly gone will try an
+        /// onside kick. Eight points is one score, so a team inside that still has a
+        /// conventional path and should kick deep.
+        /// </summary>
+        public const int ONSIDE_TRAILING_BY = 8;
+
+        /// <summary>
+        /// Seconds left in the fourth quarter under which an onside kick becomes the
+        /// right call.
+        /// </summary>
+        public const float ONSIDE_SECONDS_REMAINING = 60f;
 
         /// <summary>
         /// Where the team that was awarded a safety takes over.

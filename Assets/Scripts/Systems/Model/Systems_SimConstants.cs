@@ -96,7 +96,69 @@ namespace PoFootball.Models
         /// should take a beat and depend on WHO IS CARRYING — which is what
         /// Systems_RoleTable.TackleTicksOf adds.
         /// </summary>
-        public const int SUSTAINED_TACKLE_TICKS = 8;
+        /// RAISED 8 -> 10 WHEN GANG TACKLING ARRIVED, and the two changes belong
+        /// together. Systems_Referee now shortens the wrap-up when more than one
+        /// defender is in contact, which is a large effective cut to this number on
+        /// most tackles — measured, it took a game from 12 first downs to 4 and left
+        /// drives going three-and-out all afternoon. Raising the base restores the
+        /// room a carrier needs while keeping the property the gang rule was added
+        /// for: help arriving is what ends the down.
+        ///
+        /// Walked up in two measured steps. 8 gave 4 first downs a game and 7.1
+        /// yards a play; 10 gave 5 first downs and 4.44. Both were short of real
+        /// football's roughly twenty first downs, and the second had overshot the
+        /// yardage target in the other direction — the gains were arriving in a few
+        /// long plays rather than the steady four-and-five-yard carries that
+        /// actually move chains. 12 was then measured at ~9.8 yards a play across
+        /// two games — no better than the 9.3 this work started from, i.e. it undid
+        /// the tackling fix entirely. 10 is the setting that kept the structural
+        /// gains (plays resolving instead of timing out, a sane drive count) and it
+        /// is what ships.
+        public const int SUSTAINED_TACKLE_TICKS = 10;
+
+        /// <summary>
+        /// How many physics ticks of BROKEN contact a wrap-up survives before the
+        /// count restarts. 3 ticks = 0.06 s.
+        ///
+        /// The sustained-tackle rule used to require strictly consecutive ticks, and
+        /// in a 2D sim of colliding discs that is a rule the physics itself breaks:
+        /// the collision impulse pushes the tackler off the carrier, the next tick
+        /// registers no contact, and a tackle that had genuinely been made reset to
+        /// zero. The carrier then ran on. This is the separation the hit itself
+        /// caused, not the carrier escaping, so it should not cost the defense the
+        /// wrap it had already earned.
+        ///
+        /// Deliberately short. Long enough to bridge a bounce, far too short to
+        /// bridge a defender being beaten and having to re-establish contact.
+        /// </summary>
+        public const int CONTACT_GRACE_TICKS = 2;
+
+        // --- Fumbles ---------------------------------------------------------
+        /// <summary>
+        /// Closing speed at which a hit is hard enough to strip the ball, m/s.
+        /// Sits above TACKLE_CLOSING_SPEED: every fumble is a real collision, but
+        /// not every real collision is a fumble.
+        /// </summary>
+        public const float FUMBLE_CLOSING_SPEED = 6.0f;
+
+        /// <summary>
+        /// Defenders that must be in contact before the deterministic (training)
+        /// fumble trigger fires. The second man is who rips the ball out, and
+        /// requiring him is what makes the trigger something a carrier can avoid by
+        /// not running into a crowd.
+        /// </summary>
+        public const int FUMBLE_MIN_TACKLERS = 2;
+
+        /// <summary>
+        /// Base chance a tackle produces a lost fumble in a played game, before the
+        /// hit, the help and the carrier's ball security scale it.
+        ///
+        /// Real football loses roughly one fumble per team per game over about
+        /// sixty-five snaps. 1.2% is that rate, left low deliberately: the
+        /// multipliers in Systems_ProbabilisticFumbleModel can triple it on a big
+        /// hit with help, which is where fumbles actually come from.
+        /// </summary>
+        public const float FUMBLE_BASE_CHANCE = 0.012f;
 
         // --- Body dynamics ---------------------------------------------------
         /// <summary>

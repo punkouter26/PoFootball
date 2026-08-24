@@ -165,6 +165,16 @@ namespace PoFootball.Models
             SecondsRemaining = Systems_GameRules.QUARTER_SECONDS;
         }
 
+        /// <summary>
+        /// Regulation ended level. Moves to sudden death with a fresh clock; the
+        /// quarter number stays at QUARTER_COUNT so nothing reads "5th".
+        /// </summary>
+        public void BeginOvertime()
+        {
+            Phase = Systems_GamePhase.Overtime;
+            SecondsRemaining = Systems_GameRules.OVERTIME_SECONDS;
+        }
+
         public void SetPhase(Systems_GamePhase phase)
         {
             Phase = phase;

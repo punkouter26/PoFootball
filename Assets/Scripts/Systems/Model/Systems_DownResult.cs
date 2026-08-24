@@ -41,6 +41,9 @@ namespace PoFootball.Models
 
         FieldGoalGood = 9,
 
-        FieldGoalMissed = 10
+        FieldGoalMissed = 10,
+
+        /// <summary>Ball stripped on the tackle; the defense takes over at the spot.</summary>
+        FumbleLost = 11
     }
 }

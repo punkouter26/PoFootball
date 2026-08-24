@@ -16,8 +16,34 @@ namespace PoFootball.Models
     /// </summary>
     public sealed class Systems_PlayModel
     {
-        /// <summary>Physics ticks a play may run before it is declared TimeExpired.</summary>
-        public const int MAX_PHYSICS_TICKS = 750;
+        /// <summary>
+        /// Physics ticks a play may run before it is declared TimeExpired — 330
+        /// ticks = 6.6 s at the pinned 50 Hz.
+        ///
+        /// CUT FROM 750 (15 s), BUT NOT AS FAR AS 330. A fifteen-second down is not
+        /// football — real snaps live four to seven seconds — and the cap was doing
+        /// double duty as a safety net for a carrier nobody could catch, which is a
+        /// tackling problem and is fixed where tackling lives
+        /// (Systems_Referee.ReportSustainedContact).
+        ///
+        /// 330 (6.6 s) WAS MEASURED AND WAS TOO TIGHT: it did not trim outliers, it
+        /// truncated ordinary downs. A full game ended 34 of its 80 scrimmage plays
+        /// on the cap — nearly half the game reported as TimeExpired, an outcome
+        /// that means nothing in football and which the reward layer prices as a
+        /// half-tackle. Plays in this simulation genuinely run longer than a real
+        /// one's because the bodies accelerate slowly and the carrier jukes.
+        ///
+        /// 500 (10 s) WAS ALSO MEASURED AND STILL CLIPPED 28 OF 74 SCRIMMAGE PLAYS.
+        /// Plays here genuinely run long: the bodies accelerate slowly, the carrier
+        /// jukes, and a quarterback who does not find a receiver holds the ball. The
+        /// cap is a backstop, not a balance lever — shortening it does not make
+        /// plays end sooner, it relabels unfinished ones as TimeExpired, an outcome
+        /// that means nothing in football.
+        ///
+        /// 600 ticks is 12 s: a real trim from 750 that still lets an honest play
+        /// finish. Getting plays to actually END is tackling's job.
+        /// </summary>
+        public const int MAX_PHYSICS_TICKS = 600;
 
         /// <summary>Agent decisions per play at DecisionPeriod = 5 (750 / 5).</summary>
         public const int MAX_DECISIONS = MAX_PHYSICS_TICKS / 5;

@@ -150,34 +150,28 @@ namespace PoFootball.Systems
                 return null;
             }
 
-            // AND IT MUST CLEAR THE LINE OF SCRIMMAGE. This is the rule that makes
-            // a passing game possible at all, and its absence produced a game of
-            // forty plays in which thirty-six were interceptions and not one pass
-            // was completed.
+            // THE BALL NO LONGER HAS TO CLEAR THE LINE OF SCRIMMAGE, and the rule
+            // that said it did is worth explaining because it was right when it was
+            // written and is not any more.
             //
-            // The arithmetic: the quarterback drops DROPBACK_DEPTH_YARDS (7 yd,
-            // 6.4 m) behind the line, so MIN_CATCH_DISTANCE — measured from the
-            // THROW ORIGIN — expires while the ball is still three and a half metres
-            // BEHIND the line of scrimmage. The next bodies it meets are the two
-            // lines, and a 25 m/s throw is only about 1.7 m up as it crosses them,
-            // which FindCatcher could not tell anyway because it compares plane
-            // distance and never reads Height. So the first eligible catcher on
-            // every single pass was a defensive lineman standing in the trenches.
+            // It was added because a pass thrown from a seven-yard drop was still
+            // BEHIND the line when MIN_CATCH_DISTANCE expired, so the first eligible
+            // body it met was a defensive lineman standing in the trenches: a game of
+            // forty plays produced thirty-six interceptions and not one completion.
+            // Requiring the ball past the line modelled it flying over the trenches.
             //
-            // It went unnoticed while offensive linemen were eligible receivers:
-            // they stand in front of the defensive line and simply won the
-            // nearest-body contest, turning those throws into bizarre completions to
-            // a guard instead of interceptions. Making them ineligible — which is
-            // correct, they are ineligible receivers — handed every one of those
-            // balls to the defender standing behind them.
+            // But the trenches were then fixed properly — BOTH lines are excluded
+            // from this search a few lines below, on the honest grounds that with no
+            // height in the catch test the trenches cannot catch at all. With that
+            // in place the line gate stopped guarding anything and started costing
+            // something: it made every screen, swing pass and checkdown in football
+            // physically impossible, so the only pass this game could throw was one
+            // downfield. That is a whole category of real football deleted to fix a
+            // bug that has a better fix already applied.
             //
-            // Requiring the ball to be past the line models it flying over the
-            // trenches, which is what actually happens on a forward pass. A defender
-            // who has dropped into coverage downfield can still take it.
-            if (_ball.Position.y < _play.LineOfScrimmageY)
-            {
-                return null;
-            }
+            // MIN_CATCH_DISTANCE above still stops a throw being caught by whoever
+            // stands next to the quarterback, which is the failure this is sometimes
+            // mistaken for guarding against.
 
             Systems_IPlayerHandle best = null;
             float bestDistance = Systems_SimConstants.CATCH_RADIUS;

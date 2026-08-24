@@ -1,0 +1,20 @@
+{
+  "version": 1,
+  "setup": "integrated",
+  "languages": [
+    "Python",
+    "C#"
+  ],
+  "stacks": [
+    "pip",
+    ".NET"
+  ],
+  "markers": [
+    "requirements.txt",
+    "Assembly-CSharp-Editor.csproj"
+  ],
+  "suggestedRun": "python -m src.main",
+  "suggestedTest": "pytest",
+  "createdAt": "2026-08-24T19:04:57.581Z",
+  "tool": "xgrok"
+}

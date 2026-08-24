@@ -125,6 +125,7 @@ namespace PoFootball.Views
                 case Systems_DownResult.Touchdown: return "TOUCHDOWN";
                 case Systems_DownResult.Safety: return "SAFETY";
                 case Systems_DownResult.Interception: return "INTERCEPTED";
+                case Systems_DownResult.FumbleLost: return "FUMBLE";
                 case Systems_DownResult.TurnoverOnDowns: return "TURNOVER ON DOWNS";
                 case Systems_DownResult.FirstDown: return "FIRST DOWN";
                 case Systems_DownResult.EndOfQuarter: return "END OF QUARTER";

@@ -1,7 +1,9 @@
 using System;
 using UnityEditor;
+using UnityEditor.Build;
 using UnityEditor.Build.Reporting;
 using UnityEngine;
+using UnityEngine.Rendering;
 
 namespace PoFootball.EditorTools
 {
@@ -43,6 +45,20 @@ namespace PoFootball.EditorTools
 
         private const string GAME_OUTPUT = "Builds/Game/PoFootball.exe";
 
+        /// <summary>
+        /// The Android package. An .apk rather than an .aab because this is a build
+        /// to sideload onto a device (`adb install -r`), not a Play Store upload —
+        /// an .aab cannot be installed directly.
+        /// </summary>
+        private const string ANDROID_OUTPUT = "Builds/Android/PoFootball.apk";
+
+        /// <summary>
+        /// Reverse-DNS application id. Must be set explicitly: Unity's default is
+        /// com.DefaultCompany.&lt;product&gt;, which Android will happily install but
+        /// which collides with every other project that never changed it.
+        /// </summary>
+        private const string ANDROID_PACKAGE = "com.punkouter.pofootball";
+
         [MenuItem("Tools/PoFootball/Build Game")]
         private static void BuildGame()
         {
@@ -68,15 +84,118 @@ namespace PoFootball.EditorTools
                 BuildOptions.None);
         }
 
+        /// <summary>
+        /// The phone build. Same two player-facing scenes as the desktop game and
+        /// deliberately NOT the training scene — that one carries the Academy and
+        /// every ML-Agents dependency, and none of it belongs in a retail package.
+        ///
+        /// Requires Android Build Support to be installed in the Editor. It is not
+        /// installed by default and cannot be added from a script; the menu item is
+        /// disabled with a clear message rather than failing halfway through a build.
+        /// </summary>
+        [MenuItem("Tools/PoFootball/Build Android")]
+        private static void BuildAndroid()
+        {
+            if (!IsAndroidSupportInstalled())
+            {
+                Debug.LogError(
+                    "[Build] Android Build Support is not installed for this Editor. "
+                    + "Unity Hub > Installs > 6000.5.8f1 > gear > Add modules > "
+                    + "Android Build Support (tick Android SDK & NDK Tools and "
+                    + "OpenJDK), then reopen the project.");
+                return;
+            }
+
+            ApplyAndroidPlayerSettings();
+
+            Build(
+                "Android",
+                new[] { MENU_SCENE, GAME_SCENE },
+                ANDROID_OUTPUT,
+                BuildOptions.None,
+                BuildTarget.Android,
+                BuildTargetGroup.Android);
+        }
+
+        [MenuItem("Tools/PoFootball/Build Android", true)]
+        private static bool BuildAndroidValidate()
+        {
+            return IsAndroidSupportInstalled();
+        }
+
+        private static bool IsAndroidSupportInstalled()
+        {
+            return BuildPipeline.IsBuildTargetSupported(
+                BuildTargetGroup.Android, BuildTarget.Android);
+        }
+
+        /// <summary>
+        /// The settings a phone build needs that a desktop one does not. Applied
+        /// here rather than left in the .asset so they are in the repository next to
+        /// the code, which is the same argument the class summary makes about scenes.
+        ///
+        /// PORTRAIT ONLY, because the whole UI is built for it — CLAUDE.md §3 pins
+        /// the game to portrait 9:16 and Systems_UiTheme scales the panel on width.
+        /// Letting the device rotate would hand that layout a landscape viewport it
+        /// was never designed against.
+        ///
+        /// IL2CPP AND ARM64, because Google Play has required a 64-bit binary since
+        /// 2019 and Mono cannot produce one. This is also what makes the physics run
+        /// at a playable rate on a phone.
+        /// </summary>
+        private static void ApplyAndroidPlayerSettings()
+        {
+            PlayerSettings.SetApplicationIdentifier(
+                NamedBuildTarget.Android, ANDROID_PACKAGE);
+
+            PlayerSettings.SetScriptingBackend(
+                NamedBuildTarget.Android, ScriptingImplementation.IL2CPP);
+
+            PlayerSettings.Android.targetArchitectures = AndroidArchitecture.ARM64;
+
+            PlayerSettings.defaultInterfaceOrientation =
+                UIOrientation.Portrait;
+            PlayerSettings.allowedAutorotateToPortrait = true;
+            PlayerSettings.allowedAutorotateToPortraitUpsideDown = false;
+            PlayerSettings.allowedAutorotateToLandscapeLeft = false;
+            PlayerSettings.allowedAutorotateToLandscapeRight = false;
+
+            // Vulkan first: this is a 2D URP game and Vulkan is the better path on
+            // modern hardware, with GLES3 kept as the fallback for older devices.
+            PlayerSettings.SetUseDefaultGraphicsAPIs(BuildTarget.Android, false);
+            PlayerSettings.SetGraphicsAPIs(
+                BuildTarget.Android,
+                new[] { GraphicsDeviceType.Vulkan, GraphicsDeviceType.OpenGLES3 });
+
+            PlayerSettings.Android.minSdkVersion = AndroidSdkVersions.AndroidApiLevel24;
+
+            Debug.Log(
+                $"[Build] Android player settings applied: {ANDROID_PACKAGE}, "
+                + "IL2CPP/ARM64, portrait-locked, Vulkan+GLES3, minSdk 24.");
+        }
+
         private static void Build(
             string label, string[] scenes, string outputPath, BuildOptions options)
+        {
+            Build(
+                label, scenes, outputPath, options,
+                BuildTarget.StandaloneWindows64, BuildTargetGroup.Standalone);
+        }
+
+        private static void Build(
+            string label,
+            string[] scenes,
+            string outputPath,
+            BuildOptions options,
+            BuildTarget target,
+            BuildTargetGroup targetGroup)
         {
             BuildPlayerOptions playerOptions = new BuildPlayerOptions
             {
                 scenes = scenes,
                 locationPathName = outputPath,
-                target = BuildTarget.StandaloneWindows64,
-                targetGroup = BuildTargetGroup.Standalone,
+                target = target,
+                targetGroup = targetGroup,
                 options = options,
             };
 

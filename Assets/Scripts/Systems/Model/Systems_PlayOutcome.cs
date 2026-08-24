@@ -49,6 +49,13 @@ namespace PoFootball.Models
         /// from distance costs field position, which is what makes the attempt a
         /// real decision rather than a free roll.
         /// </summary>
-        FieldGoalMissed = 10
+        FieldGoalMissed = 10,
+
+        /// <summary>
+        /// A tackle knocked the ball loose and the defense recovered. Only LOST
+        /// fumbles are modelled — see Systems_IFumbleModel for why a fumble the
+        /// offense recovers is indistinguishable from a tackle here.
+        /// </summary>
+        FumbleLost = 11
     }
 }
