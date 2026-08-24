@@ -444,6 +444,42 @@ namespace PoFootball.Tests
             Assert.That(_game.HomeScore, Is.EqualTo(_game.AwayScore));
         }
 
+        /// <summary>
+        /// THE BUG THIS PINS. Sudden death was checked after AdvanceQuarter without
+        /// asking whether overtime had already been running, so a touchdown that
+        /// TIED the game as regulation expired started overtime and then instantly
+        /// won it — the game ended level, having played none of the extra period it
+        /// had just begun.
+        /// </summary>
+        [Test]
+        public void AScoreThatLevelsItAsRegulationExpires_StartsOvertimeRatherThanEndingIt()
+        {
+            // Away goes ahead by a touchdown, then Home answers on the final play of
+            // the fourth quarter to level it.
+            EndPlayAt(Systems_FieldModel.ATTACKING_GOAL_LINE_Y, Systems_PlayOutcome.Touchdown);
+
+            for (int quarter = 0; quarter < Systems_GameRules.QUARTER_COUNT - 1; quarter++)
+            {
+                BurnQuarterToZero();
+                EndPlayAt(OwnYard(28f));
+            }
+
+            // Fourth quarter: run it out, and score on the play the clock dies on.
+            BurnQuarterToZero();
+            EndPlayAt(Systems_FieldModel.ATTACKING_GOAL_LINE_Y, Systems_PlayOutcome.Touchdown);
+
+            Assert.That(
+                _game.HomeScore, Is.EqualTo(_game.AwayScore),
+                "test premise: the last score levelled it");
+
+            Assert.That(
+                _game.Phase, Is.EqualTo(Systems_GamePhase.Overtime),
+                "a tying score at the buzzer must send the game to overtime");
+
+            Assert.That(_gameOver.Count, Is.Zero, "the game must not have ended");
+            Assert.That(_flow.HasNextPlay, Is.True);
+        }
+
         // --- Fumbles -----------------------------------------------------------
 
         [Test]

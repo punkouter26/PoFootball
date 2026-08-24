@@ -223,16 +223,27 @@ namespace PoFootball.Systems
 
             _game.SetClockRunning(!clockStops);
 
+            // Read BEFORE AdvanceQuarter, which is what can START overtime. Sudden
+            // death applies to plays run DURING overtime, never to the play that
+            // sent the game there.
+            bool wasInOvertime = _game.Phase == Systems_GamePhase.Overtime;
+
             if (quarterExpired)
             {
                 result = AdvanceQuarter(result);
             }
 
-            // SUDDEN DEATH. Any score in overtime ends it on the spot — checked
-            // after Resolve so the points are already on the board, and after
+            // SUDDEN DEATH. A score in overtime ends it on the spot — checked after
+            // Resolve so the points are already on the board, and after
             // AdvanceQuarter so an overtime clock expiring on the same play does not
             // get to overrule a winning score.
-            if (_game.Phase == Systems_GamePhase.Overtime && pointsScored > 0)
+            //
+            // THE wasInOvertime GUARD IS LOAD-BEARING. Without it, a touchdown that
+            // TIED the game as regulation expired read as a sudden-death winner:
+            // AdvanceQuarter had just set the phase to Overtime on that very play,
+            // pointsScored was 7, and the game ended immediately — still level, and
+            // having played none of the overtime it had just started.
+            if (wasInOvertime && pointsScored > 0)
             {
                 result = Systems_DownResult.EndOfGame;
             }
@@ -592,7 +603,9 @@ namespace PoFootball.Systems
                         _game.OpeningPossession.Opponent(),
                         OwnYardLineToY(Systems_GameRules.KICKOFF_TOUCHBACK_YARD_LINE));
 
-                    return Systems_DownResult.EndOfQuarter;
+                    // A score that levelled it as the clock died is still the thing
+                    // that just happened; announce it rather than the period.
+                    return announceScore ? resultSoFar : Systems_DownResult.EndOfQuarter;
                 }
 
                 return Systems_DownResult.EndOfGame;

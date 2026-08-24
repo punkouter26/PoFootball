@@ -81,13 +81,17 @@ game.
 | Touchdown | 7 — six plus an **awarded** try (there is no kicking model, and a random one would put noise in the score no policy can influence) |
 | Field goal | **Distance-weighted odds in a game, a hard cliff at 55 yards in training** — see `Systems_IKickModel`. The seam is the one `Systems_ISpotProvider` already established: training keeps the pure function every policy was fitted against, a played game gets the version worth watching |
 | Punt | Net yards drawn around 40 in a game, flat 40 in training — same seam, same reason |
-| Safety | 2 to the defense, recognised at the rules layer purely from where the ball stopped. The physics layer still has no concept of one |
+| Safety | 2 to the defense, recognised at the rules layer purely from where the ball stopped. The physics layer still has no concept of one. Takes precedence over a strip: a ball loose in your own end zone is a rule this sim has no model for |
 | Interception / turnover on downs | Possession flips, spot mirrored |
 | Incompletion | Ball returns to the previous spot, clock stops |
 | Clock | Ticks live during a play; a **12 s** huddle is charged at the whistle only when the clock kept running. Was 25 s, which capped a quarter at eleven or twelve snaps and made a whole game 45 plays against an NFL game's ~130 |
 | Quarter end | The down finishes first — expiry is remembered and acted on at the whistle |
-| Halftime | Ball to whoever did not receive the opening kickoff, own 25 |
-| Overtime | **Not implemented.** A tie stays a tie |
+| Halftime | Ball to whoever did not receive the opening kickoff, own 35 (`KICKOFF_TOUCHBACK_YARD_LINE`). `Systems_GamePhase.Halftime` is a real state: the clock does not run across the interval, and the first snap of the second half clears it |
+| Overtime | **Sudden death, one period** (`OVERTIME_SECONDS`, 200 s — regulation's 300 scaled the way a quarter is). The first score of any kind wins; a period expiring still level is a tie, as in the NFL regular season. The real possession-owed rule is not modelled |
+| Kickoff | Resolved at the rules layer like a punt, not simulated. Mostly a touchback at the 35; the rest is a return drawn around it. **Onside** when the scoring team is still more than one score down inside the last minute of the fourth — recovery `ONSIDE_RECOVERY_CHANCE`, and a miss hands over the ball at the kicking team's own 45 |
+| Fumble | A tackle can strip the ball — `Systems_IFumbleModel`, same training/game seam as the kick model. Only LOST fumbles are modelled: one the offense recovers is indistinguishable from a tackle here. Chance scales with the hit, the number of tacklers and the carrier's role |
+| Forward pass | Must be thrown from behind the line of scrimmage. Past it the quarterback has tucked it and is a runner — there is no penalty system, so the throw is simply unavailable |
+| Catching | A pass may be caught **behind** the line, so screens and checkdowns exist. Both lines remain ineligible, which is what the old blanket line-of-scrimmage gate was really guarding |
 
 Clock and scoring constants live in `Systems_GameRules`, deliberately separate
 from `Systems_SimConstants`. Nothing in `Systems_GameRules` can change what an
@@ -118,6 +122,35 @@ REALISM  yards/play 11.20 | 4th downs faced 1 | TD/drive 0.82
 Eleven yards a play and one fourth down in an entire game — which meant every
 kicking rule in this document was unreachable code. Every branch of `Resolve` now
 executes in an ordinary game, and finals read like 19-35, 14-24, 23-21.
+
+### The tackling work, and where it got to
+
+An audit re-measured the shipped build at **9.31 yards a play** across four games
+(7.71 / 8.24 / 10.00 / 11.30) with a touchdown on 0.47 of drives — so the claim
+above had drifted, and the single game it rested on was inside the noise.
+
+Two rules were the cause, both in `Systems_Referee.ReportSustainedContact`:
+
+- **A second tackler counted for nothing.** Every defender in contact called in on
+  the same tick and the tick guard collapsed them into one, so three men wrapping a
+  back up was worth exactly as much as one.
+- **Contact had to be strictly consecutive.** Two discs colliding push each other
+  apart, so a defender who landed a hit bounced off, missed a tick, and the count
+  reset — the carrier shrugged off a tackle that had been made.
+
+Both are fixed. The structural results are unambiguous: plays ending on the tick
+cap fell from ~42% of scrimmage plays to ~13%, drive counts came back to the high
+teens, and punts, safeties, fumbles and field goals all now occur in an ordinary
+game where the previous build produced **zero punts and zero safeties** across a
+whole one.
+
+**The yardage did not converge, and this is an open problem.** Single games at
+`SUSTAINED_TACKLE_TICKS` of 8, 10 and 12 measured 7.10, 4.44 and 8.74 — a
+NON-MONOTONIC ordering, which means game-to-game variance is larger than the
+effect being tuned. The constant is left at 10 because that setting produced the
+soundest structure, not because its yardage was verified. Anyone picking this up
+should measure **means over several games per setting**, never single games; the
+spread on one fixed config has been observed from 4.44 to 11.30.
 
 The changes were in the simulation, not here: `Agent_ActionContract` revision 8
 lists them. Nothing in `Systems_GameRules` can change what an `.onnx` was fitted
