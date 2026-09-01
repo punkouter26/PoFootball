@@ -272,3 +272,91 @@ inventory and the precedence order.
 `.claude/` ships 20 agents, 27 commands, 42 skills and 26 hooks from
 everything-claude-unity. The hooks block direct `.unity`/`.meta` edits on purpose —
 that is the rule above being enforced, not an obstacle to route around.
+
+---
+
+## Android release & Play internal testing
+
+Ported from the PoRacer pipeline on 2026-08-28; PoSumo is the original, already
+shipping on the punkouter27 Play account.
+
+### Identity (permanent — do not change after the first upload)
+
+| Property | Value |
+|---|---|
+| Application id | `com.punkoutersoftware.pofootball` |
+| Version / code | `1.0.0` / `1` — bump `VERSION_CODE` in `Editor_ConfigureAndroidRelease` for every upload; Play rejects a reused code |
+| min / target SDK | 26 / 36 (Play requires target 36 for new uploads from 2026-08-31) |
+| Architecture | ARM64, IL2CPP, Release |
+| Orientation | Portrait is locked in `Editor_ConfigureAndroidRelease`. |
+
+### Secrets live OUTSIDE the repo
+
+`C:/Users/punko/Downloads/PoFootball-Release/`
+
+- `pofootball-upload.jks` — the upload key. **Losing it means losing the ability to
+  update the app.** Back it up somewhere other than this machine.
+- `pofootball-upload.pass` — the store/alias password, one line.
+- `upload_certificate.pem` — the public cert, for Play App Signing.
+- `play-service-account.json` — NOT created yet; see the SETUP block at the top of
+  `Tools/play_publish.py`.
+
+Unity does not serialize keystore passwords into `ProjectSettings`, so both Android
+builders read `POFOOTBALL_KEYSTORE_PASS` first and fall back to the `.pass` file.
+Without either, the build **aborts** rather than producing an unsigned artifact.
+
+### The tools
+
+| Tool | What it does |
+|---|---|
+| *PoFootball → Configure Android Release Settings* | One-shot: identity, SDK levels, orientation, and the launcher icons (adaptive + round + legacy, 6 densities) from `Assets/Icons/`. Re-run after changing icon art |
+| *PoFootball → Build Android AAB (Play release)* | Signed bundle → `Builds/Android/PoFootball.aab`. Logs `AAB BUILD RESULT:` |
+| *PoFootball → Build Android APK* | Sideloadable APK on the SAME key, so it installs over a Play build → `Builds/Android/PoFootball.apk`. Logs `BUILD RESULT:` |
+| `Tools/play_publish.py` | Uploads a built AAB. Defaults to the `internal` track as a `draft`; `--dry-run` rehearses and discards |
+
+`Tools/play_publish.py` needs its own venv (`Tools/publish-venv`). Do not install it
+into `.venv` — that one carries load-bearing ml-agents/torch pins, and the C#/Python
+ml-agents versions must stay in exact parity.
+
+### The shipped scene list is explicit
+
+`Editor_BuildAndroidAAB.SHIP_SCENES` names the player's scenes in boot order:
+
+  0. `Assets/Scenes/SCN_MENU.unity`
+  1. `Assets/Scenes/SCN_GAME.unity`
+
+It is a hardcoded list, not whatever is ticked in Build Settings, because Build
+Settings also carries SCN_TRAIN_FOOTBALL — training scenes that would bloat the bundle
+and, depending on order, boot a tester straight into a training rig. A scene named
+here that is missing on disk **aborts** the build.
+
+### The icons
+
+`Assets/Icons/` holds `AppIcon_Adaptive_Background.png` and
+`AppIcon_Adaptive_Foreground.png` (432x432, the API 26+ pair) and
+`AppIcon_Legacy.png` (512x512, round and pre-adaptive launchers). The adaptive
+FOREGROUND art must stay inside the middle 66% of its canvas — every OEM launcher
+masks the outside to a different shape.
+
+The Play STORE icon is a different file, in `StoreAssets/PlayStoreIcon_512.png`:
+full-bleed, because Play rounds it itself. Do not swap the two.
+
+### What still needs a human in a browser
+
+1. Play Console → Create app, with the application id above.
+2. Store listing, content rating and data-safety forms — drafted in
+   `StoreAssets/play-listing.md`.
+3. Upload the first bundle by hand; Play refuses an API upload before the app is set up.
+4. Create a service account, grant it release permission ON THE APP, and drop its
+   JSON key next to the keystore.
+
+After that, `python Tools/play_publish.py --track internal` owns every upload.
+
+### Headless
+
+```
+Unity.exe -batchmode -quit -nographics -projectPath <root> -buildTarget Android ^
+  -executeMethod PoFootball.EditorTools.Editor_BuildAndroidAAB.Build -logFile <log>
+```
+
+Grep the log for `AAB BUILD RESULT:` — that line is the outcome.

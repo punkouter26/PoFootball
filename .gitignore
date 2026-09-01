@@ -187,3 +187,7 @@ Assets/Resources/PerformanceTestRunSettings.json
 Assets/Resources/PerformanceTestRunSettings.json.meta
 Assets/packages-merged-link/
 Assets/packages-merged-link.meta
+
+# Play publishing tooling venv — deliberately not .venv, which carries
+# load-bearing ml-agents/torch pins.
+Tools/publish-venv/
