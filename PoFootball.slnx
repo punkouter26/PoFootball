@@ -3,9 +3,9 @@
   <Project Path="PoFootball.Systems.csproj" />
   <Project Path="PoFootball.Tests.EditMode.csproj" />
   <Project Path="PoFootball.Models.csproj" />
+  <Project Path="Assembly-CSharp-Editor.csproj" />
   <Project Path="PoFootball.Agents.csproj" />
   <Project Path="PoFootball.Tests.PlayMode.csproj" />
-  <Project Path="Assembly-CSharp-Editor.csproj" />
   <Project Path="PoFootball.Rewards.csproj" />
   <Project Path="PoFootball.Sensors.csproj" />
 </Solution>
