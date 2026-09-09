@@ -57,6 +57,30 @@ namespace PoFootball.Agents
         private float _driveForce;
         private float _steerTorque;
         private float _fatigue;
+
+        // --- CONTROL-EFFORT TELEMETRY (flushed in EndEpisodeNow) ---------------
+        //
+        // Nothing in this simulation measured how hard a policy was working to get
+        // the yards it got. The reward has no actuator-cost term, fatigue is a
+        // physics penalty rather than a recorded quantity, and Play/NetYards is
+        // identical for a back who runs a clean line and one who saws the wheel
+        // back and forth at 50 Hz to hold the same line. Both are worth telling
+        // apart: the second is the signature of a policy exploiting the integrator
+        // rather than learning to run.
+        //
+        // Load is read from APPLIED FORCE, never from the action vector, for
+        // exactly the reason AccumulateFatigue is (CLAUDE.md section 2) — a player
+        // braced against a block is a near-zero action at near-maximum force.
+        //
+        // Running sums of dimensionless per-tick quantities, divided once at the
+        // whistle. Six adds and a compare per tick, zero allocation
+        // (.claude/rules/performance.md).
+        private float _effortSum;
+        private float _steerJerkSum;
+        private float _speedSum;
+        private float _previousSteerCommand;
+        private int _effortTicks;
+        private int _speedClampHits;
         private bool _isCarrier;
         private float _previousBallY;
         private float _previousBallDistance;
@@ -523,6 +547,7 @@ namespace PoFootball.Agents
             ReportIntent(actions, drive, steer);
 
             AccumulateFatigue(driveForce, steerTorque);
+            AccumulateControlEffort(driveForce, steerTorque, steer);
             ClampSpeed();
             AwardDenseRewards();
         }
@@ -665,6 +690,83 @@ namespace PoFootball.Agents
         /// was scaled by could not accumulate against the recovery rate at all —
         /// fatigue was pinned at zero for the whole of base01 through base03.
         /// </summary>
+        /// <summary>
+        /// One tick of the control-effort KPIs. Every term is dimensionless and
+        /// already in a bounded range, so the episode mean is directly comparable
+        /// between a lineman and a receiver despite their very different forces.
+        ///
+        /// <paramref name="steerCommand"/> is the CLAMPED steer action rather than
+        /// the torque, because jerk is a property of what the policy asked for. A
+        /// policy alternating -1, +1, -1 every tick scores 2.0 here while its mean
+        /// torque is ~0 — which is the whole point, and the reason mean effort
+        /// alone cannot see chatter.
+        /// </summary>
+        private void AccumulateControlEffort(
+            float driveForce, float steerTorque, float steerCommand)
+        {
+            _effortSum += (Mathf.Abs(driveForce) / _driveForce)
+                + (Mathf.Abs(steerTorque) / _steerTorque);
+
+            _steerJerkSum += Mathf.Abs(steerCommand - _previousSteerCommand);
+            _previousSteerCommand = steerCommand;
+
+            _speedSum += Mathf.Clamp01(
+                _rigidbody.linearVelocity.magnitude / Systems_RoleTable.TopSpeedOf(_role));
+
+            _effortTicks++;
+        }
+
+        /// <summary>
+        /// Writes the control-effort KPIs for the play that just ended, then clears
+        /// them for the next one.
+        ///
+        /// Guarded on the communicator, not on a scene check: these series exist to
+        /// be read in TensorBoard, and a played game has no trainer to report to.
+        /// That is the same reason Agent_Telemetry is placed only in
+        /// SCN_TRAIN_FOOTBALL — but this code lives on all 22 players in every
+        /// scene, so it needs the guard rather than the placement.
+        /// </summary>
+        private void FlushControlEffort()
+        {
+            if (_effortTicks <= 0)
+            {
+                return;
+            }
+
+            if (Academy.IsInitialized && Academy.Instance.IsCommunicatorOn)
+            {
+                StatsRecorder stats = Academy.Instance.StatsRecorder;
+                float ticks = _effortTicks;
+
+                // Mean applied load per tick, in units of this role's own maximum.
+                // 0 is coasting, 2 is full drive and full steer simultaneously.
+                stats.Add("Control/Effort", _effortSum / ticks);
+
+                // Mean tick-to-tick change in the steer command. Smooth steering is
+                // near 0; full-scale chatter approaches 2.
+                stats.Add("Control/SteerJerk", _steerJerkSum / ticks);
+
+                // Mean speed as a fraction of this role's top speed. The closest
+                // thing here to velocity tracking: it says whether players are
+                // actually running or milling about.
+                stats.Add("Control/SpeedUtilization", _speedSum / ticks);
+
+                // How often the pileup-explosion guard fired. Should be ~0; a
+                // nonzero value means the solver is blowing contacts apart and the
+                // dynamics are not the ones any policy was fitted against.
+                stats.Add("Control/SpeedClampRate", _speedClampHits / ticks);
+
+                stats.Add("Control/Fatigue", _fatigue);
+            }
+
+            _effortSum = 0f;
+            _steerJerkSum = 0f;
+            _speedSum = 0f;
+            _previousSteerCommand = 0f;
+            _effortTicks = 0;
+            _speedClampHits = 0;
+        }
+
         private void AccumulateFatigue(float driveForce, float steerTorque)
         {
             float load = (Mathf.Abs(driveForce) / _driveForce)
@@ -691,6 +793,7 @@ namespace PoFootball.Agents
             if (velocity.sqrMagnitude > maxSpeed * maxSpeed)
             {
                 _rigidbody.linearVelocity = velocity.normalized * maxSpeed;
+                _speedClampHits++;
             }
         }
 
@@ -875,6 +978,10 @@ namespace PoFootball.Agents
 
         public void EndEpisodeNow()
         {
+            // BEFORE EndEpisode, not after. EndEpisode is what closes the trajectory
+            // the trainer attributes these steps to, and a stat written after it
+            // lands in the next play's window.
+            FlushControlEffort();
             EndEpisode();
         }
 
