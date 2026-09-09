@@ -1,0 +1,215 @@
+# GENERATED VALIDATION VARIANT - V3BetaHigh
+#
+# beta 5.0e-3 -> 2.0e-2 (Offense/Defense). The opposite arm of V2.
+#
+# NOT a promotion config. max_steps and summary_freq are cut so a ~5 minute run
+# self-terminates with six comparable summary points. The Quarterback cap is
+# scaled by its agent count (1 QB against 10 field players) so all three
+# behaviours finish together. Everything else is FootballBase11.yaml unchanged,
+# so the single named difference is the only thing that can explain a KPI gap.
+
+# PoFootball — the first run against CONTRACT_REVISION 8.
+#
+# Pairs 1:1 with run-id `football_base11` (UNITY_RULES §1).
+#   mlagents-learn Config/FootballBase11.yaml --run-id=football_base11
+#
+# WHY THIS EXISTS AND football_base10 IS NOT SIMPLY RESUMED
+# ---------------------------------------------------------------------------
+# The contract moved, which alone forces a new run-id — the same rule that made
+# base10 a new run rather than a continuation of base09.
+#
+# Revision 8 changed the DYNAMICS. Every observation and action shape is
+# identical to revision 7, so the handshake would NOT refuse a base10 checkpoint
+# and nothing would visibly go wrong; it would simply be a policy fitted against
+# a different game. Agent_ActionContract lists the full set, but in short: a
+# one-touch tackle is no longer a tackle (TACKLE_CLOSING_SPEED 0.8 -> 4.0),
+# bringing a carrier down now takes sustained contact whose length depends on WHO
+# is carrying (Systems_RoleTable.TackleTicksOf — a fullback takes twice a
+# receiver), coverage is a metre tighter, the second level plays 3.5 yards off
+# the ball instead of 5, the free safety plays 11 instead of 14, and the safety
+# is now faster than the halfback.
+#
+# WHY REVISION 8 HAPPENED AT ALL. A measured full game against revision 7 was not
+# football. It ended `FINAL 21-28 after 45 plays, 9 drives. Punts 0, FG 0/0,
+# safeties 0, turnovers on downs 0` at 11.2 yards per play, with ONE fourth down
+# in the whole game and 82% of drives ending in a touchdown. The entire kicking
+# game was unreachable code. Measured over three-game batches, revision 8 puts it
+# at 6.2 yards per play, 10.3 fourth downs and 0.36 touchdowns per drive, against
+# real-football references of about 5.5, one series in three, and 0.20-0.35.
+#
+# Training against revision 7 would have fitted a policy to a game in which
+# punting does not exist. That is the whole reason this run waited.
+#
+# BEFORE STARTING: rebuild Builds/FootballEnv against revision 8. The env on disk
+# was built for revision 7. Its shapes are unchanged so the handshake will NOT
+# catch it — this rebuild is on you, not on the stamp.
+#
+# AFTER IT FINISHES:
+#   .venv\Scripts\python.exe Tools\promote_brain.py --run football_base11 `
+#     --version 01 --num-envs 12
+#   then Unity: Tools > PoFootball > Build Brain Table
+# The second step is not optional — promote_brain.py copies the .onnx files but
+# cannot write the ScriptableObject that lists them, and without the table
+# Agent_BrainRegistry.ModelFor returns null and every player runs Heuristic.
+#
+# ---------------------------------------------------------------------------
+# EVERY HYPERPARAMETER BELOW IS IDENTICAL TO FootballBase10.yaml, deliberately.
+# The ENVIRONMENT changed, not the optimizer, so holding the optimizer fixed is
+# what makes the two runs comparable at all.
+# ---------------------------------------------------------------------------
+
+behaviors:
+  # MA-POCA, not PPO. Every player on a side already received the SAME terminal
+  # reward through its OWN critic, which is the textbook multi-agent credit
+  # assignment problem: a lineman's block has no individual signal at all — its
+  # whole value is "the quarterback had time" — so Reward_Role had to hand-shape a
+  # proxy for it. POCA's centralized critic sees the group's observations and
+  # attributes the team outcome directly.
+  #
+  # Three behaviours, not six. A SimpleMultiAgentGroup cannot span behavior names
+  # (mlagents builds one AgentManager per behaviour and keeps groupmate tables as
+  # instance state), so OffenseLine+OffenseSkill merged into Offense and the three
+  # defensive brains into Defense. See Systems_BrainGroup.
+  Offense: &football_brain
+    trainer_type: poca
+
+    hyperparameters:
+      batch_size: 2048
+      buffer_size: 20480          # 10x batch_size; PPO wants many batches per update
+      learning_rate: 3.0e-4
+      beta: 2.0e-2                # entropy bonus — keep exploration alive through self-play
+      epsilon: 0.2
+      lambd: 0.95
+      num_epoch: 3
+      learning_rate_schedule: constant   # self-play runs long; a linear decay to 0
+                                         # freezes the policy while opponents keep improving
+      beta_schedule: constant
+      epsilon_schedule: constant
+
+    network_settings:
+      normalize: false            # Sensor_FootballState already emits [-1, 1]; running
+                                  # normalization on top fights self-play because the
+                                  # input distribution shifts with the opponent.
+                                  # Systems_ContractTests asserts this stays off.
+      # 256, NOT 512. MEASURED, twice. CLAUDE.md's own table has 512 at 404
+      # steps/s against 563 for 256 under PPO — a 39% throughput gain. That matters
+      # far more here than it did then, because MA-POCA's centralized critic costs
+      # roughly 7x per agent: this run measured 134 steps/s for Offense against
+      # base08's ~98 per agent slot under PPO, which put a 50M budget at four days.
+      hidden_units: 256
+      num_layers: 2
+      vis_encode_type: simple
+
+    reward_signals:
+      extrinsic:
+        gamma: 0.99
+        strength: 1.0
+
+    keep_checkpoints: 20
+    # 500000 was too coarse to debug with. football_base05 collapsed between 2.1M
+    # and 3.1M steps and every checkpoint from before the collapse had already
+    # been pruned by the time it was noticed, so the diverse-playbook policy was
+    # unrecoverable. 100000 with keep_checkpoints 20 covers a 2M-step window.
+    checkpoint_interval: 100000
+    # 8M, not 50M. At the POCA rate measured on this machine (134 steps/s for a
+    # ten-agent group with hidden_units 512, ~186 expected at 256) a 50M budget is
+    # over four days of wall clock. 8M is the largest number that finishes inside a
+    # day and still leaves the quarterback — the behaviour everything depends on —
+    # with a budget it can actually reach.
+    max_steps: 60000
+
+    # A play is capped at 600 physics ticks and agents decide every 5th tick
+    # (Systems_PlayModel.MAX_DECISIONS = 120), so 120 keeps an entire play inside
+    # one horizon and lets credit for a touchdown reach back to the snap — and,
+    # now, back to the play call that set it up.
+    #
+    # WAS 150, AGAINST A 750-TICK CAP. The cap came down to 600 because a
+    # fifteen-second down is not football; Systems_ContractTests pins the two
+    # together so this can never drift from Systems_PlayModel again.
+    time_horizon: 120
+
+    summary_freq: 10000
+    threaded: false               # deterministic ordering (UNITY_RULES §2)
+
+  Defense:
+    <<: *football_brain
+
+  # The only brain with discrete actions, and the only one whose exploration
+  # problem is a DISCRETE one: five play calls of which four were never sampled
+  # by the end of base03.
+  #
+  # It gets four times the entropy bonus of the movement brains. That is safe
+  # here in a way it was not when this policy also drove four backs and
+  # receivers — beta applies to the whole action distribution, so raising it on
+  # the shared brain would have injected noise into five players' steering in
+  # order to keep one player's play call exploring. Splitting the brain is what
+  # makes this knob usable at all.
+  Quarterback:
+    <<: *football_brain
+    # PPO, not POCA. Its group has exactly one member, so a centralized critic is
+    # just an ordinary critic — POCA would add machinery and change nothing. It is
+    # still registered into a group on the C# side so the team terminal reaches it
+    # by the same path as everyone else.
+    trainer_type: ppo
+    # THE QUARTERBACK NEEDS ITS OWN BUDGET, NOT THE ANCHOR'S.
+    #
+    # max_steps counts THIS behaviour's own experience, and there is one
+    # quarterback per env against ten players in Offense and eleven in Defense.
+    # Measured on football_base08: each agent slot collects ~98 steps/s, so the
+    # quarterback managed ~93 while the five-man OffenseSkill brain did ~490.
+    # Merging for POCA made the gap wider, not narrower — Offense is now ten
+    # agents, so it collects roughly ten times the quarterback's rate rather than
+    # five.
+    #
+    # 50M for Offense at ~980 steps/s is about fourteen hours. Matching that on
+    # ~93 steps/s is 5,000,000 steps, so every behaviour finishes at about the same
+    # wall-clock moment instead of the run being abandoned with the quarterback at
+    # one percent of budget, which is how base08 died.
+    max_steps: 6000
+    hyperparameters:
+      batch_size: 2048
+      buffer_size: 20480
+      learning_rate: 3.0e-4
+      beta: 5.0e-2
+      epsilon: 0.2
+      lambd: 0.95
+      num_epoch: 3
+      learning_rate_schedule: constant
+      beta_schedule: constant
+      epsilon_schedule: constant
+
+
+
+
+env_settings:
+  # Set per-run on the command line, not here:
+  #   --env=Builds/FootballEnv/PoFootball.exe --no-graphics --base-port=5010 --num-envs=4
+  # Envs take CONSECUTIVE ports from --base-port; overlapping ranges hang the
+  # handshake with no error (UNITY_RULES §4).
+  #
+  # Record --num-envs in the run's MANIFEST.md — it changes how experience is
+  # batched, so two runs with this file and different --num-envs are not
+  # comparable. Tools/promote_brain.py writes it into the manifest for you.
+  seed: 1
+
+engine_settings:
+  time_scale: 20                  # physics stays at dt=0.02; this only speeds the clock
+  quality_level: 0
+  target_frame_rate: -1
+  capture_frame_rate: 60
+
+torch_settings:
+  device: cpu                     # MEASURED: the CPU is 6x faster than the GPU for this
+                                  # network. 6 headless envs on CPU do 337 steps/s; the same
+                                  # run on an RTX 5070 Ti does 55. The net is tiny (512 units,
+                                  # 2 layers, batch 2048), so kernel-launch overhead and host
+                                  # transfers cost more than the matmuls save.
+                                  #
+                                  # This key alone does NOT work. mlagents calls
+                                  # set_torch_config(device=None) at import, resolves it to
+                                  # cuda whenever a GPU is visible, and its cpu branch never
+                                  # resets torch's default device. Always launch with
+                                  # CUDA_VISIBLE_DEVICES=-1 (use -1; "" is ignored on Windows).
+
+checkpoint_settings:
+  results_dir: results

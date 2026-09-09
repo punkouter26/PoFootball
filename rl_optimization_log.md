@@ -401,3 +401,390 @@ validation runs compared against each other on the Tier B KPIs at a fixed step
 count**, with the findings recorded so a subsequent long run starts from a better
 configuration. This is a limitation of the compute budget, not a negative result.
 
+---
+
+## Phase 2 — Method, and a correction to the thresholds
+
+### Sample-size finding that shapes every comparison below
+
+`Play/*` rates are written **once per play**, and a play is long. At
+`summary_freq: 20000` a window contains only ~16 plays, which is why every
+`Play/*` rate in the baseline moves in steps of exactly 0.0625 = 1/16 and why
+`Play/TackleRate` swung 0.000 → 0.141 → 0.000 across three consecutive windows
+with no underlying change.
+
+The new `Control/*` series do not have this problem. Each is itself a mean over
+~600 physics ticks *before* it is written, so a window of 16 plays carries ~9,600
+samples. The contrast is stark over the same three windows:
+
+| Series | @20k | @40k | @60k | Spread |
+|---|---|---|---|---|
+| `Play/TackleRate` | 0.000 | 0.141 | 0.000 | **±100%** |
+| `Control/SpeedUtilization` | 0.04955 | 0.05010 | 0.04920 | **±0.9%** |
+| `Control/Effort` | 0.53051 | 0.53143 | 0.52827 | **±0.3%** |
+
+**Consequence for method:** short validation runs are judged on `Control/*` and
+`Call/Entropy`. `Play/*` rates are reported but not used as a decision criterion
+below 200k steps — they cannot resolve the 3% effect size the exit criteria ask
+about. This is exactly the class of error `Reward_Call`'s docstring records
+(`Policy/Entropy` looking healthy at 3.5 while the play call had collapsed): a
+metric that is technically correct and far too noisy to act on.
+
+### Threshold correction: `Control/SpeedUtilization`
+
+The `> 0.35` bar set in Phase 1 was set before reading `Systems_RoleTable`
+closely, and it was too aggressive. `TopSpeedOf` is documented as a **ceiling,
+not a cruising speed**: under `LINEAR_DAMPING = 0.8` a body needs roughly 25 m of
+straight running to reach it, and most plays never get near. A team-wide mean
+around 0.25–0.35 is what real football would produce (skill players average
+3–4 m/s against a 9 m/s top, linemen 1–2 m/s against 6.2).
+
+Revised: **accept > 0.25, target 0.35.** The baseline's **0.049** is unaffected
+by this correction — it is still 5–7x below anything resembling football, and it
+is the flattest series in the run.
+
+### The measured problem, stated precisely
+
+`DriveForceOf` is *derived* as `TopSpeedOf × MassOf × LINEAR_DAMPING`, so
+terminal velocity equals the advertised top speed exactly. **There is no physics
+ceiling holding speed at 5%** — the force available is sufficient by
+construction. The cause is the policy, and the mechanism is car-like steering:
+`AddForce(transform.up * driveForce)` applies force along the *body's facing*,
+and a near-zero-mean steering command at a 2.2–2.6 rad/s terminal turn rate spins
+the body several times over a 12 s play, so the drive force integrates to almost
+nothing.
+
+Compounding it: the dense yardage term (`Reward_Progress`) pays on **ball**
+movement, so 21 of the 22 players get no individual signal for moving at all. The
+only per-player dense terms are `Reward_Role`'s, and they are small — pursuit
+`0.0040`/metre for defenders, block `0.00025`/tick, separation `0.00015`/tick.
+
+### On the goal's prescribed reward change
+
+The goal asks to "penalize high actuator forces (ctrl cost) and joint
+acceleration spikes". Against this baseline both are **contraindicated by the
+measurement**:
+
+- `Control/Effort` is 0.53 of a possible 2.0, and the failure is *under*-use of
+  the actuators, not over-use. A control cost pushes the policy further toward
+  the do-nothing basin the reward was explicitly designed to escape.
+- `Control/SteerJerk` is 0.075 on a `[0, 0.4]` scale — already smooth, and
+  structurally so, because `TakeActionsBetweenDecisions` holds the command for 4
+  of every 5 ticks. There is no chatter to penalize.
+
+This is recorded as a prediction and then **tested rather than asserted** (V6
+below), because a confident argument that a change is unnecessary is exactly what
+`CLAUDE.md` says produced two of the four balance changes that made revision 8
+measurably worse.
+
+---
+
+## Phase 2, E1 — Simulation throughput: does vectorizing help?
+
+The goal asks to "vectorize environments … and run headless". Everything here is
+already headless (`--no-graphics`) and already vectorized (`--num-envs` launches
+N independent `PoFootball.exe` processes, which is ML-Agents' equivalent of
+`SubprocVecEnv` — separate OS processes, not threads). The open question was
+whether *more* of them helps.
+
+Measured on the `Defense` behavior, steady-state between the 20k and 40k summary
+points so process startup and the Unity handshake are excluded. Identical config
+(`FootballBase11.yaml`), identical build, `CUDA_VISIBLE_DEVICES=-1`, runs
+strictly sequential so none competed with another for CPU:
+
+| `--num-envs` | Step 20k @ | Step 40k @ | **steps/s** | vs 4 envs |
+|---|---|---|---|---|
+| 2 | 25.948 s | 103.569 s | **257.7** | +1.0% |
+| 4 | 27.364 s | 105.770 s | **255.1** | — |
+| 12 | 33.269 s | 117.903 s | **236.3** | **−7.4%** |
+
+**Throughput is flat from 2 to 4 envs and actively degrades at 12.** Six times
+the environment processes buys −7.4%.
+
+This is `CLAUDE.md`'s documented diagnosis confirmed from the other direction.
+The trainer, not the game, is the bottleneck: at 6 envs the documented split was
+81 CPU-seconds in the env processes against 2,877 in python. The environments are
+already starving the trainer at 2; adding ten more only takes cores away from
+torch and adds gRPC multiplexing overhead.
+
+**Action: use 2–4 envs.** Every experiment below runs at 4. The 12- and 24-env
+configurations in the docs are not worth their memory — and 24 does not run at
+all on this machine (paging file).
+
+Note this also disposes of the goal's "eliminate per-step Python
+allocations/overhead" item as a *throughput* lever: python is CPU-saturated, but
+it is saturated doing torch backward passes on a 256x2 network at batch 2048, not
+doing per-step bookkeeping. The lever that would actually move this number is the
+network size — which `CLAUDE.md` measures directly (`hidden_units: 256` took 12
+envs from 404 to 563 steps/s in the older 6-behavior setup). This config already
+uses 256.
+
+---
+
+## Phase 2, E2 — Reward-scale arithmetic (analysis, no run needed)
+
+Working the dense terms out in absolute numbers, for a full-length play
+(600 ticks = 119 decisions):
+
+| Term | Per play at the cap | Note |
+|---|---|---|
+| Time cost, offense | `600 x (-0.001 / 5)` = **−0.119** | `TIME_COST_PER_DECISION / DECISION_PERIOD`, paid every tick |
+| Yardage, +10 yd | `10 x 0.01` = **+0.100** | `YARD_REWARD_SCALE` |
+| Yardage, +5.5 yd (real avg) | **+0.055** | |
+| Receiver separation, max | `600 x 0.00015` = **+0.090** | |
+| Block alignment, max | `600 x 0.00025` = **+0.150** | |
+| Defender pursuit, 10 m closed | `10 x 0.0040` = **+0.040** | |
+| Terminal, touchdown | **+1.000** | for comparison |
+
+Two things fall out.
+
+**The offense's dense reward is designed to be roughly net-zero at a realistic
+play length, and is net-negative at the cap.** A 12-yard gain exactly cancels a
+full-length play's time cost. At a realistic ~300-tick play the cost is −0.060
+and an average 5.5-yard carry pays +0.055 — near enough to zero that the terminal
+reward is doing essentially all of the work, which is coherent design. But *every
+play in the current baseline runs to the 600-tick cap*, so the offense is
+presently sitting in the regime where the time cost dominates the dense signal.
+The gradient still points the right way (standing still pays the full −0.119 and
+earns nothing), it is just weak relative to its own noise.
+
+**Raising `YARD_REWARD_SCALE` is off the table, and the codebase says why.** It
+is the obvious response to a weak yardage gradient and it is documented as
+having already failed: the constant's own docstring records the collapse where
+the offense farmed the shaped term, `TouchdownRate` fell 0.82 → 0.08 and
+`NetYards` 52 → 13.5. 0.01 is calibrated so that a full hundred yards is worth
+exactly one touchdown, which is what keeps ground covered from dominating
+scoring. `Reward_Role`'s docstring states the same principle independently: *a
+shaped term that outgrows the terminal reward gets farmed while the game gets
+ignored.*
+
+**Recorded and rejected without a run.** This is the one change in this whole
+exercise where the repository's own history is better evidence than a 5-minute
+validation run could be, and running it anyway would have burned budget to
+rediscover a documented regression.
+
+---
+
+## Phase 2, E3 — Run-to-run reproducibility (how big must an effect be to be real?)
+
+Before comparing variants, the noise floor has to be known. `kpi_baseline` and
+`sweep_v0control` are **the same configuration run twice** (same env build, same
+seed in the YAML, same 4 envs, different ports). Any difference between them is
+noise, not signal.
+
+Compared at step ≤ 60,000, mean of the last 3 summary points:
+
+| KPI | `kpi_baseline` | `sweep_v0control` | Δ |
+|---|---|---|---|
+| `Control/SpeedUtilization` | 0.04959 | 0.04881 | **1.6%** |
+| `Control/Effort` | 0.52941 | 0.53129 | **0.4%** |
+| `Control/SteerJerk` | 0.07489 | 0.07498 | **0.1%** |
+| `Control/Fatigue` | 0.01298 | 0.01350 | 4.0% |
+| `Policy/Entropy` | 1.42006 | 1.41737 | 0.2% |
+| `Play/LengthTicks` | 559.60 | 558.59 | 0.2% |
+| `Call/Entropy` | 1.27594 | 1.07765 | **16.2%** |
+| `Play/TimeExpiredRate` | 0.90693 | 0.92593 | 2.1% |
+| `Play/NetYards` | −3.27845 | −2.76462 | **16.6%** |
+
+(`env_settings.seed: 1` is fixed in the YAML, so this is not seed variance — it
+is the residual nondeterminism of 4 asynchronous env processes feeding one
+trainer.)
+
+**The noise floor is not uniform, and that matters more than its size.**
+
+- `Control/*` and `Policy/Entropy` reproduce to **≤ 1.6%** (excluding `Fatigue`,
+  which is tiny in absolute terms).
+- `Call/Entropy` and `Play/NetYards` reproduce only to **~16%**.
+
+The goal's plateau criterion is "< 3% change over 3 runs". **That criterion is
+only measurable on the `Control/*` series.** On `Call/Entropy` or any `Play/*`
+rate, a 3% difference is a tenth of the noise — indistinguishable from running
+the same config twice. Every variant verdict below is therefore decided on
+`Control/*` first, with `Call/Entropy` used only when a gap exceeds ~30%.
+
+This is the second time in this exercise that the *new* instrumentation turned
+out to be the only thing precise enough to answer the question asked. It is worth
+being explicit about why: the `Control/*` series average ~600 physics ticks
+before they are ever written, whereas `Play/*` and `Call/*` contribute one sample
+per play and a summary window holds only 8–16 plays.
+
+*(Caveat: `kpi_baseline` used `summary_freq: 20000` and `sweep_v0control` uses
+10000, so the two tail-3 means cover slightly different step ranges — 20/40/60k
+against 40/50/60k. This inflates the estimate slightly and makes it conservative,
+which is the right direction for a noise floor.)*
+
+---
+
+## Phase 2 — Incidental validation: the ONNX export path is intact
+
+Every sweep run terminates cleanly and writes its checkpoints:
+
+```
+[INFO] Exported results\sweep_v0control\Defense\Defense-66451.onnx
+[INFO] Exported results\sweep_v0control\Quarterback\Quarterback-6041.onnx
+[INFO] Exported results\sweep_v0control\Offense\Offense-60410.onnx
+```
+
+This independently confirms the pin that `requirements.txt` and `CLAUDE.md` both
+spend paragraphs defending. `torch 2.11.0+cu128` was previously installed here and
+reverted the same day: it trained happily for 80,000 steps and then died at the
+first checkpoint with `ModuleNotFoundError: No module named 'onnxscript'`, because
+torch ≥ 2.6 exports ONNX through onnxscript, which pulls `onnx>=1.17` → numpy 2.x
+→ protobuf 7.x, against the `onnx==1.15.0` / `numpy==1.23.5` / `protobuf==3.20.3`
+that `mlagents 1.1.0` requires.
+
+With `torch==2.5.1+cu121` the export runs. **The promotion pipeline is viable
+end-to-end** — a trained run can now actually feed `Tools/promote_brain.py`,
+which was not demonstrable before this session because no `.venv` existed.
+
+---
+
+## Phase 2, E4 — Hyperparameter sweep (six variants, 60k steps each)
+
+Every variant is `FootballBase11.yaml` with **exactly one** parameter changed,
+run to 60,000 `Offense`/`Defense` steps (6,000 for the single-agent
+`Quarterback`, scaled by agent count so all three behaviors finish together).
+4 envs, sequential, `--force`, ~3m20s each. Configs in `Config/experiments/`.
+
+| KPI | V0 control | V1 lr 1e-3 | V2 beta 1e-3 | V3 beta 2e-2 | V4 horizon 32 | **V5 batch 512** |
+|---|---|---|---|---|---|---|
+| `Control/SpeedUtilization` | 0.05213 | 0.05452 | 0.05342 | 0.05086 | 0.05198 | **0.05512** |
+| `Control/Effort` | 0.52930 | 0.53190 | 0.52984 | 0.53011 | 0.53003 | 0.53441 |
+| `Control/SteerJerk` | 0.07505 | 0.07529 | 0.07518 | 0.07489 | 0.07542 | 0.07602 |
+| `Control/SpeedClampRate` | 0.00000 | 0.00000 | 0.00000 | 0.00000 | 0.00000 | 0.00000 |
+| `Call/Entropy` | 1.28999 | 1.22336 | 1.26552 | 1.19984 | 1.15216 | **1.40017** |
+| `Play/TimeExpiredRate` | 0.89630 | 1.00000 | 0.87963 | 0.93333 | 0.91667 | **0.78889** |
+| `Play/LengthTicks` | 563.10 | 600.00 | 572.41 | 562.73 | 584.25 | **535.30** |
+| `Play/NetYards` | −3.79 | −2.91 | **−0.33** | −1.63 | −2.81 | −1.71 |
+| `Policy/Entropy` | 1.41732 | 1.42039 | 1.41651 | 1.42549 | 1.41871 | 1.41658 |
+| `Losses/Value Loss` | 0.00725 | 0.01003 | 0.01148 | 0.00937 | 0.00753 | **0.00656** |
+
+### The single most important number in this table
+
+**`Policy/Entropy` is 1.4165 – 1.4255 in every one of the six runs, including
+across a 20-fold change in `beta` (1.0e-3 → 2.0e-2).**
+
+```
+entropy of a unit Gaussian = 0.5 * ln(2*pi*e) = 1.4189385
+measured range                                = 1.41651 .. 1.42549
+```
+
+That is not "close to" the initialization value; it *is* the initialization
+value, to five decimal places. **The Gaussian policy's σ is still exactly 1.0
+after 60,000 steps, and the entropy bonus is not what is holding it there** — if
+it were, `beta = 2.0e-2` and `beta = 1.0e-3` could not produce the same number.
+
+This explains everything else in the table at once. With σ = 1.0 and actions
+clamped to `[-1, 1]`, the sampled action is close to uniform noise. Under
+car-like steering at a 2.2–2.6 rad/s terminal turn rate, a random steer command
+held for one decision (0.1 s) turns the body ~14°; over the 119 decisions of a
+play, heading does a random walk of RMS `14° x sqrt(119) ≈ 153°`. The drive force
+direction decorrelates completely, and net displacement integrates to nothing.
+`Control/SpeedUtilization = 0.05` is that random walk, measured.
+
+### Verdict on the sweep
+
+**No hyperparameter tested changes the outcome materially at 60k steps, because
+at 60k steps none of these policies has begun to learn.** 60,000 is 0.75% of the
+config's 8,000,000 `max_steps`. `Control/Effort` (0.529–0.534, a 1.0% spread) and
+`Control/SteerJerk` (0.0749–0.0760, 1.5%) are inside the 1.6% reproducibility
+floor established in E3 — six different configurations, statistically one result.
+
+**This is a null result, and it is the honest one.** The methodology the goal
+prescribes — "5–10m validation runs before committing longer training cycles" —
+does not discriminate on this task, because the task's warm-up is longer than the
+whole validation window. That is worth knowing explicitly rather than reading
+noise as a ranking.
+
+### The one variant that does separate: V5
+
+`V5Batch512` is best on `SpeedUtilization`, `Call/Entropy`, `TimeExpiredRate`,
+`LengthTicks` and `Value Loss`. The one that carries real weight is
+**`Play/TimeExpiredRate` 0.896 → 0.789**, a 12% relative improvement against the
+2.1% reproducibility floor measured for that series in E3 — roughly 6x noise.
+`Play/LengthTicks` 563 → 535 moves consistently with it.
+
+The mechanism fits the diagnosis. V5 cuts `batch_size` 2048 → 512 and
+`buffer_size` 20480 → 10240, which is **four times as many gradient steps per
+sample**. When the failure is "the policy has not started moving off its
+initialization", more updates per unit of experience is precisely the lever. V1
+(`lr` 3.3x) pushes the same lever a different way and moves `SpeedUtilization` in
+the same direction (0.0545), though its `TimeExpiredRate` of 1.000 was the worst
+in the sweep — so the two are **not** combined below.
+
+`V2BetaLow`'s `Play/NetYards` of −0.33 against V0's −3.79 looks dramatic and is
+not acted on: `NetYards` has a ~16.6% reproducibility floor (E3) and, more to the
+point, a value nearer zero here means *less displacement in either direction*,
+which is not obviously an improvement when the problem is that nobody moves.
+
+**Selected for the long run: V5's `batch_size: 512` / `buffer_size: 10240`, as a
+single-parameter deviation from the anchor.**
+
+---
+
+## Phase 2, E5 — The goal's prescribed control-cost penalty (V6), tested
+
+The goal asks to "penalize high actuator forces (ctrl cost)". §Method predicted
+this would make things worse. It was implemented and run rather than argued.
+
+**Implementation.** A new `CONTROL_COST_PER_UNIT_LOAD = 0.0002` in
+`Systems_SimConstants`, charged per physics tick against the same dimensionless
+applied-force load the fatigue model reads:
+
+```csharp
+float load = (Mathf.Abs(driveForce) / _driveForce)
+           + (Mathf.Abs(steerTorque) / _steerTorque);
+AddReward(-load * Systems_SimConstants.CONTROL_COST_PER_UNIT_LOAD);
+```
+
+Scaled so a full-length play costs about an eighth of a tackle:
+`0.0002 x 0.53 x 600 = -0.0636`.
+
+**The term was verified live before its results were read**, which matters
+because a silently-absent patch would have produced a convincing null result. At
+step 10,000, against `sweep_v0control` at the same step:
+
+| | V0 control | V6 ctrl-cost | Δ |
+|---|---|---|---|
+| `Defense` Mean Reward | 0.002 | −0.066 | −0.068 |
+| `Offense` Mean Reward | −0.057 | −0.112 | −0.055 |
+| `Defense` Mean **Group** Reward | 0.170 | 0.170 | **0.000** |
+| `Offense` Mean **Group** Reward | −0.178 | −0.178 | **0.000** |
+
+Mean individual reward shifted by −0.0615 against a predicted −0.0636 (within
+3%), while the **group** reward is bit-identical — exactly right, because
+`AddReward` feeds the individual return and POCA's group reward is a separate
+channel. The term is live and correctly scaled.
+
+**Result at 60,000 steps:**
+
+| KPI | V0 control | **V6 ctrl-cost** | Δ | vs noise floor |
+|---|---|---|---|---|
+| `Control/SpeedUtilization` | 0.05213 | **0.05032** | **−3.5%** | 2.2x noise — real |
+| `Control/Effort` | 0.52930 | **0.52708** | −0.4% | inside noise |
+| `Play/TimeExpiredRate` | 0.89630 | **0.95833** | **+6.9%** | 3.3x noise — real |
+| `Play/LengthTicks` | 563.10 | 592.79 | +5.3% | real |
+| `Call/Entropy` | 1.28999 | 1.24034 | −3.8% | inside noise |
+| `Environment/Cumulative Reward` | −0.01470 | −0.08523 | −480% | the cost itself |
+
+**Verdict: rejected. The prescribed change is harmful here, and it fails on its
+own terms.**
+
+The point worth keeping is not simply that the KPIs got worse. It is that
+**`Control/Effort` barely moved (−0.4%, inside the noise floor) while
+`SpeedUtilization` fell 3.5% and `TimeExpiredRate` rose 6.9%.** The penalty did
+not buy the thing it was levied for. It could not: at σ = 1.0 the action
+distribution is still essentially its initialization (E4), so mean |action| is
+set by the Gaussian, not by the policy's preferences, and a reward gradient of
+this size cannot move it. What the penalty *did* do was add a uniform negative
+drift to the individual return, worsening the signal-to-noise of the yardage term
+the offense actually needs to learn from.
+
+Reverted. `CONTROL_COST_PER_UNIT_LOAD` is not in the committed tree; the
+instrumentation from Phase 1 remains.
+
+**Also rejected, without a run: penalizing jerk.** `Control/SteerJerk` is
+0.0749–0.0760 across all seven runs — a 1.5% spread, inside the reproducibility
+floor, and structurally bounded because `TakeActionsBetweenDecisions` holds each
+command for 4 of every 5 ticks. There is no chatter in this system to penalize.
+
