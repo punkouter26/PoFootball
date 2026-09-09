@@ -922,3 +922,427 @@ value of a unit Gaussian. Together with `Policy/Entropy` falling only 1.41617 �
 1.39647 over 400k steps, the picture is that **σ is contracting extremely
 slowly**, and that is the rate limiter on everything else.
 
+### Correction: the 400k plateau call was wrong, on two counts
+
+The plateau determination recorded above does not survive more data, and the
+correction matters because it reverses the conclusion.
+
+**Count 1 — a bug in the analysis tool.** The first version of `trend.py` printed
+`v[0]` for each step: the value from whichever behavior's event file happened to
+be read first. Since `Offense`, `Defense` and `Quarterback` all write the same
+tag names, a row's value depended on glob order, and any behavior starting or
+stopping reporting a tag produced a spurious jump. It is fixed to average across
+behaviors; every number in the table below is a mean over the behaviors present.
+The corrected 50k row reads `TimeExpiredRate 0.794` where the broken tool printed
+either 0.902 or 0.568 depending on when it was run.
+
+**Count 2 — the plateau was a pause.** Progress resumed sharply after 450k.
+
+| step | SpeedUtil | Effort | SteerJerk | Call/Ent | TimeExpired | LengthTicks | TackleRate |
+|---|---|---|---|---|---|---|---|
+| 50,000 | 0.05586 | 0.53152 | 0.07428 | 1.14719 | 0.79382 | 535.04 | 0.15497 |
+| 100,000 | 0.05706 | 0.52943 | 0.07402 | 1.39408 | 0.69196 | 521.18 | 0.25298 |
+| 150,000 | 0.06362 | 0.53210 | 0.07368 | 1.46422 | 0.62397 | 501.96 | 0.31350 |
+| 200,000 | 0.06261 | 0.53191 | 0.07390 | 1.50768 | 0.62152 | 506.86 | 0.32581 |
+| 250,000 | 0.06733 | 0.53800 | 0.07353 | 1.51353 | 0.53302 | 463.20 | 0.41811 |
+| 300,000 | 0.06418 | 0.53481 | 0.07348 | 1.51310 | 0.54489 | 465.15 | 0.38883 |
+| 350,000 | 0.06251 | 0.53162 | 0.07350 | 1.52488 | 0.51854 | 451.24 | 0.38627 |
+| 400,000 | 0.06874 | 0.53448 | 0.07345 | 1.53847 | 0.53712 | 461.93 | 0.42386 |
+| 450,000 | 0.07324 | 0.54104 | 0.07337 | 1.53842 | **0.40369** | **415.88** | **0.53739** |
+| 500,000 | 0.07742 | 0.54623 | 0.07332 | 1.54043 | 0.44858 | 418.64 | 0.47291 |
+| 550,000 | 0.07880 | 0.54826 | 0.07319 | 1.54206 | 0.45403 | 418.57 | 0.47373 |
+| 600,000 | 0.07877 | 0.54918 | 0.07324 | 1.54264 | **0.37288** | **384.47** | 0.50847 |
+
+Plateau test, last three windows against the three before:
+
+| KPI | prev 3 | last 3 | change | verdict |
+|---|---|---|---|---|
+| `Control/SpeedUtilization` | 0.06816 | 0.07833 | **+14.9%** | moving |
+| `Play/TimeExpiredRate` | 0.48645 | 0.42516 | **−12.6%** | moving |
+| `Play/LengthTicks` | 443.02 | 407.23 | **−8.1%** | moving |
+| `Play/TackleRate` | 0.44918 | 0.48504 | **+8.0%** | moving |
+| `Control/Effort` | 0.53571 | 0.54789 | +2.3% | plateau (but now *rising*) |
+| `Control/SteerJerk` | 0.07344 | 0.07325 | −0.3% | plateau |
+| `Call/Entropy` | 1.53392 | 1.54171 | +0.5% | plateau, at a healthy 1.54 |
+
+**Nothing that matters has plateaued.** `SpeedUtilization` is up 14.9% in the
+last 150k steps — its fastest growth of the whole run — having looked flat from
+150k to 400k. A 250k-step pause followed by renewed improvement is exactly the
+shape a premature stop would have missed, and it is the second time in this
+exercise that stopping early would have produced the wrong answer (the first
+being the 60k sweep).
+
+`Control/Effort` is also finally moving off its Gaussian value for the first time
+in the session: 0.5315 → 0.5492. Combined with rising speed, that is the policy
+beginning to *use* the actuators rather than sampling them.
+
+**Threshold status at 600k:**
+
+| KPI | value | threshold | status |
+|---|---|---|---|
+| `Control/SpeedClampRate` | 0.00000 | < 0.01 | **PASS** |
+| `Control/SteerJerk` | 0.07324 | < 0.20 | **PASS** |
+| `Call/Entropy` | 1.54264 | > 1.00 | **PASS** |
+| max single call share | ~0.35 | < 0.60 | **PASS** |
+| `Play/LengthTicks` | 384.47 | < 400 | **PASS** (first time) |
+| `Play/TimeExpiredRate` | 0.37288 | < 0.20 | improving, −12.6%/150k |
+| `Control/SpeedUtilization` | 0.07877 | > 0.25 | improving, +14.9%/150k |
+| `Control/Effort` | 0.54918 | < 1.20 | **PASS** |
+
+Six of eight Tier B thresholds now pass.
+
+### 600k–900k: an offense/defense arms race the offense is winning
+
+Between 600k and 900k the KPIs stop moving together and start moving *against*
+each other:
+
+| step | SpeedUtil | Effort | TimeExpired | LengthTicks | TackleRate |
+|---|---|---|---|---|---|
+| 600,000 | 0.08106 | 0.54877 | 0.36336 | 379.75 | 0.52347 |
+| 650,000 | 0.08484 | 0.54910 | 0.40353 | 402.84 | 0.52076 |
+| 700,000 | 0.08662 | 0.54994 | 0.47522 | 452.43 | 0.37148 |
+| 750,000 | 0.08393 | 0.55276 | 0.47396 | 432.66 | 0.36719 |
+| 800,000 | 0.07903 | 0.55236 | 0.42778 | 418.51 | 0.32870 |
+| 850,000 | 0.08160 | 0.55988 | 0.38750 | 394.04 | 0.37857 |
+| 900,000 | 0.07956 | 0.56149 | 0.45614 | 398.91 | 0.35088 |
+
+`Control/SpeedUtilization` peaked at 0.0921 around 750k and has drifted back to
+~0.080. `Play/TackleRate` fell from 0.523 to 0.351 — a 33% decline — and
+`Play/TimeExpiredRate` rose from 0.363 back to 0.456. Plays are running *longer*
+again, having got shorter for 600k steps.
+
+**The per-side mean rewards say plainly what is happening.** The terminal reward
+is deliberately zero-sum (`Reward_Terminal`), so these cannot both rise:
+
+| step | Offense mean reward | Defense mean reward |
+|---|---|---|
+| ~500,000 | −0.038 | −0.058 |
+| 700,000 | **+0.014** | −0.086 |
+| 750,000 | **+0.055** | −0.098 |
+| 800,000 | **+0.046** | −0.134 |
+| 850,000 | **+0.078** | −0.110 |
+
+**The offense has pulled decisively ahead.** Ball carriers got fast enough that
+the defense can no longer close on them, so tackles stop happening and plays run
+to the cap — while `Control/Effort` keeps climbing (0.549 → 0.561), i.e. the
+defense is working harder for less.
+
+This is not a training pathology; it is the simulation's own balance showing
+through, and **it is the same failure the repository already has a name for.**
+`Systems_PlayModel.MAX_PHYSICS_TICKS` documents the cap "doing double duty as a
+safety net for a carrier nobody could catch, which is a tackling problem", and
+contract revision 8 exists because revision 7 produced 11.2 yards a play with one
+fourth down in a whole game. Those diagnoses were made against the *heuristic*
+carrier. This run reproduces the same imbalance against a **learned** one, which
+is new evidence: revision 8's tuning (`TACKLE_CLOSING_SPEED` 0.8 → 4.0,
+role-dependent `TackleTicksOf`, tighter coverage) was calibrated on heuristic
+play, and a trained offense re-opens the gap.
+
+**This is the most useful thing this session found for the project**, and it is
+not a hyperparameter. No setting in `Config/` fixes it: the lever is defensive
+pursuit and the tackle rule, in `Systems_SimConstants` and `Systems_RoleTable`.
+Acting on it is explicitly out of scope here — `CLAUDE.md` requires balance
+changes to be judged on the REALISM line over three-game means, and it records
+that two of four confidently-reasoned revision-8 balance changes made the game
+measurably *worse*. Recorded as evidence for that work, not acted on.
+
+### 900k–1.6M: the imbalance is sustained, and it deepens as the policy improves
+
+| step | SpeedUtil | Effort | Call/Ent | TimeExpired | LengthTicks | TackleRate |
+|---|---|---|---|---|---|---|
+| 900,000 | 0.09403 | 0.57745 | 1.55907 | 0.41140 | 405.24 | 0.36711 |
+| 1,000,000 | 0.11266 | 0.59985 | 1.56935 | 0.37037 | 411.72 | 0.38889 |
+| 1,100,000 | 0.10600 | 0.59508 | 1.56958 | 0.40337 | 400.66 | 0.42827 |
+| 1,200,000 | 0.10569 | 0.59616 | 1.57145 | 0.41818 | 410.02 | 0.41818 |
+| 1,300,000 | 0.11812 | 0.60395 | 1.57975 | 0.65957 | 490.32 | 0.21277 |
+| 1,400,000 | 0.11736 | 0.60923 | 1.58784 | 0.33898 | 386.24 | 0.35593 |
+| 1,500,000 | 0.12952 | 0.62506 | 1.59488 | 0.49020 | 448.47 | 0.31373 |
+| 1,600,000 | **0.14334** | **0.63344** | 1.58700 | 0.59184 | 464.33 | **0.28571** |
+
+Two groups of series, moving in opposite directions and doing so consistently for
+900,000 steps:
+
+**Still improving, monotonically** — `Control/SpeedUtilization` 0.0559 → 0.1433
+(**+156%** over the run) and `Control/Effort` 0.5315 → 0.6334 (**+19%**). The
+policies are unambiguously learning; the agents run harder and faster the longer
+they train.
+
+**Getting worse** — `Play/TackleRate` 0.523 (at 600k) → 0.286, nearly halved.
+`Play/TimeExpiredRate` and `Play/LengthTicks` drift back up with it.
+
+And the per-side rewards never cross back:
+
+| step | Offense | Defense |
+|---|---|---|
+| 700,000 | +0.014 | −0.086 |
+| 1,000,000 | — | −0.122 |
+| 1,300,000 | +0.054 | −0.164 |
+| 1,500,000 | +0.075 | −0.170 |
+| 1,600,000 | — | −0.148 |
+
+**The conclusion is not that training failed. It is that training worked, and
+revealed a balance problem.** As the offense learns to run, the defense's ability
+to bring it down does not keep pace, so the better the policies get, the *less*
+like football the game becomes on the outcome metrics. More training under this
+configuration will not reach `Play/TimeExpiredRate < 0.20`; it is moving away
+from it while `SpeedUtilization` climbs.
+
+### Correction at 2M steps: it is an oscillation, not a runaway
+
+The "offense has pulled decisively ahead / will not reach the threshold" reading
+recorded at 1.6M does **not** survive to 2M, and the correction changes the
+conclusion. Between 1.7M and 2M the defense adapted and clawed most of it back:
+
+| step | TackleRate | SpeedUtil | TimeExpired |
+|---|---|---|---|
+| 600,000 | 0.5235 | 0.08106 | **0.3634** |
+| 1,450,000 | 0.4089 | **0.13044** | 0.4923 |
+| 1,700,000 | **0.2162** | 0.11518 | **0.6490** |
+| 1,850,000 | 0.3400 | 0.10432 | 0.5200 |
+| 2,000,000 | **0.4386** | 0.11791 | **0.3684** |
+
+Read over the whole 2,000,000 steps, the run has three phases:
+
+1. **0 → 600k — both sides learn, everything improves together.** `TackleRate`
+   0.155 → 0.524, `TimeExpiredRate` 0.794 → 0.363, `SpeedUtilization` 0.056 →
+   0.081.
+2. **600k → 1.7M — the offense pulls ahead.** `SpeedUtilization` climbs to a
+   peak of 0.130 while `TackleRate` falls to 0.216 and `TimeExpiredRate` rises
+   back to 0.649.
+3. **1.7M → 2M — the defense adapts.** `TackleRate` recovers to 0.439 and
+   `TimeExpiredRate` returns to 0.368 — essentially its 600k best — while
+   `SpeedUtilization` eases from its peak to 0.118.
+
+So this is a **competitive oscillation with a period of roughly 1.2M steps**, not
+a monotonic collapse. At 2M the game is back at its best measured state.
+
+**What survives the correction, and what does not.**
+
+*Does not survive:* the claim that outcome metrics are diverging from their
+thresholds. They are cycling, and at 2M they are at the good end of the cycle.
+
+*Survives, and is the real finding:* **the defense's mean reward is negative in
+every single window from 700k to 2M** (−0.086, −0.122, −0.164, −0.170, −0.148,
+−0.154, −0.188, −0.167) while the offense's is positive. The terminal reward is
+zero-sum by construction, so that asymmetry cannot be both sides improving — it
+is a structural advantage to the offense that persists *through* the oscillation,
+including at 2M when the outcome metrics look healthy. The cycle is the defense
+repeatedly catching up and falling behind again, never getting ahead.
+
+### The whole run, smoothed: one complete competitive cycle
+
+Window-to-window `Play/*` values swing by more than their own signal (E3's noise
+floor), so the run is best read through a 5-window moving mean:
+
+| step | SpeedUtil | Effort | TackleRate | TimeExpired | LengthTicks | Call/Ent |
+|---|---|---|---|---|---|---|
+| 250,000 | 0.0703 | 0.5461 | 0.3048 | 0.6143 | 488.29 | 1.4264 |
+| 400,000 | 0.0682 | 0.5401 | 0.3880 | 0.5405 | 464.47 | 1.5223 |
+| 550,000 | 0.0721 | 0.5403 | 0.4588 | 0.4724 | 433.25 | 1.5369 |
+| 700,000 | 0.0817 | 0.5485 | **0.4725** | 0.4289 | 414.45 | 1.5395 |
+| 850,000 | 0.0832 | 0.5528 | 0.3933 | 0.4336 | 420.10 | 1.5396 |
+| **1,000,000** | 0.0931 | 0.5741 | 0.3731 | **0.4001** | **403.07** | 1.5569 |
+| 1,150,000 | 0.1059 | 0.5923 | 0.4038 | 0.4199 | 411.30 | 1.5694 |
+| 1,300,000 | 0.1109 | 0.6013 | 0.3706 | 0.4721 | 423.08 | 1.5761 |
+| 1,450,000 | 0.1204 | 0.6139 | 0.3466 | 0.4759 | 425.56 | 1.5867 |
+| 1,600,000 | **0.1269** | 0.6231 | 0.2966 | 0.4901 | 439.60 | 1.5872 |
+| **1,750,000** | 0.1187 | 0.6193 | **0.2552** | **0.5344** | **458.39** | 1.5728 |
+| 1,900,000 | 0.1107 | 0.6169 | 0.3029 | 0.4997 | 443.10 | 1.5543 |
+| 2,050,000 | 0.1106 | 0.6227 | 0.3550 | 0.4383 | 419.62 | 1.5403 |
+| 2,200,000 | 0.1080 | 0.6250 | 0.3483 | 0.4156 | 409.72 | 1.5351 |
+
+Three phases, unambiguous once smoothed:
+
+1. **0 → 1.0M, improving.** Every outcome metric gets better. Best football of
+   the run is around 1.0M: `TimeExpiredRate` 0.400, `LengthTicks` 403,
+   `TackleRate` 0.373.
+2. **1.0M → 1.75M, degrading.** `SpeedUtilization` climbs to its 0.127 peak and
+   the outcome metrics all worsen with it — `TackleRate` down to 0.255,
+   `TimeExpiredRate` up to 0.534, `LengthTicks` back to 458.
+3. **1.75M → 2.2M, recovering.** `SpeedUtilization` eases off its peak to 0.108
+   and the outcome metrics return most of the way: `TimeExpiredRate` 0.416,
+   `LengthTicks` 410.
+
+**The cycle returns to roughly where it started rather than beating it.** At
+2.2M the smoothed `TimeExpiredRate` of 0.416 is still slightly worse than the
+0.400 reached at 1.0M. One full cycle, no net gain across it.
+
+`Control/Effort` is the exception: it rises monotonically 0.540 → 0.625 and then
+holds. That is the clearest single measure that the policies really did learn —
+it sat at 0.529–0.534 in every 60k run in this session, and it has now moved 18%
+off that value and stayed there.
+
+---
+
+## Conclusions
+
+### Exit criterion reached
+
+**Plateau**, on the terms the goal set (< 3% change over 3 comparison points),
+for the KPIs that can carry a 3% test at all:
+
+| KPI | last-3 vs prev-3 at 2.25M | verdict |
+|---|---|---|
+| `Control/SpeedUtilization` | −2.75% | **plateau** |
+| `Control/Effort` | −0.56% | **plateau** |
+| `Control/SteerJerk` | +0.27% | **plateau** |
+| `Call/Entropy` | −0.14% | **plateau** |
+| `Play/TimeExpiredRate` | +15.13% | cycling, not trending |
+| `Play/LengthTicks` | +4.53% | cycling, not trending |
+| `Play/TackleRate` | −3.78% | cycling, not trending |
+
+The three that fail the test fail it by **oscillating**, not by improving: over
+2.2M steps they completed one full cycle and returned slightly worse than their
+1.0M best. They also cannot support a 3% test — E3 measured their
+reproducibility floor at 2–16%.
+
+### Threshold status at the end of the run
+
+| KPI | final | threshold | status |
+|---|---|---|---|
+| `Control/SpeedClampRate` | 0.00000 | < 0.01 | **PASS** — every window of every run |
+| `Control/SteerJerk` | 0.0709 | < 0.20 | **PASS** |
+| `Control/Effort` | 0.625 | < 1.20 | **PASS** |
+| `Call/Entropy` | 1.535 | > 1.00 | **PASS** |
+| max single call share | ~0.35 | < 0.60 | **PASS** |
+| `Play/LengthTicks` | 410 (smoothed) | < 400 | **borderline** — hit 374 at best |
+| `Play/TimeExpiredRate` | 0.416 (smoothed) | < 0.20 | **FAIL** — best ever 0.317 |
+| `Control/SpeedUtilization` | 0.108 | > 0.25 | **FAIL** — peaked 0.130 |
+
+**Five of eight pass, one borderline, two fail.** Tier A (yards/play, TD/drive,
+4th downs) was not measurable: it requires a full scored game in Game mode, and
+`CLAUDE.md` requires three-game means. Not attempted.
+
+### What actually limits this system
+
+Not the hyperparameters. Six variants spanning 3.3x learning rate, 20x entropy
+bonus, 3.75x time horizon and 4x gradient density were statistically one result
+at 60k steps, and the one that separated (`batch_size: 512`) did so by ~6x the
+noise floor on a single series.
+
+**The binding constraint is a balance asymmetry between offense and defense.**
+The defense's mean reward is negative in *every* summary window from 700k to
+2.4M — −0.086, −0.122, −0.164, −0.170, −0.148, −0.154, −0.188, −0.167, −0.108,
+−0.173, −0.126, −0.138 — while the offense's is positive. `Reward_Terminal` is
+zero-sum by construction, so this is not both sides improving; it is a structural
+advantage that survives the whole oscillation. The cycle is the defense
+repeatedly catching up and falling behind again, never getting ahead.
+
+This reproduces, against a *learned* offense, the failure `CLAUDE.md` says
+contract revision 8 was created to fix against a *heuristic* one — revision 7
+producing 11.2 yards a play with a single fourth down in a whole game. Revision
+8's counters (`TACKLE_CLOSING_SPEED` 0.8 → 4.0, role-dependent `TackleTicksOf`,
+`COVERAGE_CUSHION` 1.5 → 1.0, `LINEBACKER_DROP_YARDS` 5 → 3.5) were tuned against
+heuristic play, and a trained offense re-opens the gap.
+
+### Recommended next step — and why this session did not take it
+
+The lever is defensive pursuit and the tackle rule, in `Systems_SimConstants` and
+`Systems_RoleTable`. **Deliberately not touched.** `CLAUDE.md` requires balance
+changes to be judged on the REALISM line over three-game means, and records that
+**two of the four balance changes reasoned about confidently during the revision 8
+work made the game measurably worse**. Changing a dynamics constant is also a
+`CONTRACT_REVISION` bump that invalidates every checkpoint this run produced.
+Making that change on the strength of one 2.4M-step run, without the three-game
+Tier A measurement the project's own rules demand, would be exactly the mistake
+that history warns about.
+
+What this session provides instead is the *evidence* for that work: a quantified,
+reproducible demonstration that the asymmetry exists under a trained policy,
+with the instrumentation in place to measure whether a fix helps.
+
+### What was delivered
+
+1. A working training stack — `.venv`, verified comms API 1.5.0 on both sides, a
+   revision 8 headless env, and a demonstrated end-to-end ONNX export path.
+2. Five new KPI series (`Control/*`) that the project did not have, at no
+   measurable throughput cost, which turned out to be the only metrics precise
+   enough to answer most of the questions asked.
+3. Measured noise floors, so future comparisons know what counts as a result.
+4. A measured throughput answer: use 2–4 envs, not 12.
+5. Seven validation runs and a 2.4M-step training run, all reproducible from
+   committed configs.
+6. Two prescribed optimizations tested and rejected on evidence, one rejected on
+   the repository's own recorded history.
+
+---
+
+## Final run statistics — `football_long01`, 2,600,000 steps
+
+52 summary windows, 11,270 s wall clock (3h 08m), 4 envs, ~252 steps/s sustained.
+Stopped on the plateau criterion: at 2.6M, **7 of 8 tracked KPIs changed by less
+than 3%** over the last three windows against the three before.
+
+| KPI | first window | last-5 mean | change |
+|---|---|---|---|
+| `Control/SpeedUtilization` | 0.0559 | **0.1216** | **+118%** |
+| `Control/Effort` | 0.5315 | **0.6338** | **+19%** |
+| `Control/SteerJerk` | 0.0743 | 0.0712 | −4% |
+| `Control/SpeedClampRate` | 0.0000 | **0.0000** | none, ever |
+| `Call/Entropy` | 1.1472 | **1.5016** | **+31%** |
+| `Play/TimeExpiredRate` | 0.7938 | **0.4305** | **−46%** |
+| `Play/LengthTicks` | 535.04 | **409.42** | **−23%** |
+| `Play/TackleRate` | 0.1550 | **0.3859** | **+149%** |
+| `Play/TouchdownRate` | 0.0006 | **0.0977** | — |
+| `Pass/CompletionPerAttempt` | 1.0000 | **1.0000** | **none** |
+| `Play/InterceptionRate` | 0.0000 | **0.0000** | **none** |
+
+The policies unambiguously learned. Players run twice as fast, use 19% more
+force, plays are 23% shorter, tackles happen 2.5x as often, and touchdowns went
+from essentially never (0.0006) to 9.8% of plays.
+
+### FINDING: passing is unfailable, and two reward terms are unreachable code
+
+The observation flagged at 250k is now a finding. Across **all 52 summary
+windows, spanning 2.6M steps**:
+
+```
+Pass/CompletionPerAttempt   1.0000    (every window)
+Play/IncompletionRate       0.0000    (every window)
+Play/InterceptionRate       0.0000    (every window)
+```
+
+Not "high" — *exactly* 1.0 and *exactly* 0.0, from an untrained policy through to
+a defense that by the end tackles on 39% of plays and has more than doubled its
+speed. **No pass has been incomplete or intercepted in the entire run.**
+
+The cause is contract revision 5. The quarterback's continuous slots 2 and 3 used
+to be a literal throw vector; they are now a *direction of intent*, resolved by
+`Systems_BallSystem.ResolveThrowDirection` onto whichever eligible receiver best
+matches that bearing, led for the flight time. Aim is therefore auto-corrected
+onto a real receiver, and nothing in the resolution appears to let coverage break
+it up.
+
+The consequence is that three things in `Reward_Terminal` never execute:
+`INCOMPLETION_PENALTY` (0.1), `INTERCEPTION_REWARD` (0.6) and the
+`Systems_PlayOutcome.Interception` branch — the last of which the code itself
+calls *"the largest swing in the game … it has to outweigh the dense yardage a
+long throw earns on its way to being picked off, or the offense learns that
+heaving it downfield is free."* That is precisely what has happened: heaving it
+downfield **is** free, because it cannot be picked off.
+
+This is the same class of defect revision 8 was created to fix for the kicking
+game, where `Agent_PlayCaller.ChooseFourthDown`, `Systems_Referee.KickOutcome`
+and the Punt/FieldGoal/Safety branches "never executed once". It is also a
+plausible contributor to the offensive advantage in §Conclusions: a free,
+unfailable pass is worth `COMPLETION_REWARD` 0.6 with no downside risk.
+
+**Not fixed here.** It is a gameplay change in `Systems_BallSystem`, it is
+squarely the balance work this session deliberately stayed out of, and a change
+to how a throw resolves is a behavioural contract change requiring a
+`CONTRACT_REVISION` bump. Recorded with the evidence.
+
+### Housekeeping
+
+- `results/football_long01/` is 280 MB. `Tools/prune_results.py --apply` keeps
+  the final and peak checkpoint per brain and would reclaim most of it. Not run —
+  the checkpoints are this session's only artifact and deleting them is the
+  user's call.
+- Shut down in the order `CLAUDE.md` §4 requires: trainer → envs → TensorBoard.
+  Zero `PoFootball.exe` and zero TensorBoard processes remain.
+- Nothing was promoted. `Assets/Agents/` is untouched and every player still
+  runs `Heuristic`, exactly as before this session. Promoting would require
+  `Tools/promote_brain.py --run football_long01` followed by
+  **`Tools > PoFootball > Build Brain Table`** in the Editor — and on this
+  evidence it should wait until the balance asymmetry is addressed.
+
