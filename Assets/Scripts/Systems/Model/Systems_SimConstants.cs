@@ -133,6 +133,36 @@ namespace PoFootball.Models
         /// </summary>
         public const int CONTACT_GRACE_TICKS = 2;
 
+        // --- Dead ball -------------------------------------------------------
+
+        /// <summary>
+        /// Speed below which the ball carrier counts as stopped, in m/s.
+        ///
+        /// The dead-ball backstop in Systems_Referee.EvaluateCarrier used to be a
+        /// flat tick cap, which ended a down on a timer no matter what was happening
+        /// — a back in open field with nobody near him got a whistle for no visible
+        /// reason. The backstop now measures whether the ball has actually STOPPED.
+        ///
+        /// 1.5 m/s is a walk. Above it somebody is carrying the ball somewhere and
+        /// the down is live; below it, sustained, the play is a pile that is not
+        /// moving or a quarterback standing still with nobody open. Deliberately
+        /// well under the slowest role's top speed, so this can never clip a player
+        /// who is genuinely running.
+        /// </summary>
+        public const float STALL_SPEED = 1.5f;
+
+        /// <summary>
+        /// How long the carrier must stay under <see cref="STALL_SPEED"/> before the
+        /// whistle goes. 60 ticks is 1.2 s.
+        ///
+        /// Long enough that a jink, a collision bounce or a cut back through traffic
+        /// cannot trip it — those cost a handful of ticks, not sixty — and short
+        /// enough that a genuinely dead pile does not stand around. It is the same
+        /// judgement CONTACT_GRACE_TICKS makes one level down: bridge the physics,
+        /// not the football.
+        /// </summary>
+        public const int STALL_TICKS = 60;
+
         // --- Fumbles ---------------------------------------------------------
         /// <summary>
         /// Closing speed at which a hit is hard enough to strip the ball, m/s.

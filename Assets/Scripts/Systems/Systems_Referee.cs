@@ -32,6 +32,13 @@ namespace PoFootball.Systems
         private readonly IPublisher<Systems_ScoreMessage> _scorePublisher;
 
         private int _lastContactTick = -1;
+
+        /// <summary>
+        /// Last tick the ball carrier was moving at more than STALL_SPEED. The
+        /// dead-ball backstop measures the gap between this and now, so a play only
+        /// expires once the ball has actually stopped — see EvaluateCarrier.
+        /// </summary>
+        private int _lastCarrierMovingTick;
         private int _contactRunTicks;
 
         /// <summary>
@@ -70,6 +77,7 @@ namespace PoFootball.Systems
         public void ResetContactTracking()
         {
             _lastContactTick = -1;
+            _lastCarrierMovingTick = 0;
             _contactRunTicks = 0;
             _contactMask = 0u;
         }
@@ -179,6 +187,69 @@ namespace PoFootball.Systems
                 return;
             }
 
+            // A CARRIER NOBODY HAS TACKLED IS A LIVE PLAY, AND THE CLOCK MUST NOT
+            // TAKE HIM DOWN.
+            //
+            // This used to be a flat `PhysicsTick >= MAX_PHYSICS_TICKS`, which ended
+            // the down on a fixed timer regardless of what was happening on the
+            // field. Watching a game on a phone, that reads exactly as reported: a
+            // back breaks into open field, nobody is near him, and the whistle goes
+            // for no visible reason. Systems_PlayModel's own comments had already
+            // circled this three times — 330 ticks clipped 34 of 80 plays, 500
+            // clipped 28 of 74, 600 was the third guess — and reached the right
+            // conclusion without acting on it: "the cap is a backstop, not a balance
+            // lever" and "getting plays to actually END is tackling's job."
+            //
+            // So the backstop now measures the thing it was always pretending to
+            // measure: whether the play has STOPPED, not how long it has lasted. A
+            // carrier moving at a real pace keeps the down alive indefinitely; only
+            // once the ball has been effectively stationary for STALL_TICKS does the
+            // whistle go, which is a genuinely dead ball — a pile that is not moving,
+            // or a quarterback standing behind the line with nobody open.
+            //
+            // SPEED, NOT FORWARD PROGRESS, is the test on purpose. A quarterback
+            // scrambling backwards out of a collapsing pocket and a back bouncing a
+            // run outside are both live football and neither gains a yard while it
+            // is happening; ending those on a progress rule would be the same defect
+            // wearing a better disguise.
+            // A QUARTERBACK STANDING IN THE POCKET IS NOT A DEAD BALL. He is under
+            // STALL_SPEED by definition — scanning is standing still — and without
+            // this the whistle would go at 1.2 s while the throw is legal until
+            // THROW_WINDOW_TICKS, which is 5 s. That would not have looked like a
+            // fix; it would have replaced "the play ends for no reason" with "the
+            // quarterback can never hold the ball", and the pass game with it.
+            //
+            // Holding the timer at the current tick rather than skipping the check
+            // means the stall clock starts when the window CLOSES, so a quarterback
+            // who stood in the pocket and then breaks contain at tick 255 still gets
+            // his full STALL_TICKS to start running.
+            bool passStillLegal =
+                carrier.Id == Systems_Formation.QUARTERBACK_SLOT_INDEX
+                && _play.PhysicsTick <= Systems_SimConstants.THROW_WINDOW_TICKS;
+
+            if (passStillLegal
+                || carrier.Velocity.sqrMagnitude
+                    >= Systems_SimConstants.STALL_SPEED * Systems_SimConstants.STALL_SPEED)
+            {
+                _lastCarrierMovingTick = _play.PhysicsTick;
+            }
+
+            if (_play.PhysicsTick - _lastCarrierMovingTick
+                >= Systems_SimConstants.STALL_TICKS)
+            {
+                EndPlay(Systems_PlayOutcome.TimeExpired, position);
+                return;
+            }
+
+            // The absolute ceiling, which exists for the trainer rather than for
+            // football: an episode that never terminates hangs a rollout, and
+            // SCN_TRAIN_FOOTBALL has to be able to reach the do-nothing basin and
+            // climb back out of it without stalling a sweep. It is now reached only
+            // by a play that has genuinely run twelve seconds rather than by every
+            // ordinary down — but it stays at 600, because it also bounds the ratio
+            // between per-tick reward shaping and the terminal reward, and it is
+            // paired with time_horizon in every trainer config. See
+            // Systems_PlayModel.MAX_PHYSICS_TICKS for what raising it broke.
             if (_play.PhysicsTick >= Systems_PlayModel.MAX_PHYSICS_TICKS)
             {
                 EndPlay(Systems_PlayOutcome.TimeExpired, position);

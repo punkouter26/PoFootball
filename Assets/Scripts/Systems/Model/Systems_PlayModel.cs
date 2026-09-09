@@ -43,6 +43,36 @@ namespace PoFootball.Models
         /// 600 ticks is 12 s: a real trim from 750 that still lets an honest play
         /// finish. Getting plays to actually END is tackling's job.
         /// </summary>
+        /// IT IS NO LONGER THE THING THAT ENDS ORDINARY DOWNS. Systems_Referee now
+        /// whistles a play dead when the CARRIER STOPS — under STALL_SPEED for
+        /// STALL_TICKS — instead of when a timer runs out, so a runner nobody has
+        /// tackled keeps the down alive for as long as he keeps running. That was
+        /// reported from a device: a back breaking into open field with no defender
+        /// near him, and the whistle going anyway. What remains here is a ceiling for
+        /// the TRAINER rather than for football, because an episode that never
+        /// terminates hangs a rollout.
+        ///
+        /// IT STAYS AT 600, AND RAISING IT WAS TRIED AND REVERTED. 1200 looked free —
+        /// the stall rule had taken over the job, so why not let an exceptional play
+        /// run — and it broke two invariants that are load-bearing and that no amount
+        /// of watching the game would have surfaced:
+        ///
+        ///   Systems_ContractTests.TrainerConfig_HorizonCoversAWholePlay. time_horizon
+        ///   has to span a whole play; at DecisionPeriod 5 a 1200-tick cap demands 240
+        ///   and every config in Config/ says 120. Doubling this silently un-pairs the
+        ///   cap from every trainer config in the repository.
+        ///
+        ///   Reward_Tests.RoleShapedTerms_CannotOutweighTheTerminalRewardOverAWholePlay.
+        ///   Role shaping is paid per tick and the terminal reward once, so the cap is
+        ///   what bounds their ratio. Over 1200 ticks the shaped terms reach 0.30
+        ///   against a 0.25 ceiling — shaping would outweigh the outcome, which is the
+        ///   precise failure that test exists to prevent.
+        ///
+        /// Twelve seconds of CONTINUOUS running is an exceptional play, and the cost
+        /// of clipping it is one rare down. The cost of raising it is a reward signal
+        /// that no longer prefers scoring, in a project whose whole purpose is to
+        /// learn football. Anyone raising it must move time_horizon in every config
+        /// and re-balance Reward_Role in the same commit.
         public const int MAX_PHYSICS_TICKS = 600;
 
         /// <summary>Agent decisions per play at DecisionPeriod = 5 (750 / 5).</summary>
