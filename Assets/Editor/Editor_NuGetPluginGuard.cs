@@ -7,7 +7,7 @@ namespace PoFootball.EditorTools
 {
     /// <summary>
     /// Pins everything under Assets/Plugins/NuGet to the Editor, and Roslyn off
-    /// entirely. Runs automatically — see WHY IT IS NOT A MENU ITEM ANY MORE.
+    /// entirely. Asserted at build time — see WHERE THIS IS ENFORCED.
     ///
     /// WHY THIS EXISTS AT ALL. Those assemblies are the MCP bridge's dependency
     /// closure — SignalR, ASP.NET Core connection plumbing, Microsoft.Extensions.*,
@@ -21,14 +21,22 @@ namespace PoFootball.EditorTools
     /// whose entire gameplay layer is a few hundred KB of C#. Nothing referenced
     /// them at runtime, so nothing failed; they just shipped.
     ///
-    /// WHY IT IS NOT A MENU ITEM ANY MORE. com.ivanmurzak.unity.mcp ships a
-    /// dependency resolver that rewrites the import settings of this whole folder,
-    /// and it restores the permissive defaults every time it runs. That was measured,
-    /// not assumed: pinning all 42 by hand and then triggering a single asset refresh
-    /// put 40 of them straight back to "any platform". A menu item cannot hold a
-    /// line that something else redraws on every resolve — whoever shipped the build
-    /// would simply have been the person who forgot to click it last. So the pin is
-    /// reapplied on load and after any import that touches the folder.
+    /// WHERE THIS IS ENFORCED. com.ivanmurzak.unity.mcp ships a dependency resolver
+    /// that rewrites the import settings of this whole folder, and it restores the
+    /// permissive defaults every time it runs. That was measured, not assumed:
+    /// pinning all 42 by hand and then triggering a single asset refresh put 40 of
+    /// them straight back to "any platform".
+    ///
+    /// Reapplying it automatically was tried and reverted. An
+    /// [InitializeOnLoadMethod] plus an AssetPostprocessor put this in a reimport
+    /// ping-pong with that resolver: the Editor domain-reloaded continuously and
+    /// dropped out of play mode before a game could reach its final whistle. Racing
+    /// another package's resolver on every import is not a fight worth winning.
+    ///
+    /// So the pin is asserted at the one moment it actually has to hold —
+    /// immediately before BuildPlayer, from both Android builders — and is
+    /// otherwise available from the menu. A build cannot ship the wrong thing even
+    /// if the resolver ran five seconds earlier.
     ///
     /// WHY ROSLYN IS OFF RATHER THAN EDITOR-ONLY. com.unity.pipeline carries its own
     /// Microsoft.CodeAnalysis under Runtime/Plugins/CodeAnalysis. With a second copy
@@ -57,25 +65,10 @@ namespace PoFootball.EditorTools
             "Microsoft.CodeAnalysis.CSharp.dll",
         };
 
-        /// <summary>
-        /// SaveAndReimport re-enters the postprocessor. The pass is idempotent —
-        /// it only writes importers whose settings are already wrong, so the second
-        /// pass finds nothing — but the flag keeps the reimport from nesting.
-        /// </summary>
-        private static bool _running;
-
-        [InitializeOnLoadMethod]
-        private static void PinOnLoad()
-        {
-            // Deferred: at [InitializeOnLoadMethod] time the AssetDatabase may still
-            // be mid-import, and SaveAndReimport from inside that is not safe.
-            EditorApplication.delayCall += () => Pin(verbose: false);
-        }
-
         [MenuItem("Tools/PoFootball/Pin NuGet Plugins To Editor")]
         private static void PinFromMenu()
         {
-            Pin(verbose: true);
+            Pin();
         }
 
         /// <summary>
@@ -87,88 +80,51 @@ namespace PoFootball.EditorTools
         /// </summary>
         internal static void PinBeforeBuild()
         {
-            Pin(verbose: true);
+            Pin();
         }
 
-        private static void Pin(bool verbose)
+        private static void Pin()
         {
-            if (_running || !Directory.Exists(PLUGIN_ROOT))
+            if (!Directory.Exists(PLUGIN_ROOT))
             {
+                Debug.LogWarning($"[NuGetGuard] no folder at {PLUGIN_ROOT}; nothing to pin.");
                 return;
             }
 
-            _running = true;
-            try
+            string[] assemblies = Directory.GetFiles(
+                PLUGIN_ROOT, "*.dll", SearchOption.AllDirectories);
+
+            int repinned = 0;
+
+            for (int index = 0; index < assemblies.Length; index++)
             {
-                string[] assemblies = Directory.GetFiles(
-                    PLUGIN_ROOT, "*.dll", SearchOption.AllDirectories);
+                // Directory.GetFiles hands back OS separators; the AssetDatabase
+                // only resolves forward slashes.
+                string path = assemblies[index].Replace('\\', '/');
 
-                int repinned = 0;
-
-                for (int index = 0; index < assemblies.Length; index++)
+                if (AssetImporter.GetAtPath(path) is not PluginImporter importer)
                 {
-                    // Directory.GetFiles hands back OS separators; the AssetDatabase
-                    // only resolves forward slashes.
-                    string path = assemblies[index].Replace('\\', '/');
-
-                    if (AssetImporter.GetAtPath(path) is not PluginImporter importer)
-                    {
-                        continue;
-                    }
-
-                    bool wantEditor = !RoslynAssemblies.Contains(Path.GetFileName(path));
-
-                    if (!importer.GetCompatibleWithAnyPlatform()
-                        && importer.GetCompatibleWithEditor() == wantEditor)
-                    {
-                        continue;
-                    }
-
-                    importer.SetCompatibleWithAnyPlatform(false);
-                    importer.SetCompatibleWithEditor(wantEditor);
-                    importer.SaveAndReimport();
-                    repinned++;
+                    Debug.LogWarning($"[NuGetGuard] no PluginImporter at {path}");
+                    continue;
                 }
 
-                if (repinned > 0 || verbose)
+                bool wantEditor = !RoslynAssemblies.Contains(Path.GetFileName(path));
+
+                if (!importer.GetCompatibleWithAnyPlatform()
+                    && importer.GetCompatibleWithEditor() == wantEditor)
                 {
-                    Debug.Log(
-                        $"[NuGetGuard] {assemblies.Length} assemblies under {PLUGIN_ROOT}; "
-                        + $"re-pinned {repinned} to Editor-only. None ship in a player build.");
+                    continue;
                 }
+
+                importer.SetCompatibleWithAnyPlatform(false);
+                importer.SetCompatibleWithEditor(wantEditor);
+                importer.SaveAndReimport();
+                repinned++;
             }
-            finally
-            {
-                _running = false;
-            }
-        }
 
-        /// <summary>
-        /// Reapplies the pin whenever anything under the NuGet folder is imported —
-        /// which is exactly when the ivanmurzak resolver has just undone it.
-        /// </summary>
-        private sealed class Postprocessor : AssetPostprocessor
-        {
-            private static void OnPostprocessAllAssets(
-                string[] imported,
-                string[] deleted,
-                string[] movedTo,
-                string[] movedFrom)
-            {
-                if (_running)
-                {
-                    return;
-                }
-
-                for (int index = 0; index < imported.Length; index++)
-                {
-                    if (imported[index].StartsWith(PLUGIN_ROOT, System.StringComparison.Ordinal))
-                    {
-                        EditorApplication.delayCall += () => Pin(verbose: false);
-                        return;
-                    }
-                }
-            }
+            Debug.Log(
+                $"[NuGetGuard] {assemblies.Length} assemblies under {PLUGIN_ROOT}; "
+                + $"re-pinned {repinned} to Editor-only. None ship in a player build.");
         }
     }
 }

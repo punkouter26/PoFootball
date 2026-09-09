@@ -58,67 +58,84 @@ namespace PoFootball.Views
     [DisallowMultipleComponent]
     public sealed class Systems_StadiumRigView : MonoBehaviour, Systems_IInjectableView
     {
-        /// <summary>
-        /// Ambient level the existing scene Global is pulled down to.
-        ///
-        /// NOT ZERO, AND NOT ONE, AND THE RATIO TO THE BANKS IS THE WHOLE TUNING.
-        /// At 1 — which is what SCN_GAME shipped — the banks are invisible because
-        /// everything is already fully lit. At 0 the corners of both end zones go
-        /// black. The subtler trap is in between: this was set to 0.88 first, which
-        /// produced a perfectly legible field with NO VISIBLE SHADOWS, because a
-        /// shadow can only subtract the light a bank contributed, and against a
-        /// bright ambient that contribution is a small fraction of the total. The
-        /// value has to sit BELOW the casting banks for a shadow to darken anything.
-        /// Measured against a live capture, not reasoned about.
-        /// </summary>
-        private const float AMBIENT_INTENSITY = 0.62f;
+        // EVERY NUMBER BELOW IS SERIALIZED, NOT const.
+        //
+        // The rig is still BUILT AT RUNTIME and that is deliberate — see the class
+        // note and Systems_PresentationBudget, which requires "do not construct"
+        // rather than "do not play", and DimExistingAmbient, which has to find and
+        // change a Global this component did not create. Authoring the banks as
+        // scene objects would put twenty-two shadow casters into a training scene
+        // that then has to tear them down again, which is the exact cost the budget
+        // exists to avoid.
+        //
+        // What was actually hard to tune was the numbers, all of which were const
+        // and none of which were reachable from the Inspector — so every lighting
+        // experiment meant an edit, a domain reload, and a re-entry into play mode.
+        // They are fields now. The rig builds itself; you tune it on the component.
 
-        /// <summary>Cool blue-grey. Stadium ambient is skylight, not sunlight.</summary>
-        private static readonly Color AmbientColor = new Color(0.72f, 0.79f, 0.92f, 1f);
+        [Header("Ambient")]
+        [Tooltip(
+            "Ambient level the existing scene Global is pulled down to. "
+            + "NOT ZERO AND NOT ONE, and the ratio to the banks is the whole "
+            + "tuning. At 1 — which is what SCN_GAME shipped — the banks are "
+            + "invisible because everything is already fully lit. At 0 the corners "
+            + "of both end zones go black. The subtler trap is in between: 0.88 "
+            + "produced a perfectly legible field with NO VISIBLE SHADOWS, because "
+            + "a shadow can only subtract the light a bank contributed, and against "
+            + "a bright ambient that contribution is a small fraction of the total. "
+            + "This has to sit BELOW the casting banks for a shadow to darken "
+            + "anything. Measured against a live capture, not reasoned about.")]
+        [Range(0f, 1f)]
+        [SerializeField] private float _ambientIntensity = 0.62f;
 
-        /// <summary>Warm white, the colour of a metal-halide floodlight.</summary>
-        private static readonly Color BankColor = new Color(1f, 0.96f, 0.88f, 1f);
+        [Tooltip("Cool blue-grey. Stadium ambient is skylight, not sunlight.")]
+        [SerializeField] private Color _ambientColor = new Color(0.72f, 0.79f, 0.92f, 1f);
 
-        private const float BANK_INTENSITY = 1.25f;
+        [Header("Banks")]
+        [Tooltip("Warm white, the colour of a metal-halide floodlight.")]
+        [SerializeField] private Color _bankColor = new Color(1f, 0.96f, 0.88f, 1f);
 
-        /// <summary>Fill banks run quieter so the shadow direction stays unambiguous.</summary>
-        private const float FILL_INTENSITY = 0.65f;
+        [Tooltip("Intensity of the two near, shadow-casting banks.")]
+        [SerializeField] private float _bankIntensity = 1.25f;
 
-        /// <summary>
-        /// How far outside the sideline a bank stands, in metres. Real floodlights
-        /// are outside the field of play; putting them on it would light the middle
-        /// of the pitch brightest, which is the one place a stadium never is.
-        /// </summary>
-        private const float BANK_SIDELINE_OFFSET = 14f;
+        [Tooltip("Fill banks run quieter so the shadow direction stays unambiguous.")]
+        [SerializeField] private float _fillIntensity = 0.65f;
 
-        /// <summary>
-        /// Distance from the 50 to each bank along the length of the field. Set so
-        /// the four banks sit roughly over the two twenty-five yard lines.
-        /// </summary>
-        private const float BANK_LENGTHWISE_OFFSET = Systems_FieldModel.PLAYING_LENGTH * 0.32f;
+        [Tooltip(
+            "How far outside the sideline a bank stands, in metres. Real "
+            + "floodlights are outside the field of play; putting them on it would "
+            + "light the middle of the pitch brightest, which is the one place a "
+            + "stadium never is.")]
+        [SerializeField] private float _bankSidelineOffset = 14f;
 
-        /// <summary>
-        /// Outer radius of a bank. Large enough that the four together cover the
-        /// whole playing surface with overlap — a gap between two floodlights reads
-        /// as a rendering fault rather than as lighting.
-        /// </summary>
-        private const float BANK_OUTER_RADIUS = 85f;
+        [Tooltip(
+            "Distance from the 50 to each bank along the length of the field. The "
+            + "default puts the four banks roughly over the two 25 yard lines.")]
+        [SerializeField]
+        private float _bankLengthwiseOffset = Systems_FieldModel.PLAYING_LENGTH * 0.32f;
 
-        /// <summary>
-        /// Inner radius, the fully-bright core. The gap to the outer radius is the
-        /// penumbra, and a wide penumbra is what stops a 2D point light from
-        /// looking like a circle stamped on the grass.
-        /// </summary>
-        private const float BANK_INNER_RADIUS = 8f;
+        [Tooltip(
+            "Outer radius of a bank. Large enough that the four together cover the "
+            + "whole playing surface with overlap — a gap between two floodlights "
+            + "reads as a rendering fault rather than as lighting.")]
+        [SerializeField] private float _bankOuterRadius = 85f;
 
-        private const float SHADOW_INTENSITY = 0.82f;
-        private const float SHADOW_SOFTNESS = 0.55f;
+        [Tooltip(
+            "Inner radius, the fully-bright core. The gap to the outer radius is "
+            + "the penumbra, and a wide penumbra is what stops a 2D point light "
+            + "from looking like a circle stamped on the grass.")]
+        [SerializeField] private float _bankInnerRadius = 8f;
 
-        /// <summary>
-        /// Falloff curve, 0 = hard edge, 1 = maximally soft. Near the top for the
-        /// same reason the penumbra is wide.
-        /// </summary>
-        private const float BANK_FALLOFF = 0.35f;
+        [Tooltip("Falloff curve. 0 = hard edge, 1 = maximally soft.")]
+        [Range(0f, 1f)]
+        [SerializeField] private float _bankFalloff = 0.35f;
+
+        [Header("Shadows")]
+        [Range(0f, 1f)]
+        [SerializeField] private float _shadowIntensity = 0.82f;
+
+        [Range(0f, 1f)]
+        [SerializeField] private float _shadowSoftness = 0.55f;
 
         [Tooltip(
             "Add ShadowCaster2D to the players. Clear it to keep the rig and drop "
@@ -180,8 +197,8 @@ namespace PoFootball.Views
                     continue;
                 }
 
-                lights[index].intensity = AMBIENT_INTENSITY;
-                lights[index].color = AmbientColor;
+                lights[index].intensity = _ambientIntensity;
+                lights[index].color = _ambientColor;
 
                 // AND IT MUST NOT CAST. The class note budgets this rig at two
                 // casting lights precisely because URP 2D spends one shadow-mesh
@@ -209,8 +226,8 @@ namespace PoFootball.Views
 
                 Light2D ambient = holder.AddComponent<Light2D>();
                 ambient.lightType = Light2D.LightType.Global;
-                ambient.intensity = AMBIENT_INTENSITY;
-                ambient.color = AmbientColor;
+                ambient.intensity = _ambientIntensity;
+                ambient.color = _ambientColor;
                 ambient.shadowsEnabled = false;
 
                 holder.SetActive(true);
@@ -223,8 +240,8 @@ namespace PoFootball.Views
         /// </summary>
         private void BuildBanks()
         {
-            float x = Systems_FieldModel.HALF_WIDTH + BANK_SIDELINE_OFFSET;
-            float y = BANK_LENGTHWISE_OFFSET;
+            float x = Systems_FieldModel.HALF_WIDTH + _bankSidelineOffset;
+            float y = _bankLengthwiseOffset;
 
             CreateBank("Bank_NearNorth", new Vector3(x, y, 0f), castsShadows: true);
             CreateBank("Bank_NearSouth", new Vector3(x, -y, 0f), castsShadows: true);
@@ -238,14 +255,14 @@ namespace PoFootball.Views
 
             Light2D bank = holder.AddComponent<Light2D>();
             bank.lightType = Light2D.LightType.Point;
-            bank.color = BankColor;
-            bank.intensity = castsShadows ? BANK_INTENSITY : FILL_INTENSITY;
-            bank.pointLightOuterRadius = BANK_OUTER_RADIUS;
-            bank.pointLightInnerRadius = BANK_INNER_RADIUS;
-            bank.falloffIntensity = BANK_FALLOFF;
+            bank.color = _bankColor;
+            bank.intensity = castsShadows ? _bankIntensity : _fillIntensity;
+            bank.pointLightOuterRadius = _bankOuterRadius;
+            bank.pointLightInnerRadius = _bankInnerRadius;
+            bank.falloffIntensity = _bankFalloff;
             bank.shadowsEnabled = castsShadows;
-            bank.shadowIntensity = SHADOW_INTENSITY;
-            bank.shadowSoftness = SHADOW_SOFTNESS;
+            bank.shadowIntensity = _shadowIntensity;
+            bank.shadowSoftness = _shadowSoftness;
 
             holder.SetActive(true);
         }

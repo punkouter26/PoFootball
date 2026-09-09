@@ -54,40 +54,51 @@ namespace PoFootball.Views
     [DisallowMultipleComponent]
     public sealed class Systems_PostProcessView : MonoBehaviour, Systems_IInjectableView
     {
-        /// <summary>
-        /// Bloom threshold in EV. Above 1 so only genuine overbright pixels bloom —
-        /// see the class note. The carrier rim and impact flash are the only two
-        /// things in the project authored to exceed it.
-        ///
-        /// 1.35 RATHER THAN 1.05, AND THE DIFFERENCE WAS VISIBLE. At 1.05 the
-        /// saturated team colours cross the threshold on their own once a casting
-        /// bank is over them, so all twenty-two players carried a halo and the
-        /// carrier glow stopped being distinguishable from everybody else — the
-        /// exact failure the class note above says this threshold exists to
-        /// prevent. Verified against a play-mode capture at both values.
-        /// </summary>
-        private const float BLOOM_THRESHOLD = 1.35f;
+        // SERIALIZED RATHER THAN const, FOR TUNING. The volume is still built at
+        // runtime — Systems_PresentationBudget names "a post-processing volume" as
+        // something a training run must not construct at all — but the grade itself
+        // is the sort of thing you want to push around against a live capture, and
+        // that is impossible when every value needs a recompile to change.
 
-        private const float BLOOM_INTENSITY = 0.9f;
+        [Header("Bloom")]
+        [Tooltip(
+            "Bloom threshold in EV. Above 1 so only genuine overbright pixels "
+            + "bloom. The carrier rim and the impact flash are the only two things "
+            + "in the project authored to exceed it. "
+            + "1.35 RATHER THAN 1.05, AND THE DIFFERENCE WAS VISIBLE. At 1.05 the "
+            + "saturated team colours cross the threshold on their own once a "
+            + "casting bank is over them, so all twenty-two players carried a halo "
+            + "and the carrier glow stopped being distinguishable from everybody "
+            + "else. Verified against a play-mode capture at both values.")]
+        [SerializeField] private float _bloomThreshold = 1.35f;
 
-        /// <summary>
-        /// How far the bloom spreads. Kept low: a wide scatter on a 22-body field
-        /// bleeds the carrier's glow onto the defenders converging on him, which is
-        /// the exact opposite of what the glow is for.
-        /// </summary>
-        private const float BLOOM_SCATTER = 0.55f;
+        [SerializeField] private float _bloomIntensity = 0.9f;
 
-        private const float VIGNETTE_INTENSITY = 0.16f;
-        private const float VIGNETTE_SMOOTHNESS = 0.5f;
+        [Tooltip(
+            "How far the bloom spreads. Kept low: a wide scatter on a 22-body field "
+            + "bleeds the carrier's glow onto the defenders converging on him, "
+            + "which is the exact opposite of what the glow is for.")]
+        [Range(0f, 1f)]
+        [SerializeField] private float _bloomScatter = 0.55f;
 
-        private const float POST_CONTRAST = 5f;
-        private const float POST_SATURATION = 8f;
+        [Header("Vignette")]
+        [Range(0f, 1f)]
+        [SerializeField] private float _vignetteIntensity = 0.16f;
 
-        /// <summary>
-        /// Above the default of 0 so this volume wins over the pipeline's own
-        /// DefaultVolumeProfile, which is otherwise blended in underneath it.
-        /// </summary>
-        private const float VOLUME_PRIORITY = 100f;
+        [Range(0f, 1f)]
+        [SerializeField] private float _vignetteSmoothness = 0.5f;
+
+        [Header("Grade")]
+        [Range(-100f, 100f)]
+        [SerializeField] private float _postContrast = 5f;
+
+        [Range(-100f, 100f)]
+        [SerializeField] private float _postSaturation = 8f;
+
+        [Tooltip(
+            "Above the default of 0 so this volume wins over the pipeline's own "
+            + "DefaultVolumeProfile, which is otherwise blended in underneath it.")]
+        [SerializeField] private float _volumePriority = 100f;
 
         private Systems_PresentationBudget _budget;
 
@@ -143,11 +154,11 @@ namespace PoFootball.Views
 
             Bloom bloom = _profile.Add<Bloom>(true);
             bloom.threshold.overrideState = true;
-            bloom.threshold.value = BLOOM_THRESHOLD;
+            bloom.threshold.value = _bloomThreshold;
             bloom.intensity.overrideState = true;
-            bloom.intensity.value = BLOOM_INTENSITY;
+            bloom.intensity.value = _bloomIntensity;
             bloom.scatter.overrideState = true;
-            bloom.scatter.value = BLOOM_SCATTER;
+            bloom.scatter.value = _bloomScatter;
 
             // High quality filtering is the cheap half of bloom's cost and the half
             // that removes the fireflies a 22-sprite scene with hard edges produces.
@@ -156,15 +167,15 @@ namespace PoFootball.Views
 
             Vignette vignette = _profile.Add<Vignette>(true);
             vignette.intensity.overrideState = true;
-            vignette.intensity.value = VIGNETTE_INTENSITY;
+            vignette.intensity.value = _vignetteIntensity;
             vignette.smoothness.overrideState = true;
-            vignette.smoothness.value = VIGNETTE_SMOOTHNESS;
+            vignette.smoothness.value = _vignetteSmoothness;
 
             ColorAdjustments grade = _profile.Add<ColorAdjustments>(true);
             grade.contrast.overrideState = true;
-            grade.contrast.value = POST_CONTRAST;
+            grade.contrast.value = _postContrast;
             grade.saturation.overrideState = true;
-            grade.saturation.value = POST_SATURATION;
+            grade.saturation.value = _postSaturation;
         }
 
         private void BuildVolume()
@@ -179,7 +190,7 @@ namespace PoFootball.Views
 
             _volume = holder.AddComponent<Volume>();
             _volume.isGlobal = true;
-            _volume.priority = VOLUME_PRIORITY;
+            _volume.priority = _volumePriority;
             _volume.weight = 1f;
 
             // sharedProfile, not profile. The `profile` setter CLONES whatever it is
