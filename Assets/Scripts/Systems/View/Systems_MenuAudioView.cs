@@ -19,11 +19,18 @@ namespace PoFootball.Views
     [DisallowMultipleComponent]
     public sealed class Systems_MenuAudioView : MonoBehaviour, Systems_IInjectableView
     {
-        // Cut by 80% on 2026-08-22 with the two gains in Systems_AudioView, so the
-        // menu bed keeps the same relationship to the game mix it always had.
-        // Was 0.12. SCN_MENU's serialized copy was edited to match.
-        [Range(0f, 1f)]
-        [SerializeField] private float _crowdVolume = 0.024f;
+        /// <summary>
+        /// The menu bed as a fraction of the in-game crowd level.
+        ///
+        /// A RATIO NOW, NOT AN ABSOLUTE. This used to be a serialized 0.024, cut by
+        /// 80% on 2026-08-22 alongside the two gains in Systems_AudioView and
+        /// mirrored by hand into SCN_MENU's serialized copy — three places holding
+        /// one decision. Those gains have moved to Systems_AudioSettings, where a
+        /// player owns them, so this only has to say what it always meant: the menu
+        /// is the same stadium, heard from outside. Multiplying keeps that
+        /// relationship true at any volume the player picks.
+        /// </summary>
+        private const float MENU_BED_RATIO = 0.4f;
 
         [Tooltip("Seconds for the bed to reach full level from silence.")]
         [Range(0.1f, 8f)]
@@ -66,20 +73,25 @@ namespace PoFootball.Views
 
         private void Update()
         {
-            if (_fade >= 1f)
+            if (_crowd == null)
             {
                 return;
             }
 
-            // Unscaled: the menu should not care what the last scene left
-            // Time.timeScale at.
-            _fade = Mathf.Min(1f, _fade + Time.unscaledDeltaTime / _fadeInSeconds);
+            if (_fade < 1f)
+            {
+                // Unscaled: the menu should not care what the last scene left
+                // Time.timeScale at.
+                _fade = Mathf.Min(1f, _fade + Time.unscaledDeltaTime / _fadeInSeconds);
+            }
 
             // Squared, so the fade is gentle where it is most audible — a linear
             // ramp from silence sounds like it arrives all at once.
             float shaped = _fade * _fade;
 
-            _crowd.volume = shaped * _crowdVolume;
+            // Re-applied after the fade completes as well, because the level is now
+            // a user setting that can move while this screen is open.
+            _crowd.volume = shaped * Systems_AudioSettings.CrowdBus * MENU_BED_RATIO;
         }
     }
 }

@@ -35,9 +35,27 @@ namespace PoFootball.Views
         /// </summary>
         private const string PANEL_SETTINGS_RESOURCE = "PoFootballPanelSettings";
 
+        /// <summary>
+        /// Tap sound, from the Kenney UI pack that shipped with this project and had
+        /// never been referenced by anything.
+        ///
+        /// A RECORDING RATHER THAN A SYNTHESISED TICK, and that is not a departure
+        /// from Systems_ToneBank's reasoning. That class synthesises because
+        /// docs/ASSETS.md records that Asset Store audio "cannot be fetched without
+        /// a signed-in human clicking Add to My Assets" — an argument about sounds
+        /// the repository does not have. These six .ogg files were already in it,
+        /// under Assets/Art/Kenney/UIPack/Sounds, unreferenced by any script. There
+        /// is no case for synthesising a click when a good one is sitting in the
+        /// project unused.
+        /// </summary>
+        private const string TAP_CLIP_RESOURCE = "Audio/Ui/click-a";
+
         private UIDocument _document;
         private VisualElement _safeArea;
         private bool _isBuilt;
+
+        private AudioSource _uiAudio;
+        private AudioClip _tapClip;
 
         private Rect _lastSafeArea;
         private Vector2Int _lastScreenSize;
@@ -107,6 +125,64 @@ namespace PoFootball.Views
             ApplySafeArea();
             BuildUi();
             _isBuilt = true;
+
+            BuildUiAudio();
+        }
+
+        /// <summary>
+        /// Gives every pressable thing on every screen a tap sound, in one place.
+        ///
+        /// WHY IT IS HERE AND NOT IN Systems_UiTheme.Button. The theme is a static
+        /// class with no scene presence, so a click handler there would need an
+        /// AudioSource from somewhere — which means either a singleton or a service
+        /// locator, and .claude/rules/architecture.md rules out both. This class is
+        /// already the one thing every screen derives from and it already owns a
+        /// GameObject, so it can own one AudioSource and hear every click through
+        /// the panel's own event system.
+        ///
+        /// TrickleDown, so the callback runs on the way DOWN to the target rather
+        /// than bubbling back up. A Button that calls StopPropagation on its click —
+        /// which the diagnostic overlay's toggle does — would otherwise silence
+        /// itself, and "some buttons click and some do not" is a worse bug than no
+        /// sound at all.
+        ///
+        /// The screen registers on UnsafeRoot rather than Root because the version
+        /// stamp and any full-bleed chrome live outside the safe-area inset, and a
+        /// tap anywhere in the document should sound the same.
+        /// </summary>
+        private void BuildUiAudio()
+        {
+            _tapClip = Resources.Load<AudioClip>(TAP_CLIP_RESOURCE);
+
+            if (_tapClip == null)
+            {
+                // Not an error. A missing click is a silent button, not a broken
+                // screen, and every screen in the game still works without it.
+                return;
+            }
+
+            _uiAudio = gameObject.AddComponent<AudioSource>();
+            _uiAudio.playOnAwake = false;
+            _uiAudio.loop = false;
+
+            // 2D. A menu button is not somewhere on the field, and in SCN_GAME the
+            // listener is a moving broadcast microphone — a positional UI click
+            // would pan around as the ball moved.
+            _uiAudio.spatialBlend = 0f;
+
+            UnsafeRoot.RegisterCallback<ClickEvent>(OnAnyClick, TrickleDown.TrickleDown);
+        }
+
+        private void OnAnyClick(ClickEvent evt)
+        {
+            // Only actual controls, not the empty chrome between them. Without this
+            // test a tap on the scoreboard or on bare field clicks like a button.
+            if (_uiAudio == null || !(evt.target is Button))
+            {
+                return;
+            }
+
+            _uiAudio.PlayOneShot(_tapClip, Systems_AudioSettings.EffectsBus);
         }
 
         /// <summary>

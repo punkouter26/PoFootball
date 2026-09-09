@@ -7,7 +7,7 @@ Unity ML-Agents self-play.
 
 | Property | Value |
 |---|---|
-| Unity | 6000.5.8f1 |
+| Unity | 6000.6.0f1 |
 | Render pipeline | URP 17.6.0 |
 | ML-Agents (C#) | `com.unity.ml-agents` 4.1.0 — comms API **1.5.0** |
 | ML-Agents (Python) | `mlagents` 1.1.0 — comms API **1.5.0** |
@@ -121,6 +121,15 @@ before it became `Agent_Telemetry`.
 The line of scrimmage is the ONLY thing that differs between the two modes, and
 it is behind `Systems_ISpotProvider` — training still draws it from the same
 seeded RNG, call for call. See [docs/GAME_LAYER.md](docs/GAME_LAYER.md).
+
+**Presentation** — the stadium light rig and 2D shadows, the post-processing
+stack, the diagnostic overlay, the broadcast microphone and the UI typography all
+live in `PoFootball.Views` and are built at runtime, gated on
+`Systems_PresentationBudget`. That class gates **construction, not playback**: a
+view that says no must not build its rig at all, because the cost a training sweep
+must not pay is the setup. Why each is shaped the way it is — and why this project
+deliberately has no sprite atlas and no `AudioMixer` asset — is in
+[docs/PRESENTATION.md](docs/PRESENTATION.md).
 
 **Physics** is 2D here (`Rigidbody2D`), so §2's joint/biomechanics clauses apply to
 whatever articulated shapes get built; the invariants that always hold are:

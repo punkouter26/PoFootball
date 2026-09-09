@@ -144,6 +144,103 @@ namespace PoFootball.Views
             return team == Systems_TeamId.Home ? HomeColor : AwayColor;
         }
 
+        // --- Typeface ---------------------------------------------------------
+
+        /// <summary>
+        /// Which of the two faces a piece of text is set in.
+        ///
+        /// THE PROJECT SHIPPED TWO FONTS AND USED NEITHER. BebasNeue-Regular.ttf and
+        /// Oswald-Variable.ttf have been in the repository since the art pass, and
+        /// every label in the game was rendering in UI Toolkit's default runtime
+        /// face because nothing ever assigned them — the PanelSettings had
+        /// textSettings unset and no call site touched unityFontDefinition. A
+        /// scoreboard set in the engine default does not read as a broadcast
+        /// graphic no matter how well the boxes are arranged.
+        ///
+        /// The two faces divide the work the way a broadcast package does. Bebas is
+        /// a tall condensed display face with no lowercase — wrong for a sentence,
+        /// exactly right for a two-digit score, a 58 px result banner and the
+        /// wordmark. Oswald is condensed but has a full lowercase and real weights,
+        /// so it carries every label, caption and button.
+        /// </summary>
+        public enum Typeface
+        {
+            /// <summary>Pick from the size — display at TITLE and above, body below.</summary>
+            Auto = 0,
+
+            /// <summary>Bebas Neue. Numerals, headlines, the wordmark.</summary>
+            Display = 1,
+
+            /// <summary>Oswald. Everything that has to be read rather than seen.</summary>
+            Body = 2,
+        }
+
+        private const string DISPLAY_FONT_RESOURCE = "Fonts/BebasNeue-Regular";
+        private const string BODY_FONT_RESOURCE = "Fonts/Oswald-Variable";
+
+        /// <summary>
+        /// The size at and above which <see cref="Typeface.Auto"/> switches to the
+        /// display face. TITLE is the boundary because it is the smallest size the
+        /// project uses for something a viewer glances at rather than reads.
+        /// </summary>
+        private const int DISPLAY_FACE_MIN_SIZE = TEXT_TITLE;
+
+        private static Font _displayFont;
+        private static Font _bodyFont;
+        private static bool _fontsResolved;
+
+        /// <summary>
+        /// Loads both faces once per domain.
+        ///
+        /// A missing font is NOT an error and must not throw. UI Toolkit falls back
+        /// to its default face when unityFontDefinition is left alone, so the game
+        /// stays entirely legible — it just loses the identity. Logging once and
+        /// carrying on is the right failure for something purely cosmetic; a null
+        /// reference here would take the whole HUD down with it.
+        /// </summary>
+        private static void ResolveFonts()
+        {
+            if (_fontsResolved)
+            {
+                return;
+            }
+
+            _fontsResolved = true;
+
+            _displayFont = Resources.Load<Font>(DISPLAY_FONT_RESOURCE);
+            _bodyFont = Resources.Load<Font>(BODY_FONT_RESOURCE);
+
+            if (_displayFont == null || _bodyFont == null)
+            {
+                Debug.LogWarning(
+                    "[PoFootball] UI fonts missing from Resources — expected "
+                    + $"{DISPLAY_FONT_RESOURCE} and {BODY_FONT_RESOURCE}. Screens fall "
+                    + "back to the UI Toolkit default face.");
+            }
+        }
+
+        /// <summary>
+        /// Sets an element's face. Public because the two screens build a handful of
+        /// elements that are not Labels — a Button's text, the wordmark — and they
+        /// have to be able to opt one of them into the display face explicitly.
+        /// </summary>
+        public static void ApplyFont(VisualElement element, Typeface typeface, int size)
+        {
+            ResolveFonts();
+
+            bool wantsDisplay = typeface == Typeface.Display
+                || (typeface == Typeface.Auto && size >= DISPLAY_FACE_MIN_SIZE);
+
+            Font font = wantsDisplay ? _displayFont : _bodyFont;
+
+            if (font == null)
+            {
+                return;
+            }
+
+            element.style.unityFontDefinition = new StyleFontDefinition(font);
+        }
+
         // --- Factories -------------------------------------------------------
 
         /// <summary>
@@ -212,12 +309,14 @@ namespace PoFootball.Views
         }
 
         public static Label Text(
-            string value, int size, Color color, FontStyle fontStyle = FontStyle.Normal)
+            string value, int size, Color color, FontStyle fontStyle = FontStyle.Normal,
+            Typeface typeface = Typeface.Auto)
         {
             Label label = new Label(value);
             label.style.fontSize = size;
             label.style.color = color;
             label.style.unityFontStyleAndWeight = fontStyle;
+            ApplyFont(label, typeface, size);
 
             // Labels default to picking up pointer events, which silently swallows
             // clicks meant for whatever is underneath them.
@@ -264,6 +363,12 @@ namespace PoFootball.Views
             button.style.fontSize = TEXT_TITLE;
             button.style.unityFontStyleAndWeight = FontStyle.Bold;
             button.style.letterSpacing = 1f;
+
+            // Buttons are set in the DISPLAY face regardless of size. A label on a
+            // button is read the way a score is — glanced at, never parsed — and
+            // Auto would flip PLAY and QUIT into different faces purely because
+            // ApplyControlActionSize drops the latter to TEXT_BODY.
+            ApplyFont(button, Typeface.Display, TEXT_TITLE);
             button.style.minHeight = TAP_TARGET;
             button.style.unityTextAlign = TextAnchor.MiddleCenter;
             button.style.whiteSpace = WhiteSpace.NoWrap;
@@ -356,6 +461,48 @@ namespace PoFootball.Views
                 new List<EasingFunction> { new EasingFunction(EasingMode.EaseOutCubic) };
         }
 
+        // --- Motion ------------------------------------------------------------
+
+        /// <summary>How much a pulsed element overshoots before settling back.</summary>
+        private const float PULSE_SCALE = 1.14f;
+
+        /// <summary>
+        /// Prepares an element to be pulsed. Call once, at build time.
+        ///
+        /// Separate from <see cref="Pulse"/> because a transition is a STYLE, not an
+        /// animation: it says "interpolate this property whenever it changes", and
+        /// re-declaring it on every pulse would reset the interpolation mid-flight.
+        /// </summary>
+        public static void EnablePulse(VisualElement element)
+        {
+            EnableTransition(element, "scale", TRANSITION_SECONDS * 0.6f);
+        }
+
+        /// <summary>
+        /// Briefly swells an element and lets it settle.
+        ///
+        /// WHAT IT IS FOR. A number that changes without moving is a number a viewer
+        /// has to be already looking at to notice. The score, the down and the
+        /// possession dot all changed silently — the HUD's own header notes that the
+        /// down "changes on every single play and is the one number that tells a
+        /// viewer what they are about to watch", and it announced itself by
+        /// redrawing two glyphs in place. A sixth of a second of movement is what
+        /// makes a glance find it.
+        ///
+        /// Driven by the panel's own scheduler rather than a coroutine or an Update
+        /// countdown. The HUD deleted its per-frame fade timer for exactly this
+        /// reason: nothing should tick every frame to animate something that happens
+        /// six times a game.
+        /// </summary>
+        public static void Pulse(VisualElement element)
+        {
+            element.style.scale = new Scale(new Vector3(PULSE_SCALE, PULSE_SCALE, 1f));
+
+            element.schedule
+                .Execute(() => element.style.scale = new Scale(Vector3.one))
+                .StartingIn((long)(TRANSITION_SECONDS * 0.6f * 1000f));
+        }
+
         // --- Spacing -----------------------------------------------------------
 
         public static void SetPadding(VisualElement element, int amount)
@@ -404,6 +551,48 @@ namespace PoFootball.Views
             element.style.borderRightColor = color;
             element.style.borderTopColor = color;
             element.style.borderBottomColor = color;
+        }
+
+        // --- Elevation ---------------------------------------------------------
+
+        /// <summary>
+        /// Hairline along the top edge of a raised surface — the lit edge.
+        /// </summary>
+        private static readonly Color EdgeHighlight = new Color(1f, 1f, 1f, 0.10f);
+
+        /// <summary>
+        /// Line along the bottom edge — the surface's own shadow, standing in for
+        /// the box-shadow the runtime panel does not have.
+        /// </summary>
+        private static readonly Color EdgeShadow = new Color(0f, 0f, 0f, 0.45f);
+
+        /// <summary>
+        /// Lifts a surface off the one behind it.
+        ///
+        /// WHY IT IS NOT A BOX SHADOW. UI Toolkit's runtime panel implements no
+        /// shadow property at all — box-shadow is a USS feature the runtime
+        /// renderer ignores, and this project ships no USS in the first place
+        /// (CLAUDE.md section 3). What it does support is per-edge border colours,
+        /// and a light hairline on top with a dark line underneath is the same cue a
+        /// shadow gives: it says which way is up. On a near-black palette it is
+        /// actually the stronger of the two, because a black shadow on a black
+        /// surface is invisible.
+        ///
+        /// Applied to the scoreboard, the situation pill and the call chip — the
+        /// three surfaces that sit ON the field and were previously distinguished
+        /// from it by nothing but a translucent fill.
+        /// </summary>
+        public static void ApplyElevation(VisualElement element)
+        {
+            element.style.borderTopWidth = 1;
+            element.style.borderBottomWidth = 2;
+            element.style.borderLeftWidth = 0;
+            element.style.borderRightWidth = 0;
+
+            element.style.borderTopColor = EdgeHighlight;
+            element.style.borderBottomColor = EdgeShadow;
+            element.style.borderLeftColor = Color.clear;
+            element.style.borderRightColor = Color.clear;
         }
 
         /// <summary>Pins an element to all four edges of its parent.</summary>

@@ -41,10 +41,29 @@ namespace PoFootball.Views
     /// </summary>
     public sealed class Systems_HudView : Systems_ScreenView, Systems_IInjectableView
     {
+        /// <summary>
+        /// Reserved width for the clock, in panel units at the 1080-wide reference.
+        /// Sized for "14:22" — five glyphs at TEXT_TITLE in the condensed display
+        /// face — so the label never resizes as the clock counts down. See
+        /// BuildSituationRow.
+        /// </summary>
+        private const int CLOCK_MIN_WIDTH = 150;
+
         /// <summary>How long a result banner stays up before fading itself out.</summary>
         private const float BANNER_SECONDS = 2.2f;
 
         private Systems_GameModel _game;
+
+        /// <summary>
+        /// Read for one thing only: the play call the quarterback has committed to.
+        ///
+        /// The game model carries the down, the clock and the score — everything a
+        /// broadcast scoreboard has ever shown. It does not and should not carry
+        /// what the offense decided to do, because that is not a rules fact, it is
+        /// a policy's output, and it lives on the play.
+        /// </summary>
+        private Systems_PlayModel _play;
+
         private Systems_BoxScore _boxScore;
         private ISubscriber<Systems_DownResolvedMessage> _resolvedSubscriber;
         private ISubscriber<Systems_GameOverMessage> _gameOverSubscriber;
@@ -74,6 +93,8 @@ namespace PoFootball.Views
         /// see <see cref="OnGameOver"/>. The clock beside it is deliberately left up.
         /// </summary>
         private VisualElement _situationPill;
+        private VisualElement _callChip;
+        private Label _callLabel;
         private Label _finalHeadline;
         private Label _finalScoreline;
         private Label _finalTotals;
@@ -86,15 +107,25 @@ namespace PoFootball.Views
         private int _lastDown = -1;
         private int _lastQuarter = -1;
 
+        /// <summary>
+        /// Deliberately seeded to a value the enum does not define, so the first
+        /// comparison in RefreshCall always misses and the chip is initialised
+        /// once. None is a real state — "the quarterback has not decided" — and
+        /// starting there would leave the chip unbuilt until the first call.
+        /// </summary>
+        private Systems_PlayCall _lastCall = (Systems_PlayCall)(-1);
+
         [Inject]
         public void Construct(
             Systems_GameModel game,
+            Systems_PlayModel play,
             Systems_BoxScore boxScore,
             ISubscriber<Systems_DownResolvedMessage> resolvedSubscriber,
             ISubscriber<Systems_GameOverMessage> gameOverSubscriber,
             ISubscriber<Systems_PlaySnappedMessage> snappedSubscriber)
         {
             _game = game;
+            _play = play;
             _boxScore = boxScore;
             _resolvedSubscriber = resolvedSubscriber;
             _gameOverSubscriber = gameOverSubscriber;
@@ -170,6 +201,12 @@ namespace PoFootball.Views
 
             // Translucent, so the top of the field still reads through the chrome.
             bar.style.backgroundColor = Systems_UiTheme.SurfaceOverField;
+
+            // A lit top edge and a dark bottom one, which is the only way to say
+            // "this is a surface in front of the field" on a panel that has no
+            // shadows. Without it a translucent bar over dark turf reads as a patch
+            // where the grass happens to be a different colour.
+            Systems_UiTheme.ApplyElevation(bar);
             // Slightly more room above than below. The safe-area inset already
             // clears any cutout exactly; this stops the quarter label from sitting
             // flush against the bottom edge of a punch-hole, which reads as a
@@ -242,6 +279,16 @@ namespace PoFootball.Views
                 Systems_UiTheme.TextPrimary, FontStyle.Bold);
             _clock.style.marginRight = Systems_UiTheme.SPACE_L;
 
+            // A FIXED BOX, BECAUSE THE CLOCK IS THE ONE LABEL THAT CHANGES EVERY
+            // SECOND. Its text steps between four and five glyphs — "9:58" then
+            // "10:02" — and the digits are not the same width, so on every tick the
+            // row it sits in re-flowed and the down-and-distance pill beside it
+            // twitched sideways. UI Toolkit exposes no tabular-figure font feature,
+            // so the fix is to stop the label from resizing at all: reserve the
+            // widest case and centre inside it.
+            _clock.style.minWidth = CLOCK_MIN_WIDTH;
+            _clock.style.unityTextAlign = TextAnchor.MiddleCenter;
+
             situation.Add(_quarter);
             situation.Add(_clock);
 
@@ -260,12 +307,93 @@ namespace PoFootball.Views
                 "OWN 25", Systems_UiTheme.TEXT_BODY, Systems_UiTheme.TextMuted);
             _fieldPosition.style.marginLeft = Systems_UiTheme.SPACE_M;
 
+            Systems_UiTheme.ApplyElevation(pill);
+            Systems_UiTheme.EnablePulse(pill);
+
             pill.Add(_downAndDistance);
             pill.Add(_fieldPosition);
             situation.Add(pill);
 
+            situation.Add(BuildCallChip());
+
             _situationPill = pill;
             return situation;
+        }
+
+        /// <summary>
+        /// The play the quarterback committed to, the moment it commits.
+        ///
+        /// WHY IT IS WORTH A PLACE ON A PORTRAIT SCOREBOARD. The call is the single
+        /// most consequential decision in the game and it is made by a discrete
+        /// action head that has its own brain, its own entropy bonus and its own
+        /// telemetry channel (Agent_Telemetry writes Call/Entropy precisely because
+        /// a collapsed play-caller is invisible in the trainer's own numbers). On
+        /// screen it was invisible too: the only way to know a pass had been called
+        /// was to watch for a throw, which is the outcome, not the decision.
+        ///
+        /// IT APPEARS LATE, AND THAT IS THE SIMULATION SHOWING THROUGH. Nothing is
+        /// committed until DROPBACK_TICKS have elapsed — the quarterback reads the
+        /// rush first (see Agent_ActionContract, revision 2) — so the chip is empty
+        /// for the first fraction of a second of every snap. That gap is the read,
+        /// and it is worth seeing.
+        /// </summary>
+        private VisualElement BuildCallChip()
+        {
+            VisualElement chip = Systems_UiTheme.Row();
+            chip.style.marginLeft = Systems_UiTheme.SPACE_S;
+            chip.style.backgroundColor = new Color(
+                Systems_UiTheme.TextPrimary.r,
+                Systems_UiTheme.TextPrimary.g,
+                Systems_UiTheme.TextPrimary.b,
+                0.10f);
+
+            Systems_UiTheme.SetPadding(
+                chip, Systems_UiTheme.SPACE_XS, Systems_UiTheme.SPACE_S);
+
+            Systems_UiTheme.SetRadius(chip, Systems_UiTheme.RADIUS);
+            Systems_UiTheme.ApplyElevation(chip);
+
+            _callLabel = Systems_UiTheme.Text(
+                string.Empty,
+                Systems_UiTheme.TEXT_BODY,
+                Systems_UiTheme.TextPrimary,
+                FontStyle.Bold);
+
+            chip.Add(_callLabel);
+            chip.style.display = DisplayStyle.None;
+
+            _callChip = chip;
+            return chip;
+        }
+
+        /// <summary>
+        /// Guarded on the call itself, so a frame in which nothing was decided
+        /// writes nothing — the same discipline the rest of Update follows.
+        /// </summary>
+        private void RefreshCall()
+        {
+            if (_play == null || _callChip == null)
+            {
+                return;
+            }
+
+            Systems_PlayCall call = _play.Call;
+
+            if (call == _lastCall)
+            {
+                return;
+            }
+
+            _lastCall = call;
+
+            if (call == Systems_PlayCall.None)
+            {
+                _callChip.style.display = DisplayStyle.None;
+                return;
+            }
+
+            _callLabel.text = Systems_DisplayText.PlayCall(call);
+            _callChip.style.display = DisplayStyle.Flex;
         }
 
         private static VisualElement BuildTeamBlock(
@@ -306,6 +434,10 @@ namespace PoFootball.Views
             // the down and distance.
             scoreLabel = Systems_UiTheme.Text(
                 "0", Systems_UiTheme.TEXT_SCORE, Systems_UiTheme.TextPrimary, FontStyle.Bold);
+
+            // Scoring is the rarest and most important thing that happens. It used
+            // to redraw a glyph in place and nothing else.
+            Systems_UiTheme.EnablePulse(scoreLabel);
 
             block.Add(nameRow);
             block.Add(scoreLabel);
@@ -412,6 +544,7 @@ namespace PoFootball.Views
 
             RefreshClock();
             RefreshScoreboard(false);
+            RefreshCall();
         }
 
         private void RefreshClock()
@@ -428,6 +561,15 @@ namespace PoFootball.Views
 
             // A stopped clock is dimmed rather than hidden — a viewer needs to be
             // able to tell "stopped" from "the game is over".
+            //
+            // NO TWO-MINUTE COLOUR, DELIBERATELY. An amber clock inside two minutes
+            // was written here and taken out again: amber is Systems_UiTheme.Accent,
+            // which that class reserves for the chains "so it always means the
+            // line", and the palette note is explicit that every other hue is
+            // already spoken for by the teams or by good and bad news. There is no
+            // free colour for urgency, and quietly spending the chains' one to
+            // invent a signal nobody asked for is how the accent came to mean four
+            // things the last time.
             _clock.style.color = _game.IsClockRunning
                 ? Systems_UiTheme.TextPrimary
                 : Systems_UiTheme.TextMuted;
@@ -439,16 +581,29 @@ namespace PoFootball.Views
         /// </summary>
         private void RefreshScoreboard(bool force)
         {
+            // Pulsed only when the value actually moved, never on the forced build.
+            // A HUD that animated everything on the opening frame would spend the
+            // kickoff drawing attention to numbers nobody has read yet.
             if (force || _game.HomeScore != _lastHomeScore)
             {
                 _lastHomeScore = _game.HomeScore;
                 _homeScore.text = _lastHomeScore.ToString();
+
+                if (!force)
+                {
+                    Systems_UiTheme.Pulse(_homeScore);
+                }
             }
 
             if (force || _game.AwayScore != _lastAwayScore)
             {
                 _lastAwayScore = _game.AwayScore;
                 _awayScore.text = _lastAwayScore.ToString();
+
+                if (!force)
+                {
+                    Systems_UiTheme.Pulse(_awayScore);
+                }
             }
 
             if (force || _game.Quarter != _lastQuarter)
@@ -461,6 +616,11 @@ namespace PoFootball.Views
             {
                 _lastDown = _game.Down;
                 RefreshSituation();
+
+                if (!force && _situationPill != null)
+                {
+                    Systems_UiTheme.Pulse(_situationPill);
+                }
             }
         }
 

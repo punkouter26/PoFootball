@@ -45,6 +45,27 @@ namespace PoFootball.Views
         private static readonly int HalfWidthId = Shader.PropertyToID("_HalfWidthYards");
         private static readonly int EndZoneId = Shader.PropertyToID("_EndZoneYards");
         private static readonly int WearCenterId = Shader.PropertyToID("_WearCenterY");
+        private static readonly int WearAmountId = Shader.PropertyToID("_WearAmount");
+
+        /// <summary>How chewed the turf is on the opening snap. A groundsman's pitch.</summary>
+        private const float WEAR_AT_KICKOFF = 0.12f;
+
+        /// <summary>
+        /// The most worn the field is ever allowed to look. Short of the material's
+        /// authored 0.45 on purpose — past this the wear band starts competing with
+        /// the yard markings for the viewer's attention, and the markings win.
+        /// </summary>
+        private const float WEAR_CEILING = 0.40f;
+
+        /// <summary>
+        /// Plays after which roughly 63% of the total wear has accumulated. A game
+        /// runs about seventy scrimmage plays, so most of the change is visible by
+        /// the end of the first half.
+        /// </summary>
+        private const int WEAR_TIME_CONSTANT_PLAYS = 25;
+
+        /// <summary>Snaps taken this game. Drives the wear curve and nothing else.</summary>
+        private int _playsRun;
 
         [Tooltip("Leave empty to load M_PoFootballTurf from Resources.")]
         [SerializeField] private Material _turfMaterial;
@@ -197,9 +218,28 @@ namespace PoFootball.Views
                 return;
             }
 
+            // THE FIELD GETS WORSE AS THE GAME GOES ON. _WearAmount used to be
+            // whatever the material asset said and never moved, so a pristine pitch
+            // in the fourth quarter looked exactly like a pristine pitch at kickoff
+            // — the shader had a wear term and the game had no wear. Stepping it up
+            // one snap at a time turns it into something a viewer can read: a badly
+            // chewed field means a long game has been played on it.
+            //
+            // Asymptotic rather than linear, so it can never saturate into mud
+            // however many plays a game runs to, and so most of the visible change
+            // lands in the first quarter where a viewer is still learning what the
+            // surface looks like.
+            _playsRun++;
+
+            float wear = Mathf.Lerp(
+                WEAR_AT_KICKOFF,
+                WEAR_CEILING,
+                1f - Mathf.Exp(-_playsRun / (float)WEAR_TIME_CONSTANT_PLAYS));
+
             _renderer.GetPropertyBlock(_properties);
             _properties.SetFloat(
                 WearCenterId, message.LineOfScrimmageY / Systems_FieldModel.YARD);
+            _properties.SetFloat(WearAmountId, wear);
             _renderer.SetPropertyBlock(_properties);
         }
     }

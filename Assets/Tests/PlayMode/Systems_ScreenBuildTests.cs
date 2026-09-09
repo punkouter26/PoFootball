@@ -38,13 +38,35 @@ namespace PoFootball.Tests
             yield return null;
         }
 
-        private static UIDocument FindDocument()
+        /// <summary>
+        /// The UIDocument belonging to one named screen.
+        ///
+        /// THIS USED TO BE FindObjectsByType&lt;UIDocument&gt;()[0], AND THAT WAS ONLY
+        /// EVER CORRECT BY ACCIDENT. It worked while each scene had exactly one
+        /// document. SCN_GAME now has two — the HUD, and the diagnostic overlay on
+        /// its own panel (Systems_PerformanceOverlayView) — and FindObjectsByType
+        /// makes no ordering guarantee, so `documents[0]` became a coin flip between
+        /// them and the HUD assertions failed roughly whenever the overlay won.
+        ///
+        /// Asking for the screen by TYPE says what each test actually means, and it
+        /// stays correct however many panels the scene grows. Every screen is a
+        /// Systems_ScreenView, which is [RequireComponent(typeof(UIDocument))], so
+        /// the component is guaranteed to be on the same GameObject.
+        /// </summary>
+        private static UIDocument FindDocumentFor<TScreen>()
+            where TScreen : Views.Systems_ScreenView
         {
-            UIDocument[] documents =
-                Object.FindObjectsByType<UIDocument>(FindObjectsInactive.Exclude);
+            TScreen screen = Object.FindFirstObjectByType<TScreen>();
 
-            Assert.That(documents, Is.Not.Empty, "no UIDocument in the loaded scene");
-            return documents[0];
+            Assert.That(
+                screen, Is.Not.Null, $"no {typeof(TScreen).Name} in the loaded scene");
+
+            UIDocument document = screen.GetComponent<UIDocument>();
+
+            Assert.That(
+                document, Is.Not.Null, $"{typeof(TScreen).Name} has no UIDocument");
+
+            return document;
         }
 
         /// <summary>Every descendant, flattened — the tree is a handful of elements.</summary>
@@ -100,7 +122,7 @@ namespace PoFootball.Tests
         {
             yield return LoadAndSettle("SCN_MENU");
 
-            UIDocument document = FindDocument();
+            UIDocument document = FindDocumentFor<Views.Systems_MenuView>();
             Assert.That(document.panelSettings, Is.Not.Null, "PanelSettings did not resolve");
 
             VisualElement root = document.rootVisualElement;
@@ -130,7 +152,7 @@ namespace PoFootball.Tests
         {
             yield return LoadAndSettle("SCN_MENU");
 
-            VisualElement root = FindDocument().rootVisualElement;
+            VisualElement root = FindDocumentFor<Views.Systems_MenuView>().rootVisualElement;
 
             Assert.That(root.resolvedStyle.width, Is.GreaterThan(0f), "zero-width panel");
             Assert.That(root.resolvedStyle.height, Is.GreaterThan(0f), "zero-height panel");
@@ -146,7 +168,7 @@ namespace PoFootball.Tests
         {
             yield return LoadAndSettle("SCN_GAME");
 
-            UIDocument document = FindDocument();
+            UIDocument document = FindDocumentFor<Views.Systems_HudView>();
             VisualElement root = document.rootVisualElement;
             Assert.That(root, Is.Not.Null, "rootVisualElement was null");
 
