@@ -240,6 +240,15 @@ namespace PoFootball.Systems
 
             ResolveThrowTarget(thrower, aim, speed, out Vector2 direction);
 
+            // The BALL goes where the quarterback actually pointed, blended toward
+            // the perfect lead. ResolveThrowTarget stays pure and keeps returning
+            // the READ — Systems_IntentOverlayView draws the receiver the passer
+            // selected, which is still the truth about its decision even when the
+            // throw misses. Putting the slack there instead would make the overlay
+            // draw the error rather than the intent, and would silently change what
+            // every caller of that method means.
+            direction = ApplyAimSlack(direction, aim);
+
             thrower.SetCarrier(false);
             _ball.Throw(thrower.Id, thrower.Position, direction * speed);
         }
@@ -361,6 +370,29 @@ namespace PoFootball.Systems
             // lines up, but the ball still has to go somewhere legal.
             direction = target == null ? intent : bestLead.normalized;
             return target;
+        }
+
+        /// <summary>
+        /// Blends the perfectly-led direction toward the quarterback's raw aim by
+        /// <see cref="Systems_SimConstants.PASS_AIM_SLACK"/>.
+        ///
+        /// A plain normalized lerp rather than a slerp: ResolveThrowTarget only
+        /// selects targets whose lead direction has a POSITIVE dot with the intent
+        /// (`along > 0`), so the two vectors are always inside 90 degrees and the
+        /// lerp cannot degenerate. A degenerate or zero aim falls back to the led
+        /// direction unchanged, which is the same fallback ResolveThrowTarget uses.
+        /// </summary>
+        private static Vector2 ApplyAimSlack(Vector2 ledDirection, Vector2 aim)
+        {
+            if (Systems_SimConstants.PASS_AIM_SLACK <= 0f || aim.sqrMagnitude < 1e-4f)
+            {
+                return ledDirection;
+            }
+
+            Vector2 blended = Vector2.Lerp(
+                ledDirection, aim.normalized, Systems_SimConstants.PASS_AIM_SLACK);
+
+            return blended.sqrMagnitude < 1e-4f ? ledDirection : blended.normalized;
         }
 
         /// <summary>

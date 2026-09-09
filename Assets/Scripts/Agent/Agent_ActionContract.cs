@@ -159,7 +159,33 @@ namespace PoFootball.Agents
         /// `.onnx` trained before this stamp is fitted against different dynamics and
         /// Agent_BrainTable will refuse it, which is the point.
         /// </summary>
-        public const int CONTRACT_REVISION = 8;
+        /// Revision 9 changes what the quarterback's aim DOES, and like 2, 5 and 8
+        /// it leaves every shape identical — 36 observations, 4 continuous,
+        /// branches [7, 2] — so nothing about an observation or an action vector
+        /// would catch it and only this number can.
+        ///
+        /// Slots 2 and 3 still mean "which of my receivers": ResolveThrowTarget is
+        /// unchanged and still picks the eligible receiver whose lead point sits
+        /// closest to the aim ray. What changed is that the BALL no longer flies at
+        /// that receiver's exact lead point. Systems_BallSystem.Throw now blends the
+        /// led direction back toward the raw aim by PASS_AIM_SLACK, so aim PRECISION
+        /// affects where the pass ends up, not merely which man it was meant for.
+        ///
+        /// It exists because a pass could not fail. Across all 52 summary windows of
+        /// football_long01 — 2,600,000 steps — Pass/CompletionPerAttempt was exactly
+        /// 1.0000 and Play/InterceptionRate exactly 0.0000, at every stage of
+        /// training. The ball arrived at the receiver's exact future position, so
+        /// the receiver was ~0 m from it while a defender at COVERAGE_CUSHION was
+        /// ~1.0 m, and FindCatcher gives the ball to the closest body inside
+        /// CATCH_RADIUS. INCOMPLETION_PENALTY, INTERCEPTION_REWARD and the whole
+        /// Interception branch of Reward_Terminal were unreachable code — the same
+        /// class of defect revision 8 was created to fix for the kicking game.
+        ///
+        /// A revision 8 brain would load here without complaint and would be
+        /// steering an aim whose precision it was never fitted to care about, which
+        /// is exactly the silent behavioural mismatch this stamp exists for.
+        /// results/football_long01 is fitted against revision 8 and must not load.
+        public const int CONTRACT_REVISION = 9;
 
         /// <summary>Continuous outputs every brain has: drive and steer.</summary>
         public const int BASE_CONTINUOUS_ACTIONS = 2;

@@ -778,6 +778,43 @@ namespace PoFootball.Models
 
         // --- Observations ----------------------------------------------------
         /// <summary>Metres used to normalize relative position observations to [-1, 1].</summary>
+        /// <summary>
+        /// How much of the quarterback's RAW aim survives into the flight
+        /// direction, against the perfectly-led direction ResolveThrowTarget
+        /// computes. 0 is the old behaviour — every throw auto-corrected onto the
+        /// receiver's exact future position. 1 would be revision 4's literal aim,
+        /// which failed for the reason ResolveThrowTarget records.
+        ///
+        /// WHY THIS IS NOT ZERO ANY MORE. Measured over 2,600,000 steps of
+        /// football_long01 — 52 consecutive summary windows — a pass was NEVER
+        /// incomplete and NEVER intercepted: Pass/CompletionPerAttempt was exactly
+        /// 1.0000 and Play/InterceptionRate exactly 0.0000 in every single window,
+        /// from an untrained policy through to a defense that by the end tackled on
+        /// 39% of plays and had doubled its speed.
+        ///
+        /// The cause was geometric rather than a tuning accident. The ball was
+        /// aimed at the receiver's exact lead point, so on arrival the receiver sat
+        /// ~0 m from it while a defender at COVERAGE_CUSHION sat ~1.0 m away, and
+        /// FindCatcher awards the ball to the CLOSEST body inside CATCH_RADIUS 1.2.
+        /// The receiver could not lose. Three things in Reward_Terminal were
+        /// therefore unreachable code — INCOMPLETION_PENALTY, INTERCEPTION_REWARD
+        /// and the Interception branch itself, whose own comment says it must
+        /// outweigh the yardage a long throw earns "or the offense learns that
+        /// heaving it downfield is free". It was free.
+        ///
+        /// It also meant the quarterback's two continuous aim slots had no gradient
+        /// beyond WHICH receiver they selected: precision was discarded, so there
+        /// was nothing to learn about throwing.
+        ///
+        /// 0.35 keeps revision 5's premise — the aim answers "which of my
+        /// receivers", not "solve a continuous control problem" — while making the
+        /// answer cost something when it is sloppy. A quarterback pointing squarely
+        /// at its man still throws nearly perfectly; one pointing vaguely between
+        /// two men throws between them, where a defender can reach it and where
+        /// MAX_FLIGHT_TICKS can run out.
+        /// </summary>
+        public const float PASS_AIM_SLACK = 0.35f;
+
         public const float OBSERVATION_RANGE = 40f;
 
         /// <summary>Agent decisions per second is 50 / this (criterion #15).</summary>

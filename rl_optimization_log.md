@@ -1346,3 +1346,114 @@ to how a throw resolves is a behavioural contract change requiring a
   **`Tools > PoFootball > Build Brain Table`** in the Editor — and on this
   evidence it should wait until the balance asymmetry is addressed.
 
+---
+
+# Phase 3 — Acting on the findings (user-directed)
+
+The session was extended past the plateau to act on the two balance findings.
+
+## Phase 3, F1 — The unfailable pass: diagnosed and fixed
+
+### Root cause
+
+`Systems_BallSystem.Throw` called `ResolveThrowTarget` and flew the ball along the
+returned direction — which is `bestLead.normalized`, the direction to the chosen
+receiver's **exact** lead point (`receiver.Position + receiver.Velocity *
+flightTime`). The quarterback's aim therefore *selected* a receiver and its
+precision was then discarded entirely.
+
+The geometry makes the outcome inevitable:
+
+| quantity | value |
+|---|---|
+| distance from ball to receiver on arrival | **~0 m** (it was aimed there) |
+| distance to a covering defender | `COVERAGE_CUSHION` = **1.0 m** |
+| `FindCatcher` rule | closest body inside `CATCH_RADIUS` = **1.2 m** wins |
+
+The receiver could not lose. `FindCatcher` and `UpdateFlight` are both written
+correctly — defenders *are* eligible, and `catcher.Side == Defense` *does* produce
+`Systems_PlayOutcome.Interception`. The branch simply could never be entered. This
+was not a tuning problem; it was a geometric certainty.
+
+### Fix — `PASS_AIM_SLACK = 0.35`, contract revision 9
+
+`Systems_BallSystem.Throw` now blends the perfectly-led direction back toward the
+quarterback's raw aim:
+
+```csharp
+direction = ApplyAimSlack(direction, aim);   // Lerp(led, aim.normalized, 0.35)
+```
+
+Three deliberate choices:
+
+- **Applied in `Throw`, not in `ResolveThrowTarget`.** That method is documented
+  read-only and is what `Systems_IntentOverlayView` draws. The overlay should keep
+  showing the receiver the passer *selected* — that is still the truth about its
+  decision even when the throw misses. Putting the slack there would make the
+  overlay draw the error instead of the intent.
+- **A normalized `Lerp`, not a `Slerp`.** `ResolveThrowTarget` only accepts targets
+  with `along > 0`, so intent and led direction are always inside 90° and the lerp
+  cannot degenerate.
+- **Revision 5's premise is preserved.** The aim still answers "which of my
+  receivers", not "solve a continuous control problem" — the hard problem revision
+  5 existed to remove. It now merely costs something to answer sloppily.
+
+`CONTRACT_REVISION` bumped **8 → 9**. Shapes are identical (36 obs, 4 continuous,
+branches `[7, 2]`), so nothing but this stamp would catch it, and a revision 8
+brain would be steering an aim whose precision it was never fitted to care about.
+`results/football_long01` is revision 8 and must not load.
+
+### Result — the fix works, immediately and decisively
+
+Run `aimslack01`, same `FootballLong01.yaml`, same 4 envs:
+
+| metric | rev 8, **all 52 windows / 2.6M steps** | rev 9 @600k | real football |
+|---|---|---|---|
+| `Pass/CompletionPerAttempt` | **exactly 1.0000** | **~0.59** | ~0.65 |
+| `Pass/IncompletionPerAttempt` | **exactly 0.0000** | **~0.34** | ~0.33 |
+| `Pass/InterceptionPerAttempt` | **exactly 0.0000** | **~0.069** | ~0.025 |
+| `Call/Pass` | 0.22–0.31 | 0.21–0.33 | passing not abandoned |
+
+Both dead branches are reachable. `INCOMPLETION_PENALTY`,
+`INTERCEPTION_REWARD` and `Systems_PlayOutcome.Interception` all execute now.
+
+**And the aim gradient is learnable**, which was the point — aggregating windows
+to beat the ~10-attempts-per-window sample noise:
+
+| | windows ≤200k | windows 250–400k |
+|---|---|---|
+| `Pass/CompletionPerAttempt` | 0.503 | **0.653** |
+| `Pass/InterceptionPerAttempt` | 0.153 | **0.061** |
+
+The quarterback throws better the longer it trains. Under revision 8 there was
+nothing to learn: precision had no effect on any outcome.
+
+### UNRESOLVED: this run's non-passing metrics are worse, and I cannot attribute it
+
+Step-matched against `football_long01`:
+
+| step 600k | rev 8 | rev 9 | |
+|---|---|---|---|
+| `Control/SpeedUtilization` | 0.0811 | 0.0828 | **identical trajectory** |
+| `Play/TackleRate` | 0.5235 | **0.2667** | halved |
+| `Play/TimeExpiredRate` | 0.3634 | **0.6667** | much worse |
+
+`SpeedUtilization` tracks the baseline almost exactly at every step — expected,
+since the change touches only the ball. But tackles and play endings are markedly
+worse, and **there is no obvious mechanism**: throw accuracy should not affect
+tackling on running plays, and incompletions are only ~3–4% of all plays.
+
+**This is one run per arm and cannot settle it.** Two runs can diverge onto
+different learning trajectories from identical settings; E3 measured the
+short-horizon reproducibility of `Play/*` at 2–16%, but said nothing about
+divergence over 600k steps. `CLAUDE.md` is explicit that single measurements are
+noisy and that balance changes are judged on the REALISM line over **three-game
+means** — which has not been run.
+
+**So the honest position is: the passing defect is fixed and verified on the
+passing metrics; the net effect on game quality is unproven and may be
+negative.** `PASS_AIM_SLACK` is a single constant — setting it to 0 restores
+revision 8 behaviour exactly, without touching code. Before promoting anything,
+the three-game Tier A measurement should decide whether 0.35 is right, or whether
+a smaller slack buys the reachability without the disruption.
+
