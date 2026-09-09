@@ -1,3 +1,5 @@
+using System;
+using MessagePipe;
 using PoFootball.Models;
 using PoFootball.Systems;
 using UnityEngine;
@@ -6,9 +8,18 @@ using VContainer;
 namespace PoFootball.Views
 {
     /// <summary>
-    /// Puts PoFootball/Player on all twenty-two bodies and feeds it the three
+    /// Puts PoFootball/Player on all twenty-two bodies and feeds it the four
     /// pieces of per-player state that change during a play: who has the ball, how
-    /// tired each player is, and how hard each one is running.
+    /// tired each player is, how hard each one is running, and who was just hit.
+    ///
+    /// THE HIT FLASH LIVES HERE RATHER THAN IN Systems_ImpactView, which is where
+    /// it looks like it belongs. Two components writing MaterialPropertyBlocks to
+    /// the same renderer fight: GetPropertyBlock / SetPropertyBlock reads and
+    /// writes the whole block, so whichever ran second would erase the carrier
+    /// glow, the fatigue tint or the lean depending on frame order. One writer per
+    /// renderer is not a style preference, it is the only correct arrangement, and
+    /// this class was already it. The burst at the contact point — which touches
+    /// no player renderer — stays in Systems_ImpactView.
     ///
     /// ONE SWEEPER, NOT TWENTY-TWO COMPONENTS — the same argument
     /// Systems_RoleShapeApplier makes. Twenty-two identical components would be
@@ -38,6 +49,7 @@ namespace PoFootball.Views
         private static readonly int CarrierId = Shader.PropertyToID("_Carrier");
         private static readonly int FatigueId = Shader.PropertyToID("_Fatigue");
         private static readonly int LeanId = Shader.PropertyToID("_Lean");
+        private static readonly int ImpactId = Shader.PropertyToID("_Impact");
 
         /// <summary>
         /// Maximum body narrowing at top speed. Kept small deliberately: this is a
@@ -56,24 +68,44 @@ namespace PoFootball.Views
 
         private const float CARRIER_CHASE_RATE = 9f;
 
+        /// <summary>
+        /// How fast the hit flash falls off, in flash units per second.
+        ///
+        /// NOT CHASED LIKE THE OTHERS. Fatigue and lean track a value the
+        /// simulation is continuously publishing; a hit is an instant. It is set
+        /// hard on arrival and decays linearly, which is the shape an impact has —
+        /// an exponential chase toward zero would give a bright hit a long dim tail
+        /// and leave the field faintly glowing through a whole drive.
+        ///
+        /// 5.5 puts a maximum-force flash at roughly a fifth of a second, which is
+        /// about how long the impact sound rings for.
+        /// </summary>
+        private const float IMPACT_DECAY_RATE = 5.5f;
+
         [Tooltip("Leave empty to load M_PoFootballPlayer from Resources.")]
         [SerializeField] private Material _playerMaterial;
 
         private Systems_PresentationBudget _budget;
+        private ISubscriber<Systems_TackleMessage> _tackleSubscriber;
+        private IDisposable _tackleSubscription;
 
         private Systems_IPlayerHandle[] _handles;
         private SpriteRenderer[] _renderers;
         private float[] _carrierAmount;
         private float[] _fatigueAmount;
         private float[] _leanAmount;
+        private float[] _impactAmount;
         private int _count;
 
         private MaterialPropertyBlock _properties;
 
         [Inject]
-        public void Construct(Systems_PresentationBudget budget)
+        public void Construct(
+            Systems_PresentationBudget budget,
+            ISubscriber<Systems_TackleMessage> tackleSubscriber)
         {
             _budget = budget;
+            _tackleSubscriber = tackleSubscriber;
         }
 
         private void Start()
@@ -102,6 +134,55 @@ namespace PoFootball.Views
             }
 
             Collect();
+
+            // After Collect, so a tackle published on the very first frame lands in
+            // arrays that exist. Collect can also disable this component, in which
+            // case there is nothing to flash and no reason to hold a subscription.
+            if (enabled && _tackleSubscriber != null)
+            {
+                _tackleSubscription = _tackleSubscriber.Subscribe(OnTackle);
+            }
+        }
+
+        private void OnDestroy()
+        {
+            _tackleSubscription?.Dispose();
+            _tackleSubscription = null;
+        }
+
+        /// <summary>
+        /// Lights the two bodies that just collided, at the strength the collision
+        /// actually had.
+        ///
+        /// Normalized over exactly the range Systems_AudioView.OnTackle and
+        /// Systems_ImpactView use — TACKLE_CLOSING_SPEED to MAX_BODY_SPEED — so the
+        /// flash, the burst and the crack are three renderings of one number rather
+        /// than three independently tuned effects that drift apart.
+        ///
+        /// Mathf.Max rather than assignment: a carrier taken down by three
+        /// defenders inside a few ticks should keep the hardest hit, not whichever
+        /// arrived last.
+        /// </summary>
+        private void OnTackle(Systems_TackleMessage message)
+        {
+            float force = Mathf.InverseLerp(
+                Systems_SimConstants.TACKLE_CLOSING_SPEED,
+                Systems_SimConstants.MAX_BODY_SPEED,
+                message.ClosingSpeed);
+
+            // A glancing hit still reads, or the effect would only ever appear on
+            // the collisions that were already obvious.
+            float flash = Mathf.Clamp01(0.35f + (0.65f * force));
+
+            for (int index = 0; index < _count; index++)
+            {
+                int id = _handles[index].Id;
+
+                if (id == message.CarrierId || id == message.TacklerId)
+                {
+                    _impactAmount[index] = Mathf.Max(_impactAmount[index], flash);
+                }
+            }
         }
 
         private void Collect()
@@ -116,6 +197,7 @@ namespace PoFootball.Views
             _carrierAmount = new float[capacity];
             _fatigueAmount = new float[capacity];
             _leanAmount = new float[capacity];
+            _impactAmount = new float[capacity];
             _properties = new MaterialPropertyBlock();
 
             for (int index = 0; index < behaviours.Length && _count < capacity; index++)
@@ -160,6 +242,7 @@ namespace PoFootball.Views
         {
             float chase = 1f - Mathf.Exp(-STATE_CHASE_RATE * Time.deltaTime);
             float carrierChase = 1f - Mathf.Exp(-CARRIER_CHASE_RATE * Time.deltaTime);
+            float impactDecay = IMPACT_DECAY_RATE * Time.deltaTime;
 
             for (int index = 0; index < _count; index++)
             {
@@ -183,10 +266,14 @@ namespace PoFootball.Views
                     2f, Systems_SimConstants.MAX_BODY_SPEED, speed) * MAX_LEAN;
                 _leanAmount[index] = Mathf.Lerp(_leanAmount[index], leanTarget, chase);
 
+                _impactAmount[index] = Mathf.Max(
+                    0f, _impactAmount[index] - impactDecay);
+
                 renderer.GetPropertyBlock(_properties);
                 _properties.SetFloat(CarrierId, _carrierAmount[index]);
                 _properties.SetFloat(FatigueId, _fatigueAmount[index]);
                 _properties.SetFloat(LeanId, _leanAmount[index]);
+                _properties.SetFloat(ImpactId, _impactAmount[index]);
                 renderer.SetPropertyBlock(_properties);
             }
         }

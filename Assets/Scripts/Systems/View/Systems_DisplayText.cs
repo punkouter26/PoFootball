@@ -145,6 +145,31 @@ namespace PoFootball.Views
             }
         }
 
+        /// <summary>
+        /// The quarterback's committed call, for the HUD chip.
+        ///
+        /// Every branch returns a literal, so showing the call costs no allocation
+        /// at all — which matters because it is written on the frame a play
+        /// commits and that frame is the busiest one of the snap.
+        ///
+        /// Named the way a broadcast graphic would name them rather than the way
+        /// the enum does: a viewer knows what a keeper and a dive are, and nobody
+        /// outside this codebase has heard of a HandoffFullback.
+        /// </summary>
+        public static string PlayCall(Systems_PlayCall call)
+        {
+            switch (call)
+            {
+                case Systems_PlayCall.KeepQuarterback: return "QB KEEP";
+                case Systems_PlayCall.HandoffFullback: return "FB DIVE";
+                case Systems_PlayCall.HandoffHalfback: return "HB RUN";
+                case Systems_PlayCall.Pass: return "PASS";
+                case Systems_PlayCall.Punt: return "PUNT";
+                case Systems_PlayCall.FieldGoal: return "FIELD GOAL";
+                default: return string.Empty;
+            }
+        }
+
         /// <summary>Signed yardage the way a caption reads it: "+7 yd", "-2 yd", "no gain".</summary>
         public static string YardageDetail(float yards)
         {

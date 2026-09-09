@@ -236,15 +236,28 @@ namespace PoFootball.Systems
         /// </summary>
         public void Throw(Systems_IPlayerHandle thrower, Vector2 aim, float power)
         {
-            float speed = Mathf.Lerp(
-                Systems_SimConstants.PASS_SPEED_MIN,
-                Systems_SimConstants.PASS_SPEED_MAX,
-                Mathf.Clamp01((power + 1f) * 0.5f));
+            float speed = ThrowSpeedFor(power);
 
-            Vector2 direction = ResolveThrowDirection(thrower, aim, speed);
+            ResolveThrowTarget(thrower, aim, speed, out Vector2 direction);
 
             thrower.SetCarrier(false);
             _ball.Throw(thrower.Id, thrower.Position, direction * speed);
+        }
+
+        /// <summary>
+        /// How fast a pass thrown at this power flies.
+        ///
+        /// Public and static so the intent overlay can lead the receiver by the
+        /// same flight time the throw will actually use. It is arithmetic on two
+        /// constants; the alternative was a view re-deriving it from
+        /// Systems_SimConstants and drifting the first time either bound moved.
+        /// </summary>
+        public static float ThrowSpeedFor(float power)
+        {
+            return Mathf.Lerp(
+                Systems_SimConstants.PASS_SPEED_MIN,
+                Systems_SimConstants.PASS_SPEED_MAX,
+                Mathf.Clamp01((power + 1f) * 0.5f));
         }
 
         /// <summary>
@@ -271,9 +284,20 @@ namespace PoFootball.Systems
         /// Linemen are excluded because they are ineligible receivers, and the
         /// thrower is excluded because it cannot catch its own pass — the same rule
         /// FindCatcher already enforces on the receiving end.
+        ///
+        /// PUBLIC SO THE OVERLAY DRAWS THE READ THE QUARTERBACK WILL ACTUALLY MAKE.
+        /// Systems_IntentOverlayView shows a line from the passer to the receiver
+        /// its aim currently selects, and a view that re-implemented the off-ray
+        /// rule below would start lying the first time this one was tuned — which
+        /// it already has been once, for the reason recorded above. Returning the
+        /// same handle and the same direction the throw itself uses makes that
+        /// impossible by construction.
+        ///
+        /// Read-only despite living on a system: it inspects the registry and
+        /// mutates nothing.
         /// </summary>
-        private Vector2 ResolveThrowDirection(
-            Systems_IPlayerHandle thrower, Vector2 aim, float speed)
+        public Systems_IPlayerHandle ResolveThrowTarget(
+            Systems_IPlayerHandle thrower, Vector2 aim, float speed, out Vector2 direction)
         {
             Vector2 intent = aim.sqrMagnitude < 1e-4f ? Vector2.up : aim.normalized;
 
@@ -335,7 +359,8 @@ namespace PoFootball.Systems
 
             // No eligible receiver on the field at all — a formation this game never
             // lines up, but the ball still has to go somewhere legal.
-            return target == null ? intent : bestLead.normalized;
+            direction = target == null ? intent : bestLead.normalized;
+            return target;
         }
 
         /// <summary>
@@ -344,7 +369,7 @@ namespace PoFootball.Systems
         /// catch radius, and iterating it would chase a moving target for no
         /// visible gain.
         /// </summary>
-        private static Vector2 LeadPoint(
+        public static Vector2 LeadPoint(
             Vector2 origin, Systems_IPlayerHandle receiver, float speed)
         {
             if (speed <= 0f)

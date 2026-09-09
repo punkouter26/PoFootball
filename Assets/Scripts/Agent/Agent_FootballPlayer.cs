@@ -67,6 +67,9 @@ namespace PoFootball.Agents
         /// </summary>
         private const int PLAY_CALL_BRANCH = 0;
 
+        /// <summary>The other branch: hold the ball, or release it.</summary>
+        private const int THROW_BRANCH = 1;
+
         // --- Heuristic play-call thresholds ----------------------------------
         //
         // These shape ChooseCall only. They are NOT part of the action contract and
@@ -183,6 +186,15 @@ namespace PoFootball.Agents
         /// </summary>
         private Systems_SimMode _simMode = Systems_SimMode.Training;
 
+        /// <summary>
+        /// Where the action vector is reported for the intent overlay to draw.
+        /// Never null once Construct has run — the scope binds
+        /// Systems_NullIntentSink when nothing is watching — but it stays
+        /// null-checked because an agent dropped into a scene with no lifetime
+        /// scope gets no Construct at all, which is a case Awake already supports.
+        /// </summary>
+        private Systems_IIntentSink _intentSink;
+
         public int Id => _formationSlotIndex;
 
         public Systems_PlayerRole Role => _role;
@@ -210,7 +222,8 @@ namespace PoFootball.Agents
             Systems_FieldModel field,
             Systems_PlayerRegistry registry,
             Systems_Referee referee,
-            Systems_SimMode simMode)
+            Systems_SimMode simMode,
+            Systems_IIntentSink intentSink)
         {
             _play = play;
             _ball = ball;
@@ -219,6 +232,7 @@ namespace PoFootball.Agents
             _registry = registry;
             _referee = referee;
             _simMode = simMode;
+            _intentSink = intentSink;
 
             // Before Register, not after: the registry hands this instance to the
             // rest of the graph, and Role and Side are cached fields now rather
@@ -506,9 +520,61 @@ namespace PoFootball.Agents
                 HandleQuarterback(actions);
             }
 
+            ReportIntent(actions, drive, steer);
+
             AccumulateFatigue(driveForce, steerTorque);
             ClampSpeed();
             AwardDenseRewards();
+        }
+
+        /// <summary>
+        /// Hands the action vector to presentation, unchanged.
+        ///
+        /// AFTER HandleQuarterback, NOT BEFORE, so an overlay drawn from this sees
+        /// the same latched play call the rest of the frame will. The values
+        /// reported are the CLAMPED drive and steer that were actually applied to
+        /// the rigidbody rather than the raw buffer, because an arrow drawn from a
+        /// policy's unclamped 3.4 would be three times longer than the force it
+        /// produced.
+        ///
+        /// The throw flag is the policy's REQUEST, not the throw. HandleQuarterback
+        /// refuses a release that is out of window, past the line of scrimmage or
+        /// from a quarterback that is not holding the ball, and every one of those
+        /// is worth being able to see — a quarterback repeatedly asking to throw
+        /// from ten yards downfield is a policy telling you something, and an
+        /// overlay that only lit up on legal throws would hide it.
+        ///
+        /// Costs one struct copy per player per decision. The array store behind
+        /// the interface is the whole implementation in a game and an empty method
+        /// in training (Systems_NullIntentSink).
+        /// </summary>
+        private void ReportIntent(ActionBuffers actions, float drive, float steer)
+        {
+            if (_intentSink == null)
+            {
+                return;
+            }
+
+            Vector2 aim = Vector2.zero;
+            bool throwArmed = false;
+
+            if (_hasQuarterbackActions)
+            {
+                ActionSegment<float> continuous = actions.ContinuousActions;
+                aim = new Vector2(continuous[2], continuous[3]);
+                throwArmed = actions.DiscreteActions[THROW_BRANCH] == 1;
+            }
+
+            _intentSink.Write(
+                _formationSlotIndex,
+                new Systems_PlayerIntent(
+                    drive,
+                    steer,
+                    _transform.up,
+                    aim,
+                    _hasQuarterbackActions,
+                    throwArmed,
+                    _play.PhysicsTick));
         }
 
         /// <summary>

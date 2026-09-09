@@ -58,8 +58,10 @@ namespace PoFootball.Systems
             // switches itself off when it says no, which is why there is exactly
             // one place that decides whether a graphics pass is allowed to cost
             // a training run anything.
-            builder.RegisterInstance(
-                new Systems_PresentationBudget(_simMode, _presentationEffects));
+            Systems_PresentationBudget presentationBudget =
+                new Systems_PresentationBudget(_simMode, _presentationEffects);
+
+            builder.RegisterInstance(presentationBudget);
 
             // The mode itself, for the one consumer that needs the distinction and
             // cannot get it from the presentation budget: Agent_FootballPlayer turns
@@ -68,6 +70,25 @@ namespace PoFootball.Systems
             // widening Systems_PresentationBudget keeps each of them answering
             // exactly one thing (.claude/rules/architecture.md).
             builder.RegisterInstance(_simMode);
+
+            // Where every player reports the action it just applied, so the intent
+            // overlay can draw the decision rather than a guess at it. Bound on the
+            // presentation budget rather than on the mode, because "is anyone
+            // watching" is exactly the question being asked — a Game-mode session
+            // launched with effects cleared for profiling has no more use for it
+            // than a trainer does. Both bindings satisfy both interfaces, so
+            // neither the agent that writes nor the view that reads carries a
+            // branch (see Systems_IIntentSink).
+            if (presentationBudget.EffectsEnabled)
+            {
+                builder.Register<Systems_IntentModel>(Lifetime.Singleton)
+                    .As<Systems_IIntentSink, Systems_IIntentSource>();
+            }
+            else
+            {
+                builder.Register<Systems_NullIntentSink>(Lifetime.Singleton)
+                    .As<Systems_IIntentSink, Systems_IIntentSource>();
+            }
 
             builder.Register<Systems_PlayModel>(Lifetime.Singleton);
             builder.Register<Systems_BallModel>(Lifetime.Singleton);

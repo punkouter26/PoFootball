@@ -126,6 +126,29 @@ half4 PlayerBody(float2 uv, half4 tint)
         body += _CarrierColor.rgb * band * pulse * carrier * 1.35;
     }
 
+    // --- Impact -------------------------------------------------------------
+    // The two bodies in a collision, for about a fifth of a second after it.
+    //
+    // FILL AND RIM TOGETHER, not one or the other. Lifting only the rim reads as
+    // a selection highlight — the same language the carrier glow above already
+    // owns, and putting a second meaning on it would make neither legible. Lifting
+    // only the fill reads as a team colour changing. Blowing out both at once is
+    // what reads as a body being hit, and it survives a pile-up, which is the only
+    // place tackles in this simulation actually happen.
+    //
+    // The amount is closing speed, normalized over exactly the range
+    // Systems_AudioView scales the impact sound by, decayed by
+    // Systems_PlayerAppearanceView. A hard hit whitens the whole shape; a glancing
+    // one barely registers, which is correct — it barely was one.
+    float impact = saturate(_Impact);
+    if (impact > 0.0)
+    {
+        float rim = 1.0 - smoothstep(0.30, 0.75, coverage);
+
+        body = lerp(body, _ImpactColor.rgb, impact * 0.55);
+        body += _ImpactColor.rgb * rim * impact * 1.6;
+    }
+
     return half4(body, alpha * tint.a);
 }
 

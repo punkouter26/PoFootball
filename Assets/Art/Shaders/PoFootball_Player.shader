@@ -21,6 +21,11 @@
 //   viewer ever sees the fatigue term the simulation has been accumulating
 //   from applied force since milestone one.
 //
+//   Impact — a brief whitening of fill and rim on the two bodies in a
+//   collision, scaled by the closing speed the tackle rule actually measured.
+//   The whistle and the burst say a tackle happened; this is the only thing
+//   that says WHO was in it, which in a seven-man pile is the harder question.
+//
 // PER-INSTANCE STATE. Carrier and fatigue arrive through a MaterialPropertyBlock
 // (see Systems_PlayerAppearanceView), which is the pattern .claude/rules/
 // performance.md prescribes over touching renderer.material. It does cost the
@@ -52,6 +57,13 @@ Shader "PoFootball/Player"
         _Fatigue("Fatigue", Range(0, 1)) = 0
         _FatigueDesaturation("Fatigue desaturation", Range(0, 1)) = 0.65
 
+        // The hit. Driven from Systems_TackleMessage.ClosingSpeed and decayed by
+        // Systems_PlayerAppearanceView, so the two bodies that just collided flash
+        // as hard as the collision actually was. It is the same number the impact
+        // burst and the impact sound are scaled by.
+        _Impact("Impact flash", Range(0, 1)) = 0
+        _ImpactColor("Impact flash colour", Color) = (1, 0.98, 0.9, 1)
+
         // Sprint narrowing, applied in the VERTEX stage across the body's local
         // X. It must be a vertex offset and not a transform scale: the collider
         // is a child of the same transform, so scaling the GameObject would
@@ -82,13 +94,15 @@ Shader "PoFootball/Player"
             half4 _Color;                   \
             half4 _OutlineColor;            \
             half4 _CarrierColor;            \
+            half4 _ImpactColor;             \
             float _OutlineWidth;            \
             float _BevelDepth;              \
             float _BevelLift;               \
             float _Carrier;                 \
             float _Fatigue;                 \
             float _FatigueDesaturation;     \
-            float _Lean;
+            float _Lean;                    \
+            float _Impact;
 
         // Narrows the body across its local X. The rigidbody already rotates the
         // player to face its direction of travel, so local X is "across the
