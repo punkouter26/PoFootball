@@ -419,7 +419,45 @@ namespace PoFootball.Models
         ///
         /// Read by the heuristic only. A trained policy chooses its own targets.
         /// </summary>
-        public const int DEEP_SHOT_EVERY_N_PLAYS = 2;
+        /// SETTLED AT 4 BY BISECTION, WITH BOTH ENDPOINTS MEASURED OVER THREE GAMES
+        /// EACH — single games here range 6.94 to 9.34 on one config, so nothing
+        /// below a three-game mean is evidence:
+        ///
+        ///     N = 2   8.09 yards a play, 0.47 touchdowns a drive
+        ///     N = 4   4.89 yards a play, 0.33 touchdowns a drive   <- ships
+        ///     N = 6   ~4.1 yards a play, 0.23 touchdowns a drive
+        ///
+        /// Real football is 5.5 and 0.20-0.35. N = 4 puts touchdowns per drive
+        /// inside that band and yards per play about eleven percent under target,
+        /// which is comfortably inside the spread of the three games behind it
+        /// (5.35, 4.03, 5.29). Closing that last half-yard is a real option — N = 3
+        /// is the obvious next probe — but the difference is smaller than the noise
+        /// on a three-game mean, so it needs more games than it is worth to confirm.
+        ///
+        /// RAISED FROM 2, AND THE MEASUREMENT IS THE POINT. Alternate
+        /// plays meant HALF of all snaps were a scripted deep shot, which is not a
+        /// mix any offense has ever run — the NFL throws past fifteen yards on
+        /// roughly one attempt in six.
+        ///
+        /// What it produced, from a live box score across a full game: completions
+        /// averaging 48.6 yards for one side and 12.2 for the other, against 2.6 and
+        /// 0.9 yards a CARRY. So the offense was not hard to stop on the ground at
+        /// all — it was scoring almost entirely on explosive throws, and that is
+        /// where a three-game mean of 8.09 yards a play against real football's 5.5
+        /// was coming from.
+        ///
+        /// This matters because the obvious reading of "too many yards per play" is
+        /// that tackling is too weak, and every knob for that — SUSTAINED_TACKLE_
+        /// TICKS, TACKLE_CLOSING_SPEED, EVASION_LATERAL — would have been turned the
+        /// wrong way. A run game already at 0.9 yards a carry does not need to be
+        /// made harder. The deep shot is the term that was out of proportion, so the
+        /// deep shot is the term that moved.
+        ///
+        /// Six keeps the deep threat the constant exists for — the summary above is
+        /// still true, and a defense that never has to respect anything behind it
+        /// collapses onto the run — while making it the exception a deep shot
+        /// actually is.
+        public const int DEEP_SHOT_EVERY_N_PLAYS = 4;
 
         /// <summary>
         /// How far past the line of scrimmage a receiver must be, in yards, before

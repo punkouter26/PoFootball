@@ -89,6 +89,55 @@ namespace PoFootball.Views
         private const float LATERAL_TRACKING = 0.55f;
 
         /// <summary>
+        /// Clearance beyond the widest player, in metres, so a receiver on the
+        /// sideline is framed rather than sitting exactly on the edge of the screen.
+        /// One player radius plus a little air.
+        /// </summary>
+        private const float FORMATION_MARGIN = 1.5f;
+
+        /// <summary>
+        /// The tight shot, sized so the whole formation actually fits THIS screen.
+        ///
+        /// WHY THIS IS NOT A CONSTANT ANY MORE, AND WHAT IT WAS HIDING. TIGHT_SIZE
+        /// is a half-HEIGHT; what has to cover the formation is the half-WIDTH, and
+        /// those differ by the aspect ratio. At the 9:16 this game is designed for,
+        /// 22 x 0.5625 = 12.38 m against a formation that splits to
+        /// Systems_Formation.WidestSlotX = 12.0 — it fitted, with 0.38 m to spare,
+        /// which is less than a player radius.
+        ///
+        /// Every portrait screen TALLER than 16:9 has a smaller aspect and therefore
+        /// a narrower shot, and modern handsets are essentially all taller than that:
+        ///
+        ///     9:16  (design)   half-width 12.38 m   fits
+        ///     20:9  (typical)  half-width  9.90 m   receivers 2.1 m off screen
+        ///     37:16 (tall)     half-width  9.51 m   receivers 2.5 m off screen
+        ///
+        /// So on the actual shipping target both split receivers and both corners
+        /// were cropped out of frame at the snap — six of the twenty-two players on
+        /// the field, including every player the pass game is about. Nothing failed
+        /// and nothing logged; the shot was simply wrong on every real device.
+        ///
+        /// Taking the max keeps the designed framing wherever it is already wide
+        /// enough and opens up only as far as the screen forces. A 9:16 device gets
+        /// exactly the shot that was tuned for it.
+        /// </summary>
+        private float TightSize()
+        {
+            float required =
+                (Systems_Formation.WidestSlotX + FORMATION_MARGIN) / Mathf.Max(_camera.aspect, 0.01f);
+
+            return Mathf.Max(TIGHT_SIZE, required);
+        }
+
+        /// <summary>
+        /// The wide shot, never allowed to be tighter than the snap shot.
+        /// </summary>
+        private float WideSize()
+        {
+            return Mathf.Max(WIDE_SIZE, TightSize());
+        }
+
+        /// <summary>
         /// How far ahead of the ball the shot sits, as a fraction of the half-height
         /// currently being framed.
         ///
@@ -205,21 +254,24 @@ namespace PoFootball.Views
         /// </summary>
         private float FramingSize()
         {
+            float tight = TightSize();
+            float wide = WideSize();
+
             if (_play == null)
             {
-                return WIDE_SIZE;
+                return wide;
             }
 
             if (_ball.IsInFlight)
             {
-                return WIDE_SIZE;
+                return wide;
             }
 
             float yardsFromScrimmage =
                 Mathf.Abs(_ball.Position.y - _play.LineOfScrimmageY) / Systems_FieldModel.YARD;
 
             float openness = Mathf.Clamp01(yardsFromScrimmage / FULL_WIDE_YARDS);
-            return Mathf.Lerp(TIGHT_SIZE, WIDE_SIZE, openness);
+            return Mathf.Lerp(tight, wide, openness);
         }
 
         /// <summary>
@@ -284,14 +336,15 @@ namespace PoFootball.Views
             // Snap the shot straight to the new line of scrimmage. Damping across
             // a spot change would send the camera sailing sixty yards down the
             // field between plays.
-            _camera.orthographicSize = TIGHT_SIZE;
+            float tight = TightSize();
+            _camera.orthographicSize = tight;
 
             // Same downfield lead the steady-state framing uses, or the shot would
             // cut to the line of scrimmage and then immediately drift upfield by the
             // lead on the next frame.
             Vector2 spot = ClampToField(
-                new Vector2(0f, message.LineOfScrimmageY + (TIGHT_SIZE * DOWNFIELD_LEAD)),
-                TIGHT_SIZE);
+                new Vector2(0f, message.LineOfScrimmageY + (tight * DOWNFIELD_LEAD)),
+                tight);
 
             _transform.position = new Vector3(spot.x, spot.y, _homeZ);
         }

@@ -73,6 +73,44 @@ namespace PoFootball.Systems
         }
 
         /// <summary>
+        /// How far the widest player in the formation lines up from the centre of
+        /// the field, in metres. Currently the split receivers and the corners over
+        /// them, at 12.0.
+        ///
+        /// COMPUTED FROM THE TABLE RATHER THAN WRITTEN DOWN, because the one place
+        /// that needs it is Systems_BroadcastCameraView — it sizes the snap shot so
+        /// the whole formation fits on screen — and a hand-copied number is exactly
+        /// the kind that goes stale. It already had: the camera's own comments
+        /// justified its framing against "about x = +/-11 m" while this table has
+        /// said 12.0 for both the receivers and the corners, so the tight shot was
+        /// sized a metre short of the formation it was supposed to frame even at the
+        /// aspect it was designed for.
+        ///
+        /// Static readonly rather than const: it is a fold over the table, so it
+        /// cannot drift from it.
+        /// </summary>
+        public static readonly float WidestSlotX = ComputeWidestSlotX();
+
+        private static float ComputeWidestSlotX()
+        {
+            float widest = 0f;
+
+            for (int index = 0; index < Slots.Length; index++)
+            {
+                float distance = Slots[index].OffsetX < 0f
+                    ? -Slots[index].OffsetX
+                    : Slots[index].OffsetX;
+
+                if (distance > widest)
+                {
+                    widest = distance;
+                }
+            }
+
+            return widest;
+        }
+
+        /// <summary>
         /// The offensive slot a given defender covers man-to-man, or -1 for a
         /// defender with no assignment — which means the deep middle.
         ///

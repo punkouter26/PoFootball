@@ -130,12 +130,37 @@ namespace PoFootball.Views
             }
         }
 
+        /// <summary>
+        /// Whether this build is allowed to show a diagnostic panel at all.
+        ///
+        /// THE SCENE FLAG WAS NOT A RELEASE GATE, and it was being used as one. The
+        /// only conditions on the overlay were _enableOverlay — serialized true in
+        /// SCN_GAME — and Systems_PresentationBudget.EffectsEnabled, which is true
+        /// for ANY non-headless run in Systems_SimMode.Game. A signed Play Store
+        /// build is exactly that, so a retail install rendered a pill reading
+        /// "16.8 ms" over the game, one tap from a panel quoting draw calls and Mono
+        /// heap. Measured on a real run, not inferred.
+        ///
+        /// Shipping the component but not the panel is deliberate: the scene keeps
+        /// one object graph across every build type, and a development build gets
+        /// its diagnostics back with no scene edit.
+        ///
+        /// Debug.isDebugBuild rather than a #if on DEVELOPMENT_BUILD, because Unity
+        /// 6.6 deprecates that symbol (UAC0009) and points at this property instead.
+        /// It is true in the editor and in any player built with "Development Build"
+        /// ticked, and false in exactly the case that matters — the signed release
+        /// bundle that goes to Play.
+        /// </summary>
+        private static bool DiagnosticsAllowed => Debug.isDebugBuild;
+
         protected override void Start()
         {
-            // Never in training or headless. A diagnostic panel that costs a
-            // training sweep wall-clock is measuring the wrong thing, and there is
-            // no display to draw it on in batch mode.
-            if (!_enableOverlay || _budget == null || !_budget.EffectsEnabled)
+            // Never in a release player, never in training, never headless. A
+            // diagnostic panel that costs a training sweep wall-clock is measuring
+            // the wrong thing, there is no display to draw it on in batch mode, and
+            // a retail build has no business showing either.
+            if (!DiagnosticsAllowed || !_enableOverlay || _budget == null
+                || !_budget.EffectsEnabled)
             {
                 enabled = false;
                 return;

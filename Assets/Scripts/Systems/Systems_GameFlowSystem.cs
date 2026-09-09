@@ -192,7 +192,40 @@ namespace PoFootball.Systems
 
             Systems_TeamId offense = _game.Possession;
             float spotY = ClampToPlayableY(message.Spot.y);
-            float yardsGained = (spotY - _game.LineOfScrimmageY) / Systems_FieldModel.YARD;
+
+            // AN INCOMPLETE PASS GAINS NOTHING, and until this line existed it was
+            // credited with the entire distance the ball flew.
+            //
+            // The referee ends an incompletion at Systems_BallModel.Position — where
+            // the ball came down, which is the whole point of the throw and is
+            // typically fifteen to thirty yards downfield. Resolve knows better and
+            // returns the ball to the previous spot for the CHAINS, so down and
+            // distance were always right and nothing on the scoreboard ever looked
+            // wrong. But yardsGained is measured here, from the landing spot, before
+            // any of that — and it is what feeds both the box score and the REALISM
+            // verdict line. So every incomplete deep ball quietly added twenty-odd
+            // yards to the offense's total and to yards-per-play, while the drive it
+            // belonged to correctly went nowhere.
+            //
+            // Measured across two full games this was a large part of an 8.65
+            // yards-per-play average against real football's 5.5, and it is why a
+            // team could post 394 yards with three first downs: the yards were
+            // real in the box score and imaginary on the field.
+            // An interception is the same case: the ball travelled, the OFFENSE did
+            // not. Crediting the throw's distance to the team that just lost the
+            // ball put twenty-odd yards on the board for the worst possible outcome,
+            // and it was the last hole in the box score's total = rushing + passing
+            // identity once the incompletion case above was closed.
+            //
+            // A fumble is deliberately NOT in this list. The carrier really did
+            // carry the ball those yards before losing it, so they are his.
+            bool ballNeverAdvanced =
+                message.Outcome == Systems_PlayOutcome.Incompletion
+                || message.Outcome == Systems_PlayOutcome.Interception;
+
+            float yardsGained = ballNeverAdvanced
+                ? 0f
+                : (spotY - _game.LineOfScrimmageY) / Systems_FieldModel.YARD;
 
             bool clockStops = StopsClock(message.Outcome);
             int pointsScored = 0;

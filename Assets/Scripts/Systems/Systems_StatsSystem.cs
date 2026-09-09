@@ -62,9 +62,30 @@ namespace PoFootball.Systems
             Systems_TeamStatLine offense = _boxScore.Team(message.Offense);
             Systems_TeamStatLine defense = _boxScore.Team(message.Offense.Opponent());
 
-            bool isPass = message.Call == Systems_PlayCall.Pass;
             bool completed = _play.PassCompleted;
             float yards = message.YardsGained;
+
+            // A CALLED PASS THAT WAS NEVER THROWN IS A RUN, and booking it as a pass
+            // is what broke the one identity every box score has to satisfy:
+            // total yards = rushing + passing.
+            //
+            // AddPlay adds every yard to TotalYards but only adds to PassingYards on
+            // a COMPLETION, so a quarterback who kept the ball and scrambled —
+            // Systems_PlayCall.Pass, PassCompleted false, thirty yards gained — put
+            // thirty yards into the total and nothing into either split. Two
+            // measured games: 394 total against 23 rushing and 301 passing, a
+            // seventy-yard hole, and 239 against 1 first down. The card on the menu
+            // showed columns that did not add up to their own total.
+            //
+            // Splitting on WHETHER THE BALL LEFT HIS HAND rather than on the call
+            // fixes both halves at once. A scramble becomes a carry, which is what
+            // real football calls it; a genuine throw stays a pass attempt whether
+            // it was caught, dropped or picked off; and every yard now lands in
+            // exactly one of the two columns.
+            bool wasThrown = message.Call == Systems_PlayCall.Pass
+                && (completed
+                    || message.Outcome == Systems_PlayOutcome.Incompletion
+                    || message.Outcome == Systems_PlayOutcome.Interception);
 
             // A KICK IS NOT A RUSHING ATTEMPT. AddPlay splits on isPass alone, so a
             // punt or a field goal — neither of which is a pass — was booked as a
@@ -82,7 +103,7 @@ namespace PoFootball.Systems
                 return;
             }
 
-            offense.AddPlay(yards, isPass, completed);
+            offense.AddPlay(yards, wasThrown, completed);
             offense.AddTimeOfPossession(message.ClockSecondsBurned);
 
             // Scores are read off the game model rather than accumulated from

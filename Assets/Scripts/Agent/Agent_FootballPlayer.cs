@@ -1020,6 +1020,61 @@ namespace PoFootball.Agents
                 return new Vector2(position.x, Mathf.Max(dropback, floor));
             }
 
+            // THE MESH POINT. On a latched handoff the quarterback runs AT THE BACK,
+            // not at the goal line.
+            //
+            // THIS IS THE STEP THAT WAS MISSING, and IsHoldingThePocket's summary
+            // has always claimed it existed: "on a handoff the quarterback's job is
+            // to close on the back, and Systems_BallSystem.TryHandoff completes on
+            // proximity alone." The first half of that was never implemented. A
+            // handoff drops out of the pocket branch the moment it latches and then
+            // fell straight through to the ordinary carrier branch below — so the
+            // quarterback turned and ran at the goal line still holding the ball,
+            // while the back, no longer clearing the lane either, ran at the goal
+            // line too. Two players four metres apart running the same direction at
+            // the same speed close on each other only by accident, and TryHandoff
+            // needs them inside HANDOFF_RADIUS — two metres.
+            //
+            // Measured over two full games: every handoff that failed to mesh became
+            // a quarterback scramble, 11 of 80 plays in one game ended on the
+            // MAX_PHYSICS_TICKS cap rather than on football, and one side finished a
+            // game with MINUS 44 rushing yards.
+            //
+            // Targeting the back's live position rather than a fixed spot is what
+            // makes it converge: the back is moving, and a static mesh point behind
+            // the line would be stale by the time either arrived.
+            // BOTH SIDES CLOSE ON EACH OTHER, and that redundancy is the point.
+            //
+            // A shallower mesh was tried and measured, because with both closing the
+            // exchange lands near the MIDPOINT — the quarterback lines up 2.5 m
+            // behind the line and the halfback 6.5 m, so the ball changes hands
+            // around 4.5 m deep and the back has four yards to make up before he
+            // reaches the line at all. That really is why a carry averages a couple
+            // of yards here.
+            //
+            // Having the quarterback HOLD his depth and let the back come to him
+            // fixes the geometry and breaks the play. Measured over a full game:
+            // yards per play went NEGATIVE at -0.27, twenty-three of eighty-eight
+            // plays died on the MAX_PHYSICS_TICKS cap, and there were sixteen punts.
+            // A stationary quarterback has no way to recover when the back is held
+            // up or knocked off his path — nobody is closing the gap, so the mesh
+            // simply never happens and the down burns to the cap. Two players
+            // converging always meet; one waiting depends on the other arriving.
+            //
+            // So the depth stays, and the yards-per-carry cost with it. The lever
+            // that actually moved yards per play without breaking the down was
+            // Systems_SimConstants.DEEP_SHOT_EVERY_N_PLAYS, which is where that
+            // tuning lives.
+            if (_isCarrier && _hasQuarterbackActions)
+            {
+                Systems_IPlayerHandle back = HandoffTarget();
+
+                if (back != null)
+                {
+                    return back.Position;
+                }
+            }
+
             if (_isCarrier)
             {
                 // THE CARRIER JUKES, BUT HE IS NOT UNCATCHABLE. This used to be a
@@ -1103,6 +1158,30 @@ namespace PoFootball.Agents
                     lane * Systems_SimConstants.POCKET_LANE_X, position.y);
             }
 
+            // THE OTHER HALF OF THE MESH. The designated back closes on the
+            // quarterback rather than running upfield away from him.
+            //
+            // Without this the fix above only halves the problem: a quarterback
+            // chasing a back who is running away at the same top speed never gains a
+            // metre, so the pair would cross HANDOFF_RADIUS only if the back happened
+            // to be turning. Both sides closing makes the mesh deterministic — it
+            // completes within a few ticks of the call latching, every time.
+            //
+            // It ends the moment the ball changes hands: _isCarrier is then true for
+            // this player and the carrier branch above has already returned.
+            if (_isBack && IsDesignatedBallCarrierOnHandoff())
+            {
+                Systems_IPlayerHandle quarterback =
+                    _registry == null
+                        ? null
+                        : _registry.Get(Systems_Formation.QUARTERBACK_SLOT_INDEX);
+
+                if (quarterback != null)
+                {
+                    return quarterback.Position;
+                }
+            }
+
             // Receivers and backs run upfield and spread. Slot index parity fans
             // them left and right so they do not all occupy the same lane.
             float split = (_formationSlotIndex % 2 == 0) ? -1f : 1f;
@@ -1122,8 +1201,73 @@ namespace PoFootball.Agents
         ///
         /// A handoff drops out of here the moment it latches, which is correct — on
         /// a handoff the quarterback's job is to close on the back, and
-        /// Systems_BallSystem.TryHandoff completes on proximity alone.
+        /// Systems_BallSystem.TryHandoff completes on proximity alone. That closing
+        /// is TargetPoint's mesh branch; until it was written this comment described
+        /// behaviour that did not exist and the quarterback ran at the goal line
+        /// holding the ball instead.
         /// </summary>
+        /// <summary>
+        /// The back this play's call hands off to, or null when the call is not a
+        /// handoff, has not latched yet, or the ball has already changed hands.
+        ///
+        /// Mirrors Systems_BallSystem.TryHandoff's slot choice exactly. The two
+        /// have to agree — one decides where the quarterback runs, the other decides
+        /// whether arriving there completes the handoff — so if the playbook ever
+        /// grows a third run they both need the same new case.
+        /// </summary>
+        private Systems_IPlayerHandle HandoffTarget()
+        {
+            int slot = HandoffTargetSlot();
+
+            if (slot < 0 || _registry == null)
+            {
+                return null;
+            }
+
+            return _registry.Get(slot);
+        }
+
+        private int HandoffTargetSlot()
+        {
+            if (_play == null || !_play.CallIsLatched)
+            {
+                return -1;
+            }
+
+            if (_play.Call == Systems_PlayCall.HandoffFullback)
+            {
+                return Systems_Formation.FULLBACK_SLOT_INDEX;
+            }
+
+            if (_play.Call == Systems_PlayCall.HandoffHalfback)
+            {
+                return Systems_Formation.HALFBACK_SLOT_INDEX;
+            }
+
+            return -1;
+        }
+
+        /// <summary>
+        /// True when THIS player is the back the latched handoff is going to and the
+        /// quarterback is still holding the ball.
+        /// </summary>
+        private bool IsDesignatedBallCarrierOnHandoff()
+        {
+            if (_ball == null || !_ball.IsHeld)
+            {
+                return false;
+            }
+
+            // Already ours, or already someone else's — either way there is no mesh
+            // left to run.
+            if (_ball.CarrierId != Systems_Formation.QUARTERBACK_SLOT_INDEX)
+            {
+                return false;
+            }
+
+            return HandoffTargetSlot() == _formationSlotIndex;
+        }
+
         private bool IsHoldingThePocket()
         {
             if (!_play.CallIsLatched)

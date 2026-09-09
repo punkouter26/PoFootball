@@ -1,5 +1,4 @@
 using System.Collections.Generic;
-using Unity.InferenceEngine;
 using Unity.MLAgents.Policies;
 using UnityEditor;
 using UnityEditor.SceneManagement;
@@ -27,6 +26,12 @@ namespace PoFootball.EditorTools
     internal static class Systems_DeadBrainRefCleaner
     {
         private const string MENU_PATH = "PoFootball/Clear Dead m_Model References In Open Scenes";
+
+        /// <summary>
+        /// BehaviorParameters' serialized name for the brain reference — the field
+        /// the scene YAML writes as <c>m_Model</c>.
+        /// </summary>
+        private const string MODEL_FIELD = "m_Model";
 
         [MenuItem(MENU_PATH)]
         internal static void Clean()
@@ -84,23 +89,56 @@ namespace PoFootball.EditorTools
                         continue;
                     }
 
-                    ModelAsset model = parameters.Model;
-                    if (model == null)
+                    // THE SERIALIZED FIELD, NOT THE PROPERTY. This is the whole of
+                    // why the first version of this tool cleaned nothing.
+                    //
+                    // A reference to an asset that no longer exists is a MISSING
+                    // reference, and Unity surfaces those as null through the
+                    // managed API — parameters.Model returns null for a dead GUID
+                    // exactly as it does for a field nobody ever set. The old code
+                    // read that property, saw null, and skipped with a note saying
+                    // "when it returns null the serialization is already null",
+                    // which is the one thing that is not true here. Assigning null
+                    // over null also changes nothing, so the scene never went dirty
+                    // and SaveScene wrote the same 22 GUIDs straight back.
+                    //
+                    // SerializedProperty can tell the two apart:
+                    // objectReferenceInstanceIDValue is still non-zero for a missing
+                    // reference while objectReferenceValue is null. Zeroing the
+                    // instance id is the documented way to drop one, and it is a
+                    // real modification, so the scene dirties and the GUID actually
+                    // leaves the file.
+                    using (var serialized = new SerializedObject(parameters))
                     {
-                        // Already null at runtime — but the serialized field may
-                        // still hold a stale GUID. Compare by reflection on the
-                        // hidden m_Model field to decide.
-                        // NOTE: Model is a public property; when it returns null
-                        // the serialization is already null. Skip.
-                        continue;
-                    }
+                        SerializedProperty property = serialized.FindProperty(MODEL_FIELD);
 
-                    string path = AssetDatabase.GetAssetPath(model);
-                    string guid = AssetDatabase.AssetPathToGUID(path);
-                    if (string.IsNullOrEmpty(guid) || !aliveGuids.Contains(guid))
-                    {
-                        Undo.RecordObject(parameters, "Clear Dead m_Model");
-                        parameters.Model = null;
+                        if (property == null
+                            || property.propertyType != SerializedPropertyType.ObjectReference)
+                        {
+                            continue;
+                        }
+
+                        bool isMissing = property.objectReferenceValue == null
+                            && !property.objectReferenceEntityIdValue.Equals(default(UnityEngine.EntityId));
+
+                        bool isDeadGuid = false;
+
+                        if (property.objectReferenceValue != null)
+                        {
+                            string path = AssetDatabase.GetAssetPath(property.objectReferenceValue);
+                            string guid = AssetDatabase.AssetPathToGUID(path);
+                            isDeadGuid = string.IsNullOrEmpty(guid) || !aliveGuids.Contains(guid);
+                        }
+
+                        if (!isMissing && !isDeadGuid)
+                        {
+                            continue;
+                        }
+
+                        property.objectReferenceEntityIdValue = default;
+                        property.objectReferenceValue = null;
+                        serialized.ApplyModifiedPropertiesWithoutUndo();
+
                         EditorUtility.SetDirty(parameters);
                         touched++;
                     }

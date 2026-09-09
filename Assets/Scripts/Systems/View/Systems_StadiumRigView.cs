@@ -182,6 +182,24 @@ namespace PoFootball.Views
 
                 lights[index].intensity = AMBIENT_INTENSITY;
                 lights[index].color = AmbientColor;
+
+                // AND IT MUST NOT CAST. The class note budgets this rig at two
+                // casting lights precisely because URP 2D spends one shadow-mesh
+                // render per caster per casting light, and there are twenty-two
+                // casters — but it only ever set that flag on the banks it BUILDS.
+                // The Global is the one light it inherits rather than creates, and
+                // SCN_GAME shipped it with shadows on, so the scene ran three
+                // casting lights: sixty-six shadow draws a frame against the
+                // forty-four the design allows.
+                //
+                // Measured in play mode: 5 Light2D, 3 with shadowsEnabled, 22
+                // ShadowCaster2D, 217 draw calls. Clearing this is twenty-two fewer
+                // shadow-mesh renders every frame, about a tenth of the whole draw
+                // call count, for no visual loss — a Global has no position, so the
+                // "shadow" it casts has no direction to come from and only flattens
+                // the ambient fill that the banks are supposed to be read against.
+                lights[index].shadowsEnabled = false;
+
                 foundGlobal = true;
             }
 
@@ -193,6 +211,7 @@ namespace PoFootball.Views
                 ambient.lightType = Light2D.LightType.Global;
                 ambient.intensity = AMBIENT_INTENSITY;
                 ambient.color = AmbientColor;
+                ambient.shadowsEnabled = false;
 
                 holder.SetActive(true);
             }
