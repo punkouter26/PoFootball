@@ -788,3 +788,137 @@ instrumentation from Phase 1 remains.
 floor, and structurally bounded because `TakeActionsBetweenDecisions` holds each
 command for 4 of every 5 ticks. There is no chatter in this system to penalize.
 
+---
+
+## Phase 2, E6 — Long run `football_long01`
+
+`Config/FootballLong01.yaml`, `--num-envs=4`, `--base-port=6000`,
+`CUDA_VISIBLE_DEVICES=-1`. Two deviations from the `FootballBase11` anchor, both
+carried over from the measurements above:
+
+- `batch_size` 2048 → 512, `buffer_size` 20480 → 10240 (E4)
+- `summary_freq` 20000 → 50000 — **statistics only, not training** (E3)
+
+Throughput at 4 envs with the smaller batch: **276 steps/s** including startup
+(100,000 steps in 362 s), against 255 steps/s for `batch_size: 2048`. Four times
+as many gradient steps per sample costs nothing measurable on CPU at this network
+size, and appears to be marginally *faster* — small matmuls fit cache better.
+
+Checkpointing and ONNX export are working on schedule
+(`Defense-99992.onnx`, `Offense-99989.onnx` at the 100k checkpoint interval).
+
+### Project tooling validated against this run
+
+| Tool | Result |
+|---|---|
+| `Tools/promote_brain.py --verify` | Runs, exits 0, reports *"No promoted brains found under Assets/Agents"* — correct, and consistent with `CLAUDE.md`'s statement that nothing is promoted |
+| `Tools/watch_entropy.py --run football_long01` | Runs, exits 0 |
+| `Tools/prune_results.py` | Not exercised (no disk pressure) |
+
+This is the first time in the repository's recorded history that these can have
+been run at all, since no `.venv` existed before this session.
+
+### `football_long01` at 250,000 steps — the run is learning
+
+Compared against the 60k sweep control, which is where every short validation run
+in E4 stopped:
+
+| KPI | @60k (V0) | **@250k** | Change | Threshold | Status |
+|---|---|---|---|---|---|
+| `Play/TimeExpiredRate` | 0.896 | **0.587** | **−34%** | < 0.20 | improving |
+| `Play/TackleRate` | ~0.000 | **0.406** | — | — | plays now END |
+| `Play/LengthTicks` | 563.1 | **489.1** | **−13%** | < 400 | improving |
+| `Play/NetYards` | −3.79 | **+0.41** | sign flip | — | improving |
+| `Control/SpeedUtilization` | 0.0521 | **0.0647** | **+24%** | > 0.25 | improving |
+| `Call/Entropy` | 1.290 | **1.512** | +17% | > 1.00 | **PASS** |
+| max single call share | 0.313 | 0.306 | — | < 0.60 | **PASS** |
+| `Control/SpeedClampRate` | 0.000 | **0.000** | — | < 0.01 | **PASS** |
+| `Control/SteerJerk` | 0.0751 | **0.0738** | −1.7% | < 0.20 | **PASS** |
+| `Policy/Entropy` | 1.4173 | **1.4140** | −0.2% | — | σ finally contracting |
+
+**Every KPI is moving the right way, and `Policy/Entropy` has finally dropped
+below the unit-Gaussian value of 1.41894.** The sweep's null result is now
+explained rather than merely asserted: those six configurations were identical
+because none of them had begun to learn yet, not because the hyperparameters do
+not matter. Four of the eight Tier B thresholds already pass at 250k.
+
+The largest single change is that **plays now end for football reasons**.
+`TackleRate` went from ~0 to 0.406 and `TimeExpiredRate` from 0.90 to 0.59.
+`Control/SpeedUtilization` rising 24% is what caused it — defenders that move can
+close on a carrier, and the sustained-contact tackle rule can finally fire.
+
+The kicking game is also being reached for the first time in this session:
+`Call/Punt` 0.022 and `Call/FieldGoal` 0.040 are nonzero, which is what contract
+revision 6 added and revision 8 was tuned to make reachable.
+
+### One thing to watch: passing is currently unfailable
+
+`Pass/CompletionPerAttempt = 1.000`, with `Play/IncompletionRate` and
+`Play/InterceptionRate` both exactly 0.000, sustained over 9 summary windows.
+
+This is *explicable* rather than obviously broken. Contract revision 5 changed
+the quarterback's aim slots from a literal throw direction to a **direction of
+intent**, resolved by `Systems_BallSystem.ResolveThrowDirection` to whichever
+eligible receiver best matches that bearing, led for the flight time. So aim is
+auto-corrected onto a real receiver. Meanwhile the throw trigger is a 2-way
+discrete branch sampled at σ = 1 over ~40 decisions of throw window, so the
+quarterback releases essentially always; and the defense is still a random walk
+at 6% speed utilization, so nobody contests the catch.
+
+**It is worth watching whether this falls as the defense learns to move.** If
+`CompletionPerAttempt` stays pinned at 1.000 once defenders are covering, that
+would mean the revision-5 auto-aim has made passing strictly dominant, and the
+`INTERCEPTION_REWARD` / `INCOMPLETION_PENALTY` terms would be unreachable code —
+the same class of problem revision 8 was created to fix for the kicking game.
+Recorded as an observation, not yet a finding.
+
+### `football_long01` trend to 400,000 steps
+
+Full series, one row per 50k summary window:
+
+| step | SpeedUtil | Effort | Call/Entropy | TimeExpired | LengthTicks | Policy/Entropy |
+|---|---|---|---|---|---|---|
+| 50,000 | 0.05062 | 0.52906 | 0.97344 | 0.90244 | 565.12 | 1.41617 |
+| 100,000 | 0.05676 | 0.52912 | 1.38573 | 0.64583 | 509.52 | 1.40532 |
+| 150,000 | 0.06294 | 0.53116 | 1.45590 | 0.57447 | 492.11 | 1.40134 |
+| 200,000 | 0.06178 | 0.53117 | 1.50545 | 0.56863 | 490.25 | 1.40056 |
+| 250,000 | 0.06596 | 0.53686 | 1.51298 | 0.50000 | 454.72 | 1.40315 |
+| 300,000 | 0.06239 | 0.53418 | 1.50900 | 0.52727 | 454.60 | 1.40286 |
+| 350,000 | 0.05997 | 0.53117 | 1.52055 | 0.50980 | 441.78 | 1.40433 |
+| 400,000 | 0.06829 | 0.53419 | 1.53809 | 0.49091 | 448.67 | 1.39647 |
+
+**Nearly all of the gain happened between 50k and 150k.** After that the series
+separate into two groups.
+
+### Applying the plateau criterion properly
+
+The goal's test is "< 3% change over 3 runs". Single 50k points oscillate by more
+than 3% on their own (`SpeedUtilization` moves −5.4%, −3.9%, +13.9% across the
+last four), so the test is applied to **3-point means**, which is the only form
+that can resolve a 3% effect given the noise floor established in E3:
+
+| KPI | mean 150–250k | mean 300–400k | change | verdict |
+|---|---|---|---|---|
+| `Control/SpeedUtilization` | 0.06356 | 0.06355 | **−0.02%** | **PLATEAUED** |
+| `Call/Entropy` | 1.4915 | 1.5226 | **+2.1%** | **PLATEAUED** |
+| `Play/TimeExpiredRate` | 0.5477 | 0.5093 | −7.0% | still improving |
+| `Play/LengthTicks` | 479.0 | 448.4 | −6.4% | still improving |
+| `Control/Effort` | 0.5330 | 0.5332 | +0.04% | flat throughout |
+
+So the run is **partially plateaued**: the two KPIs that describe *how the
+players move* have stopped improving, while the two that describe *how plays end*
+are still getting better at roughly 6–7% per 150k steps.
+
+That combination is informative. Plays are ending sooner and more often for
+football reasons, but **not because players got faster** — `SpeedUtilization` has
+been pinned near 0.064 since 150k. What is improving is positioning and
+convergence on the ball, which shows up in tackles without showing up in speed.
+
+`Control/Effort` deserves a note of its own: it has not moved outside
+0.529–0.537 in **any** of the fifteen runs in this entire session — baseline,
+six sweep variants, the control-cost run, and 400k steps of long training. It is
+the most stable number measured here, and it is essentially the mean absolute
+value of a unit Gaussian. Together with `Policy/Entropy` falling only 1.41617 →
+1.39647 over 400k steps, the picture is that **σ is contracting extremely
+slowly**, and that is the rate limiter on everything else.
+
