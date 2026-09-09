@@ -23,6 +23,8 @@ Unity ML-Agents self-play.
 - `Assets/Agents/<Name>_v<NN>/` — `.onnx`, `*_Character.asset`, `MANIFEST.md`.
 - Four script prefixes, each matching its folder under `Assets/Scripts/`: `Agent_`,
   `Sensor_`, `Reward_`, `Systems_` (referees, presentation, UI — the largest).
+  `Assets/Editor/` follows the same folder-matching rule: everything there is
+  `Editor_`, and every menu item hangs off the single root `Tools/PoFootball/`.
 - Scenes `SCN_`; training `SCN_TRAIN_<NAME>`, no suffixes. Envs `Builds/<Name>Env/`;
   configs `<Name><Phase><NN>.yaml` paired 1:1 with run-id `<name>_<phase><nn>`.
 
@@ -176,7 +178,7 @@ confidently during the revision 8 work and two of them made the game measurably
 worse. **Single games are very noisy** (4.48 to 7.37 yards/play on one config), so
 compare three-game means.
 
-`Tools > PoFootball > Sim Speed > 8x` (editor-only, `Assets/Editor/Systems_SimSpeed.cs`)
+`Tools > PoFootball > Sim Speed > 8x` (editor-only, `Assets/Editor/Editor_SimSpeed.cs`)
 turns a full game from ~10 minutes into ~100 seconds. It raises `Time.timeScale`
 only — `fixedDeltaTime` is untouched, so it is the same measurement — and it always
 resets to 1x on leaving play mode.
@@ -318,9 +320,9 @@ Without either, the build **aborts** rather than producing an unsigned artifact.
 
 | Tool | What it does |
 |---|---|
-| *PoFootball → Configure Android Release Settings* | One-shot: identity, SDK levels, orientation, and the launcher icons (adaptive + round + legacy, 6 densities) from `Assets/Icons/`. Re-run after changing icon art |
-| *PoFootball → Build Android AAB (Play release)* | Signed bundle → `Builds/Android/PoFootball.aab`. Logs `AAB BUILD RESULT:` |
-| *PoFootball → Build Android APK* | Sideloadable APK on the SAME key, so it installs over a Play build → `Builds/Android/PoFootball.apk`. Logs `BUILD RESULT:` |
+| *Tools → PoFootball → Configure Android Release Settings* | One-shot: identity, SDK levels, orientation, and the launcher icons (adaptive + round + legacy, 6 densities) from `Assets/Icons/`. Re-run after changing icon art |
+| *Tools → PoFootball → Build Android AAB (Play release)* | Signed bundle → `Builds/Android/PoFootball.aab`. Logs `AAB BUILD RESULT:` |
+| *Tools → PoFootball → Build Android APK* | Sideloadable APK on the SAME key, so it installs over a Play build → `Builds/Android/PoFootball.apk`. Logs `BUILD RESULT:` |
 | `Tools/play_publish.py` | Uploads a built AAB. Defaults to the `internal` track as a `draft`; `--dry-run` rehearses and discards |
 
 `Tools/play_publish.py` needs its own venv (`Tools/publish-venv`). Do not install it
