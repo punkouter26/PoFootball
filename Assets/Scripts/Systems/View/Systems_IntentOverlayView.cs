@@ -47,6 +47,22 @@ namespace PoFootball.Views
         private const string PARTICLE_MATERIAL_RESOURCE = "M_PoFootballParticle";
 
         /// <summary>
+        /// Whether to draw the per-player drive/steer arrows.
+        ///
+        /// OFF: they read as debug annotation over a game you are meant to watch,
+        /// which is the opposite of what the class docstring above argues for. That
+        /// argument is about a developer READING the simulation, and it is still
+        /// correct for that job — which is why this is a switch rather than a
+        /// deletion. Set it back to true to get the arrows for diagnosing what a
+        /// policy is actually doing.
+        ///
+        /// The quarterback read line is separate and still drawn: it shows WHICH
+        /// receiver the aim has selected, not where a body is heading, and it is
+        /// the one piece of this overlay that has no other way of being seen.
+        /// </summary>
+        private const bool SHOW_PLAYER_ARROWS = false;
+
+        /// <summary>
         /// Above both player groups (Systems_RoleShapeApplier puts offense on 1 and
         /// defense on 2) and below the ball trail on 4.
         ///
@@ -282,10 +298,16 @@ namespace PoFootball.Views
             _colors.Clear();
             _indices.Clear();
 
-            float chase = 1f - Mathf.Exp(-CHASE_RATE * Time.deltaTime);
             bool live = _play != null && _play.Phase == Systems_PlayPhase.Live;
 
-            AppendPlayerArrows(chase, live);
+            // Guarded rather than removed: AppendPlayerArrows still owns the steer
+            // smoothing state, so re-enabling SHOW_PLAYER_ARROWS restores the
+            // overlay exactly as it was with no other change.
+            if (SHOW_PLAYER_ARROWS)
+            {
+                float chase = 1f - Mathf.Exp(-CHASE_RATE * Time.deltaTime);
+                AppendPlayerArrows(chase, live);
+            }
 
             if (live)
             {

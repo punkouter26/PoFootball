@@ -813,7 +813,7 @@ namespace PoFootball.Models
         /// two men throws between them, where a defender can reach it and where
         /// MAX_FLIGHT_TICKS can run out.
         /// </summary>
-        public const float PASS_AIM_SLACK = 0.35f;
+        public const float PASS_AIM_SLACK = 0.15f;
 
         public const float OBSERVATION_RANGE = 40f;
 

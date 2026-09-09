@@ -1457,3 +1457,101 @@ revision 8 behaviour exactly, without touching code. Before promoting anything,
 the three-game Tier A measurement should decide whether 0.35 is right, or whether
 a smaller slack buys the reachability without the disruption.
 
+---
+
+## Phase 3, F1b — Tuning `PASS_AIM_SLACK` against a proper control
+
+The 0.35 value committed first was measured against `football_long01` (revision
+8) and looked harmful, but that comparison confounded the code change with
+run-to-run trajectory divergence. A **control arm** settles it: the same revision
+9 build with `PASS_AIM_SLACK = 0`, which restores revision 8 behaviour exactly.
+
+The control reproduced the defect precisely — `Pass/CompletionPerAttempt` 1.0000
+and zero interceptions in every window — confirming both that the constant is the
+sole lever and that the comparison method is sound.
+
+Means over windows ≤ 250k, all four arms on identical config and env:
+
+| arm | `Play/TackleRate` | `Play/TimeExpiredRate` | incompletions | interceptions |
+|---|---|---|---|---|
+| `football_long01` (rev 8) | 0.3048 | 0.6143 | **never** | **never** |
+| slack **0.00** (control) | 0.3173 | 0.6264 | **never** | **never** |
+| slack **0.15** | **0.3800** | **0.5319** | yes (~5.5%/att) | **never** |
+| slack **0.35** | 0.1611 | 0.6878 | yes (~34%/att) | yes (~6.9%/att) |
+
+Two things fall out.
+
+**The control validates the method.** slack 0 lands within 4% and 2% of the
+revision 8 run on the two metrics in question — so the 0.35 arm's much worse
+numbers are caused by the constant, not by trajectory variance. The earlier
+"unresolved, may be noise" reading is now resolved: **0.35 really does degrade
+the game**, and running the control rather than assuming was the right call.
+
+**0.15 is better than the baseline on both game metrics** — `TackleRate` 0.380
+against 0.305, `TimeExpiredRate` 0.532 against 0.614 — while making incompletions
+reachable for the first time. It does not yet reach interceptions.
+
+**Committed value: 0.15.** It is the only tested value that is better than
+baseline rather than worse, and it converts one of the two dead reward branches
+into live code. 0.25 is the obvious next candidate — it was launched and died on
+a port collision (`UnityWorkerInUseException`, orphaned workers from the previous
+run holding worker 1), and has not been re-run.
+
+**Open:** `INTERCEPTION_REWARD` and the `Interception` branch remain unreachable
+at 0.15. Interception needs a larger deviation than incompletion does — the ball
+must land within `CATCH_RADIUS` of a defender *and* closer to them than to the
+receiver, whereas an incompletion only needs to miss everyone. A value between
+0.15 and 0.35 may reach it without 0.35's cost; that is a single ~20-minute
+validation run.
+
+---
+
+## Phase 3, F3 — "The game is too fast" — not a physics problem
+
+Reported by the user while watching in the Editor. Investigated before changing
+anything, and the simulation turned out to be innocent:
+
+| checked | finding |
+|---|---|
+| Field scale | `Systems_FieldModel.YARD = 0.9144` — world units are **metres** and the field is a real 100 yards |
+| Role top speeds | 6.2–9.2 m/s — real in-play maxima (fast NFL players run a shade over 9 m/s; linemen ~6) |
+| `Time.fixedDeltaTime` | pinned at 0.02 (50 Hz), unchanged |
+| `Time.timeScale` writes in runtime code | **none** — `Systems_HudView` records that nothing writes it any more, on purpose |
+
+The cause was `Editor_SimSpeed`. It persists the chosen multiplier in
+`EditorPrefs` under `PoFootball.SimSpeed` and re-applies it on every
+`EnteredPlayMode`. It was left at **8x** from an earlier measurement session:
+
+```
+SimSpeed pref = 8  |  Time.timeScale = 8
+```
+
+The game was running at eight times real time. Reset to 1x — pref and live
+`timeScale` both — with no code change. **Changing role speeds or damping to
+"fix" this would have been actively wrong**: it would have made the physics
+unrealistic to compensate for a display multiplier, and it would have been a
+dynamics change requiring another `CONTRACT_REVISION` bump.
+
+Worth noting the tool resets to 1x on leaving play mode but the *preference*
+survives, so the next play session re-applies it. That is the trap.
+
+---
+
+## Phase 3, F4 — Per-player intent arrows turned off
+
+`Systems_IntentOverlayView` drew a curved arrow per player showing the drive and
+steer its policy emitted. Turned off behind
+`private const bool SHOW_PLAYER_ARROWS = false`, guarded at the `LateUpdate` call
+site rather than deleted — `AppendPlayerArrows` still owns the steer-smoothing
+state, so flipping the constant restores the overlay exactly.
+
+Kept as a switch rather than removed because the class docstring's argument is
+sound *for a developer reading the simulation*: it is the only way to tell a
+linebacker driving downhill from one drifting because its policy has no opinion.
+That is a diagnostic need, not a thing to have on screen while watching a game.
+
+**The quarterback read line is separate and still drawn** (`AppendQuarterbackRead`
+— a dashed line to the receiver the aim currently selects). It shows *which
+receiver is being looked at*, not where a body is heading, so it is outside the
+literal request. One line to disable if it is also unwanted.
+
