@@ -360,5 +360,58 @@ namespace PoFootball.Tests
                 }
             }
         }
+
+        /// <summary>
+        /// THE TEST THIS SUITE WAS MISSING, AND IT COST A MEASURED GAME.
+        ///
+        /// Agent_FootballPlayer.CoverageSpot has two behaviours: chase your assigned
+        /// man, or — for -1 — go to the deep middle. That second branch was written
+        /// for one free safety and is not a zone drop, so an unassigned corner does
+        /// not play zone against a receiver, it abandons him and joins a pile in the
+        /// middle of the field.
+        ///
+        /// Cover2 shipped with an empty table on the reasoning that a two-deep shell
+        /// is a zone. The game that came back read 14.08 yards per play, 0.62
+        /// touchdowns per drive and a 73-77 final, against references of about 5.5
+        /// and 0.20-0.35. The suite had a test that every assignment points at an
+        /// eligible receiver and that nobody is double-covered — both of which an
+        /// empty table passes trivially.
+        /// </summary>
+        [Test]
+        public void EveryDefense_CoversBothSplitEndsAndTheTightEnd()
+        {
+            int[] eligibles =
+            {
+                Systems_FormationBook.WIDE_RECEIVER_LEFT_SLOT_INDEX,
+                Systems_FormationBook.WIDE_RECEIVER_RIGHT_SLOT_INDEX,
+                Systems_FormationBook.TIGHT_END_SLOT_INDEX,
+            };
+
+            foreach (Systems_DefensiveFormation defense in DefensiveFormations)
+            {
+                foreach (int eligible in eligibles)
+                {
+                    bool covered = false;
+
+                    for (int slot = Systems_RoleTable.SQUAD_SIZE;
+                        slot < Systems_Formation.SlotCount;
+                        slot++)
+                    {
+                        if (Systems_FormationBook.CoverageAssignmentFor(defense, slot)
+                            == eligible)
+                        {
+                            covered = true;
+                            break;
+                        }
+                    }
+
+                    Assert.That(
+                        covered, Is.True,
+                        $"{defense} leaves slot {eligible} "
+                        + $"({Systems_Formation.RoleFor(eligible)}) uncovered — this "
+                        + "simulation has no zone drops, so nobody guards him at all");
+                }
+            }
+        }
     }
 }

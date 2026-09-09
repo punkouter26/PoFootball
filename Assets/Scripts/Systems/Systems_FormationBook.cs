@@ -259,6 +259,24 @@ namespace PoFootball.Systems
         /// two defenders claim the same receiver and abandon it as the geometry
         /// crosses over, so the coverage visibly flickers. A defense plays fixed
         /// assignments precisely because that ambiguity is what offenses attack.
+        ///
+        /// EVERY ELIGIBLE MUST BE COVERED, AND THIS SIMULATION CANNOT PLAY ZONE.
+        /// Agent_FootballPlayer.CoverageSpot has exactly two behaviours: chase your
+        /// assigned man, or — for an assignment of -1 — go to the deep middle. That
+        /// second branch was written for ONE free safety and is not a zone drop.
+        ///
+        /// So a defense that leaves receivers unassigned does not play zone against
+        /// them, it does not cover them at all, and every unassigned defender piles
+        /// onto the same deep-middle spot. That was shipped and measured: Cover2 was
+        /// given an empty table on the reasoning that two-deep is a zone shell, and a
+        /// full game came back at 14.08 yards per play, 0.62 touchdowns per drive and
+        /// a 73-77 final, against references of 5.5 and 0.20-0.35. Both split ends
+        /// and the tight end were running free on a quarter of the snaps.
+        ///
+        /// Until the agent layer learns real zone drops, the coverage difference
+        /// between these fronts lives in the ALIGNMENT — depth, leverage, who is in
+        /// the box — and every one of them assigns both split ends and the tight end.
+        /// Systems_FormationTests asserts it rather than trusting this comment.
         /// </summary>
         private static readonly int[][] CoverageTables =
         {
@@ -287,13 +305,24 @@ namespace PoFootball.Systems
                 STRONG_SAFETY_SLOT_INDEX, TIGHT_END_SLOT_INDEX,
             },
 
-            // Cover2 — pure zone. Nobody is in man, and that is the whole point of
-            // the coverage: the corners let the receivers go and pass them off.
-            new int[0],
+            // Cover2 — the SHELL is two-deep, but the assignments are not empty, and
+            // that is a limitation of this simulation rather than a coaching choice.
+            // See EVERY ELIGIBLE MUST BE COVERED below.
+            new[]
+            {
+                CORNERBACK_LEFT_SLOT_INDEX, WIDE_RECEIVER_LEFT_SLOT_INDEX,
+                CORNERBACK_RIGHT_SLOT_INDEX, WIDE_RECEIVER_RIGHT_SLOT_INDEX,
+                STRONG_SAFETY_SLOT_INDEX, TIGHT_END_SLOT_INDEX,
+            },
 
-            // Cover3 — three deep zone, but the rolled-down strong safety carries
-            // the tight end.
-            new[] { STRONG_SAFETY_SLOT_INDEX, TIGHT_END_SLOT_INDEX },
+            // Cover3 — corners carry the split ends, the rolled-down strong safety
+            // carries the tight end, the free safety has the deep middle.
+            new[]
+            {
+                CORNERBACK_LEFT_SLOT_INDEX, WIDE_RECEIVER_LEFT_SLOT_INDEX,
+                CORNERBACK_RIGHT_SLOT_INDEX, WIDE_RECEIVER_RIGHT_SLOT_INDEX,
+                STRONG_SAFETY_SLOT_INDEX, TIGHT_END_SLOT_INDEX,
+            },
 
             // Nickel — corners man-up outside, the walked-out backer takes the tight
             // end, and both safeties play over the top.
@@ -304,12 +333,14 @@ namespace PoFootball.Systems
                 LINEBACKER_STRONG_SLOT_INDEX, TIGHT_END_SLOT_INDEX,
             },
 
-            // Bear46 — corners man with one safety deep; the other safety is in the
-            // box against the run rather than on a receiver.
+            // Bear46 — corners man outside, strong safety on the tight end, free
+            // safety alone over the top. The front is what makes this the 46; the
+            // coverage behind it still has to account for all three eligibles.
             new[]
             {
                 CORNERBACK_LEFT_SLOT_INDEX, WIDE_RECEIVER_LEFT_SLOT_INDEX,
                 CORNERBACK_RIGHT_SLOT_INDEX, WIDE_RECEIVER_RIGHT_SLOT_INDEX,
+                STRONG_SAFETY_SLOT_INDEX, TIGHT_END_SLOT_INDEX,
             },
 
             // ZeroBlitz — everybody eligible is covered man-to-man.
