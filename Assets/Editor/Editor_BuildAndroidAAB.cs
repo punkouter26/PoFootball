@@ -35,7 +35,15 @@ namespace PoFootball.EditorTools
 
         // internal, not private: the APK builder signs with the same upload key, so
         // an APK installed over a Play build does not hit a signature mismatch.
-        internal const string KEYSTORE_PATH = "C:/Users/punko/Downloads/PoFootball-Release/pofootball-upload.jks";
+        //
+        // MOVED 2026-09-09, from C:/Users/punko/Downloads/PoFootball-Release/.
+        // That folder did not exist — the keystores were consolidated into the
+        // OneDrive vault below on 2026-09-02 and the old per-app -Release folders
+        // deleted, and this constant was never updated, so every Android build in
+        // this project had been aborting on "keystore not found" since. The vault's
+        // own KEYSTORES-README.txt is the authority on the layout: flat files,
+        // app-name prefixed, <name>.jks beside <name>.pass.
+        internal const string KEYSTORE_PATH = "C:/Users/punko/OneDrive/VAULT/_CODE/pofootball-upload.jks";
         internal const string KEYALIAS = "pofootball-upload";
         internal const string PASS_ENV_VAR = "POFOOTBALL_KEYSTORE_PASS";
 
@@ -116,6 +124,8 @@ namespace PoFootball.EditorTools
             EditorUserBuildSettings.androidBuildType = AndroidBuildType.Release;
             EditorUserBuildSettings.development = false;
 
+            int versionCode = NextVersionCode();
+
             Directory.CreateDirectory(Path.GetDirectoryName(OUTPUT_PATH));
 
             var options = new BuildPlayerOptions
@@ -128,7 +138,7 @@ namespace PoFootball.EditorTools
             };
 
             Debug.Log($"AAB BUILD START: {APP_ID} v{PlayerSettings.bundleVersion} " +
-                      $"(code {PlayerSettings.Android.bundleVersionCode}) " +
+                      $"(code {versionCode}) " +
                       $"target={TARGET_SDK} min={MIN_SDK} scenes={scenes.Count} " +
                       $"boot={Path.GetFileNameWithoutExtension(scenes[0])}");
 
@@ -148,6 +158,28 @@ namespace PoFootball.EditorTools
             Debug.Log($"AAB BUILD RESULT: {summary.result} | errors={summary.totalErrors} | " +
                       $"size={summary.totalSize / (1024 * 1024)}MB | " +
                       $"time={summary.totalTime.TotalMinutes:F1}min | {summary.outputPath}");
+        }
+
+        /// <summary>
+        /// Bumps <c>bundleVersionCode</c> and returns the new value.
+        ///
+        /// AUTOMATIC, BECAUSE THE MANUAL VERSION OF THIS IS A CONSTANT IN A FILE
+        /// NOBODY OPENS. Editor_ConfigureAndroidRelease carries VERSION_CODE = 1 and
+        /// re-asserts it on every run, so the documented workflow ("bump
+        /// VERSION_CODE for every upload") is one edit away from silently shipping
+        /// the same code twice — which Play rejects on upload, and which is
+        /// indistinguishable on a device from "the install did not take".
+        ///
+        /// Called by both builders, so an APK and the AAB beside it never claim to
+        /// be the same build. It writes ProjectSettings.asset, so the increment
+        /// survives the Editor closing.
+        /// </summary>
+        internal static int NextVersionCode()
+        {
+            int next = PlayerSettings.Android.bundleVersionCode + 1;
+            PlayerSettings.Android.bundleVersionCode = next;
+            AssetDatabase.SaveAssets();
+            return next;
         }
 
         /// Verifies every shipping scene is actually on disk and returns them in

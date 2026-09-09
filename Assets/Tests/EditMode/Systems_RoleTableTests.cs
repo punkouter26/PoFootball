@@ -127,7 +127,7 @@ namespace PoFootball.Tests
 
             for (int index = 0; index < Systems_Formation.SlotCount; index++)
             {
-                counts[(int)Systems_RoleTable.BrainOf(Systems_Formation.GetSlot(index).Role)]++;
+                counts[(int)Systems_RoleTable.BrainOf(Systems_Formation.RoleFor(index))]++;
             }
 
             // Ten and eleven, not five/five and four/three/four: the behaviours
@@ -152,7 +152,7 @@ namespace PoFootball.Tests
 
                 for (int index = 0; index < Systems_Formation.SlotCount; index++)
                 {
-                    if (Systems_RoleTable.BrainOf(Systems_Formation.GetSlot(index).Role) == group)
+                    if (Systems_RoleTable.BrainOf(Systems_Formation.RoleFor(index)) == group)
                     {
                         found = true;
                         break;
@@ -175,7 +175,7 @@ namespace PoFootball.Tests
 
                 for (int index = 0; index < Systems_Formation.SlotCount; index++)
                 {
-                    Systems_PlayerRole role = Systems_Formation.GetSlot(index).Role;
+                    Systems_PlayerRole role = Systems_Formation.RoleFor(index);
                     if (Systems_RoleTable.BrainOf(role) != group)
                     {
                         continue;
@@ -223,7 +223,7 @@ namespace PoFootball.Tests
         public void TheQuarterbackBrain_BelongsToTheSnapTaker()
         {
             Systems_PlayerRole snapTaker =
-                Systems_Formation.GetSlot(Systems_Formation.QUARTERBACK_SLOT_INDEX).Role;
+                Systems_Formation.RoleFor(Systems_Formation.QUARTERBACK_SLOT_INDEX);
 
             Assert.That(
                 Systems_RoleTable.HasQuarterbackActions(Systems_RoleTable.BrainOf(snapTaker)),
@@ -234,7 +234,7 @@ namespace PoFootball.Tests
             // the play-call gradient through base03.
             for (int index = 0; index < Systems_Formation.SlotCount; index++)
             {
-                Systems_PlayerRole role = Systems_Formation.GetSlot(index).Role;
+                Systems_PlayerRole role = Systems_Formation.RoleFor(index);
                 if (role == snapTaker)
                 {
                     continue;

@@ -55,6 +55,13 @@ namespace PoFootball.Views
             content.style.maxHeight = 1800;
             Systems_UiTheme.SetPadding(
                 content, Systems_UiTheme.SPACE_XL, Systems_UiTheme.SPACE_L);
+
+            // The two strips Systems_StatusHudView reserves. Margins rather than
+            // padding, because the padding above is the composition's own breathing
+            // room and folding the two together makes it impossible to tell later
+            // which number was protecting what.
+            content.style.marginTop = Systems_UiTheme.STATUS_BAR_HEIGHT;
+            content.style.marginBottom = Systems_UiTheme.STATUS_FOOTER_HEIGHT;
             screen.Add(content);
 
             // ONE COMPOSITION, NOT TWO ISLANDS. The weights used to be 0.6 above the
@@ -133,12 +140,14 @@ namespace PoFootball.Views
 
             Root.Add(screen);
 
-            // CLAUDE.md section 3: build number top-left of the opening scene, on an
-            // inset layer, outside any ScrollView, non-pickable. Added to Root
-            // rather than to the padded screen so its inset is measured from the
-            // edge of the SAFE AREA — on the previous version it was measured from
-            // the edge of the panel and rendered underneath the camera cutout.
-            Root.Add(Systems_UiTheme.VersionStamp());
+            // THE VERSION STAMP IS NOT BUILT HERE ANY MORE. It used to be added as a
+            // top-left overlay by this screen and by nothing else, so the build
+            // number was visible on the menu and invisible the moment a game
+            // started — which is the half of the session anyone actually files a bug
+            // about. Systems_StatusHudView now carries it in the bottom-right corner
+            // of every player-facing screen, alongside the title, the frame rate,
+            // MENU and DEBUG. Systems_UiTheme.VersionStamp is kept for a screen that
+            // wants its own, but nothing calls it.
         }
 
         /// <summary>

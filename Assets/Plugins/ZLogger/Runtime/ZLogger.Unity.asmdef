@@ -18,7 +18,9 @@
         "Microsoft.Bcl.AsyncInterfaces.dll"
     ],
     "autoReferenced": true,
-    "defineConstraints": [],
+    "defineConstraints": [
+        "POFOOTBALL_ZLOGGER_ENABLED"
+    ],
     "versionDefines": [],
     "noEngineReferences": false
 }

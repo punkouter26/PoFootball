@@ -124,6 +124,28 @@ namespace PoFootball.Views
         /// <summary>The one-per-screen identity size: the menu wordmark.</summary>
         public const int TEXT_DISPLAY = 76;
 
+        /// <summary>
+        /// Height of the status HUD's top strip, in panel units at the 1080-wide
+        /// reference. Every screen that puts chrome against the top of the display
+        /// offsets by this, so the strip is reserved rather than merely drawn over.
+        /// See <see cref="Systems_StatusHudView"/>.
+        /// </summary>
+        public const int STATUS_BAR_HEIGHT = 76;
+
+        /// <summary>
+        /// Height of the status HUD's bottom strip. Shorter than the top one because
+        /// it carries no wordmark — a chip and a version string.
+        /// </summary>
+        public const int STATUS_FOOTER_HEIGHT = 72;
+
+        /// <summary>
+        /// Minimum height of a status-bar chip. Below <see cref="TAP_TARGET"/> on
+        /// purpose: these are chrome in the corners of a portrait screen, not
+        /// primary actions, and 56 panel units on a 1080-wide panel still lands
+        /// comfortably over a 48 dp finger on every handset this ships to.
+        /// </summary>
+        public const int STATUS_CHIP_HEIGHT = 56;
+
         public const int RADIUS = 12;
 
         /// <summary>Diameter of the possession indicator beside a team's tag.</summary>

@@ -197,7 +197,12 @@ namespace PoFootball.Views
             bar.style.position = Position.Absolute;
             bar.style.left = 0;
             bar.style.right = 0;
-            bar.style.top = 0;
+
+            // BELOW THE STATUS HUD, NOT UNDER IT. Systems_StatusHudView reserves the
+            // top strip on every screen for the title, the frame rate and MENU; at
+            // top: 0 the score row rendered underneath it and the away team's points
+            // came out behind the MENU chip.
+            bar.style.top = Systems_UiTheme.STATUS_BAR_HEIGHT;
 
             // Translucent, so the top of the field still reads through the chrome.
             bar.style.backgroundColor = Systems_UiTheme.SurfaceOverField;
@@ -710,7 +715,12 @@ namespace PoFootball.Views
             bar.style.position = Position.Absolute;
             bar.style.left = 0;
             bar.style.right = 0;
-            bar.style.bottom = 0;
+
+            // ABOVE THE STATUS HUD'S FOOTER, which owns DEBUG on the left and the
+            // version on the right. QUIT is centred so it never overlapped either
+            // horizontally, but at bottom: 0 all three sat in the same band and read
+            // as one row of three unrelated controls.
+            bar.style.bottom = Systems_UiTheme.STATUS_FOOTER_HEIGHT;
             bar.style.justifyContent = Justify.Center;
             Systems_UiTheme.SetPadding(bar, Systems_UiTheme.SPACE_M);
 

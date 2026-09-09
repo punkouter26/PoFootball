@@ -96,6 +96,12 @@ namespace PoFootball.Systems
             builder.Register<Systems_PlayerRegistry>(Lifetime.Singleton);
             builder.Register<Systems_BallSystem>(Lifetime.Singleton);
 
+            // Which formations the two teams line up in this play. Registered in
+            // BOTH modes and drawn from its own seeded stream, so a training run and
+            // a played game see the same sequence of alignments — the line of
+            // scrimmage stays the only thing that differs between them.
+            builder.Register<Systems_FormationSelection>(Lifetime.Singleton);
+
             MessagePipeOptions messagePipeOptions = builder.RegisterMessagePipe();
             builder.RegisterMessageBroker<Systems_PlaySnappedMessage>(messagePipeOptions);
             builder.RegisterMessageBroker<Systems_PlayEndedMessage>(messagePipeOptions);

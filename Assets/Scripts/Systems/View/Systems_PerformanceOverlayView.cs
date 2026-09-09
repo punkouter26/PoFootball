@@ -153,14 +153,33 @@ namespace PoFootball.Views
         /// </summary>
         private static bool DiagnosticsAllowed => Debug.isDebugBuild;
 
+        /// <summary>
+        /// SUPERSEDED, AND IT STANDS DOWN RATHER THAN OVERLAPS.
+        /// <see cref="Systems_StatusHudView"/> now owns the bottom-left corner — the
+        /// DEBUG chip and the sheet behind it — on every player-facing screen. Two
+        /// panels claiming the same corner is not a layout problem to be nudged
+        /// apart, it is two answers to the same question, and the sheet's answer is
+        /// the better one: findings in English, worst first, instead of four rows of
+        /// instrument readings.
+        ///
+        /// The component is left in SCN_GAME deliberately. Removing it means editing
+        /// a shipping scene to delete a component whose whole cost is now an early
+        /// return, and this repository's hooks block direct .unity edits for good
+        /// reasons. The scene keeps one object graph and this class keeps its
+        /// history; it simply no longer draws.
+        /// </summary>
+        private bool SupersededByStatusHud =>
+            Systems_StatusHudBootstrap.WantsStatusHud(gameObject.scene);
+
         protected override void Start()
         {
-            // Never in a release player, never in training, never headless. A
+            // Never in a release player, never in training, never headless, and
+            // never where the status HUD is already drawing a debug sheet. A
             // diagnostic panel that costs a training sweep wall-clock is measuring
             // the wrong thing, there is no display to draw it on in batch mode, and
             // a retail build has no business showing either.
-            if (!DiagnosticsAllowed || !_enableOverlay || _budget == null
-                || !_budget.EffectsEnabled)
+            if (SupersededByStatusHud || !DiagnosticsAllowed || !_enableOverlay
+                || _budget == null || !_budget.EffectsEnabled)
             {
                 enabled = false;
                 return;

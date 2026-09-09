@@ -81,6 +81,91 @@ namespace PoFootball.EditorTools
         internal static void PinBeforeBuild()
         {
             Pin();
+            StripMcpDefinesFromPlayer();
+        }
+
+        /// <summary>
+        /// The scripting defines the MCP bridge's own assemblies are gated on. Both
+        /// must be absent for the gate to close — the asmdefs list them together, so
+        /// dropping one is enough, and dropping both says what is meant.
+        /// </summary>
+        private static readonly string[] McpDefines =
+        {
+            "UNITY_MCP_READY",
+            "UNITY_MCP_DEPS_3",
+        };
+
+        /// <summary>
+        /// Takes the MCP bridge's defines out of the ANDROID define set, which
+        /// excludes <c>com.IvanMurzak.Unity.MCP.Runtime</c> and every satellite
+        /// package's runtime assembly from the player build.
+        ///
+        /// THIS IS THE OTHER HALF OF THE PIN ABOVE, AND WITHOUT IT THE PIN IS A
+        /// BUILD BREAK. Pinning the NuGet closure to Editor-only makes those DLLs
+        /// unavailable to a player — which is the whole point — but
+        /// com.IvanMurzak.Unity.MCP.Runtime lists ten of them in its
+        /// precompiledReferences and is NOT Editor-only, so the Android compile went
+        /// looking for McpPlugin.dll, ReflectorNet.dll and the SignalR client and
+        /// found none of them. The first Android build this project ever attempted
+        /// died on 354 CS0246s, 352 of them from that one package. The two halves
+        /// were written years apart in spirit: one decided the DLLs must not ship,
+        /// the other was never told.
+        ///
+        /// Both asmdefs gate on these defines already — the package author put them
+        /// there precisely so the bridge can be switched off — so this is the
+        /// supported switch and not a workaround.
+        ///
+        /// ANDROID ONLY, DELIBERATELY. Editor assemblies compile against the ACTIVE
+        /// build target's define set, so stripping these globally would take the
+        /// bridge out of the Editor as well. Restricted to Android, the bridge is
+        /// live for the whole of normal development on Windows and absent only from
+        /// the artifact, which is the distinction being drawn.
+        ///
+        /// Asserted before every Android build for the same reason the pin is: this
+        /// is the one moment it has to be true, and the resolver that undoes the pin
+        /// can rewrite these too.
+        /// </summary>
+        private static void StripMcpDefinesFromPlayer()
+        {
+            var target = UnityEditor.Build.NamedBuildTarget.Android;
+
+            string[] current = PlayerSettings.GetScriptingDefineSymbols(target)
+                .Split(';', System.StringSplitOptions.RemoveEmptyEntries);
+
+            var kept = new List<string>(current.Length);
+            var removed = new List<string>();
+
+            for (int index = 0; index < current.Length; index++)
+            {
+                string define = current[index].Trim();
+
+                if (define.Length == 0)
+                {
+                    continue;
+                }
+
+                if (System.Array.IndexOf(McpDefines, define) >= 0)
+                {
+                    removed.Add(define);
+                    continue;
+                }
+
+                kept.Add(define);
+            }
+
+            if (removed.Count == 0)
+            {
+                Debug.Log("[NuGetGuard] Android defines already free of the MCP gate.");
+                return;
+            }
+
+            PlayerSettings.SetScriptingDefineSymbols(target, kept.ToArray());
+            AssetDatabase.SaveAssets();
+
+            Debug.Log(
+                $"[NuGetGuard] removed {string.Join(", ", removed)} from the Android "
+                + "define set; the MCP bridge's runtime assemblies are excluded from "
+                + "the player build.");
         }
 
         private static void Pin()

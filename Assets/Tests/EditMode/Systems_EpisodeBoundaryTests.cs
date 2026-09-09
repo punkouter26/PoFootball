@@ -117,7 +117,7 @@ namespace PoFootball.Tests
                 StubAgent agent = new StubAgent
                 {
                     Id = slotIndex,
-                    Role = Systems_Formation.GetSlot(slotIndex).Role
+                    Role = Systems_Formation.RoleFor(slotIndex)
                 };
 
                 agents[slotIndex] = agent;
@@ -176,7 +176,7 @@ namespace PoFootball.Tests
                 registry.Register(slotIndex, new StubNonAgent
                 {
                     Id = slotIndex,
-                    Role = Systems_Formation.GetSlot(slotIndex).Role
+                    Role = Systems_Formation.RoleFor(slotIndex)
                 });
             }
 

@@ -41,6 +41,7 @@ namespace PoFootball.Systems
         private readonly Systems_PlayerRegistry _registry;
         private readonly Systems_Referee _referee;
         private readonly Systems_ISpotProvider _spotProvider;
+        private readonly Systems_FormationSelection _formations;
         private readonly Systems_ITrainingEpisodeBoundary _episodeBoundary;
         private readonly IPublisher<Systems_PlaySnappedMessage> _snappedPublisher;
         private readonly ISubscriber<Systems_PlayEndedMessage> _endedSubscriber;
@@ -62,6 +63,7 @@ namespace PoFootball.Systems
             Systems_PlayerRegistry registry,
             Systems_Referee referee,
             Systems_ISpotProvider spotProvider,
+            Systems_FormationSelection formations,
             Systems_ITrainingEpisodeBoundary episodeBoundary,
             IPublisher<Systems_PlaySnappedMessage> snappedPublisher,
             ISubscriber<Systems_PlayEndedMessage> endedSubscriber)
@@ -71,6 +73,7 @@ namespace PoFootball.Systems
             _registry = registry;
             _referee = referee;
             _spotProvider = spotProvider;
+            _formations = formations;
             _episodeBoundary = episodeBoundary;
             _snappedPublisher = snappedPublisher;
             _endedSubscriber = endedSubscriber;
@@ -84,6 +87,23 @@ namespace PoFootball.Systems
             // would arm a reset for a director that has not begun an episode.
             // Agent_Telemetry does the same.
             _subscription = _endedSubscriber.Subscribe(OnPlayEnded);
+
+            // Both formation invariants fail invisibly — a re-ordered role puts
+            // every brain one seat out of place, and two slots inside
+            // MIN_SPAWN_SEPARATION spawn players inside each other's collider and
+            // fling one across the field, on one pairing out of sixty-four. Checked
+            // once, here, in development builds only, where the result reaches the
+            // log and the on-device DEBUG sheet alike. See Systems_FormationBook.
+            if (Debug.isDebugBuild)
+            {
+                string formationFailures = Systems_FormationBook.Validate();
+
+                if (formationFailures != null)
+                {
+                    Debug.LogError(
+                        $"{nameof(Systems_FormationBook)}: " + formationFailures);
+                }
+            }
 
             Debug.Log(
                 $"[PoFootball] EpisodeDirector.Start — registry has "
@@ -195,9 +215,17 @@ namespace PoFootball.Systems
             Systems_PlaySituation situation = _spotProvider.NextSituation();
             float lineOfScrimmageY = situation.LineOfScrimmageY;
 
+            // Both teams pick an alignment for this snap, from a stream of their
+            // own. Drawn here rather than inside the spot provider on purpose: the
+            // provider is the seam between training and a game, and the whole point
+            // of that seam is that the line of scrimmage is the ONLY thing that
+            // differs across it. Both modes reach this line, so both draw the same
+            // formation sequence and the invariant is untouched.
+            _formations.DrawNext();
+
             for (int slotIndex = 0; slotIndex < Systems_PlayerRegistry.CAPACITY; slotIndex++)
             {
-                Systems_FormationSlot slot = Systems_Formation.GetSlot(slotIndex);
+                Systems_FormationSlot slot = _formations.GetSlot(slotIndex);
                 Systems_IPlayerHandle player = _registry.Get(slotIndex);
 
                 // Fatigue is cleared BEFORE the body is restored, per CLAUDE.md

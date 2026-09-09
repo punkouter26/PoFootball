@@ -40,7 +40,17 @@ Unity ML-Agents self-play.
 ## 3. Display
 - UI Toolkit only — no UGUI, no IMGUI, no `.uxml`/`.uss`. Screens built from C# at runtime.
 - Portrait 9:16, 60 FPS (`vSyncCount = 0` or `targetFrameRate` is ignored).
-- `Application.version` top-left of the opening scene: inset layer, outside any ScrollView, non-pickable.
+- **One status HUD, five corners, every player-facing screen** — title top-left, FPS
+  top-centre, MENU top-right, DEBUG bottom-left, `Application.version` bottom-right.
+  It is spawned by `Systems_StatusHudBootstrap`, not authored in the scenes, so the
+  two screens cannot drift apart; `Systems_UiTheme.STATUS_BAR_HEIGHT` /
+  `STATUS_FOOTER_HEIGHT` are the strips every other screen must offset by. The
+  version stamp used to be top-left of `SCN_MENU` alone — it is bottom-right on
+  *both* screens now, which is more of what that rule was asking for, not less.
+  Everything is on an inset layer, outside any ScrollView, and non-pickable but the
+  two chips.
+- The DEBUG sheet is written in **English, worst finding first** — what is wrong,
+  how bad, what to do — not rows of instrument readings. The readings are under it.
 - The panel scales on width — size against a live capture.
 
 ## 4. MLOps
@@ -92,18 +102,31 @@ So `Agent_BrainTable.MatchesCurrentContract` now checks the **group set** as wel
 the revision stamp, because the stamp is one integer and cannot see the entries
 under it.
 
-To promote: train against `Config/FootballBase11.yaml` (revision 8), run
+To promote: train against a config for the CURRENT contract revision, run
 `Tools/promote_brain.py`, then **`Tools > PoFootball > Build Brain Table`** in the
 Editor. That last step is not optional — the Python side copies `.onnx` files but
 cannot write the ScriptableObject that lists them.
+
+**THE CURRENT REVISION IS 9, AND NO CONFIG OR COMPLETED RUN MATCHES IT YET.**
+`Agent_ActionContract.CONTRACT_REVISION` went to 9 when the quarterback's aim
+precision was given an effect, which made `INCOMPLETION_PENALTY`,
+`INTERCEPTION_REWARD` and the whole Interception branch of `Reward_Terminal`
+reachable for the first time. That file says it plainly: *"results/football_long01
+is fitted against revision 8 and must not load."* So the 2.6M-step run that
+concluded the optimization loop is **not promotable** — it learned a game in which
+a pass could not miss.
+
+`Config/FootballBase11.yaml` is a revision **8** config; its own header says so.
+A revision 9 run needs its own config and run-id, per the 1:1 naming rule in
+UNITY_RULES §1. Until that run exists and is promoted, every player is a heuristic.
 
 Note that `m_Model` references serialized in the scenes are dead either way:
 `Agent_FootballPlayer` assigns `behaviorParameters.Model` from
 `Agent_BrainRegistry` at `Awake`, overwriting whatever the scene held.
 
 Heuristic-only is a supported, playable state, not a bug — but nothing you watch
-right now is a trained policy. **To change that, train a revision 8 run against the
-three-behavior config and promote it.** `football_base11` is that run.
+right now is a trained policy. **To change that, train a revision 9 run against the
+three-behavior config and promote it.** No such run exists yet — see above.
 
 **Scenes.** `SCN_MENU` (front end) → `SCN_GAME` (a scored game) and
 `SCN_TRAIN_FOOTBALL` (the trainer's endless single plays). All three share one
@@ -220,8 +243,9 @@ given it picks `"cuda"` whenever a GPU is visible and calls
 for `cpu`, the `else` branch only sets the dtype — it never puts the default device
 back. Hiding the GPU is what fixes it. Use `-1`; an empty string is ignored on Windows.
 
-`FootballBase06.yaml` (long superseded — the current config is
-`FootballBase11.yaml`, three behaviors, revision 8) carries **six** behaviors. The quarterback has its own brain
+`FootballBase06.yaml` (long superseded — the newest config is
+`FootballBase11.yaml`, three behaviors, and it is itself a revision **8** config
+against a build now on revision 9) carries **six** behaviors. The quarterback has its own brain
 — it is the only one with discrete actions, and while it shared `OffenseSkill`
 with the backs and receivers its play-call gradient was diluted five to one and
 its entropy bonus could not be raised without injecting noise into four other
@@ -303,18 +327,44 @@ shipping on the punkouter27 Play account.
 
 ### Secrets live OUTSIDE the repo
 
-`C:/Users/punko/Downloads/PoFootball-Release/`
+`C:/Users/punko/OneDrive/VAULT/_CODE/` — the shared vault every Punkouter app's
+signing key was consolidated into on 2026-09-02. Files are flat and app-prefixed;
+`KEYSTORES-README.txt` there is the authority on the layout and the pinning rules.
+The old `Downloads/PoFootball-Release/` in this document never existed on disk, and
+the builders pointed at it until 2026-09-09, which is why every Android build
+aborted on "keystore not found".
 
-- `pofootball-upload.jks` — the upload key. **Losing it means losing the ability to
-  update the app.** Back it up somewhere other than this machine.
-- `pofootball-upload.pass` — the store/alias password, one line.
-- `upload_certificate.pem` — the public cert, for Play App Signing.
-- `play-service-account.json` — NOT created yet; see the SETUP block at the top of
-  `Tools/play_publish.py`.
+- `pofootball-upload.jks` — the upload key. **NOT CREATED YET.** Nothing has been
+  uploaded to Play under this application id, so it is still safe to create; the
+  moment it is, losing it means losing the ability to update the app. One command,
+  and it must be run by a human because generating signing material is exactly the
+  action an agent should not be doing unattended:
+
+  ```powershell
+  $vault = "C:\Users\punko\OneDrive\VAULT\_CODE"
+  $pass  = -join ((48..57)+(65..90)+(97..122) | Get-Random -Count 28 | % {[char]$_})
+  [IO.File]::WriteAllText("$vault\pofootball-upload.pass", $pass)
+  & "C:\Program Files\Microsoft\jdk-21.0.12.101-hotspot\bin\keytool.exe" `
+      -genkeypair -v -keystore "$vault\pofootball-upload.jks" -storetype JKS `
+      -alias pofootball-upload -keyalg RSA -keysize 2048 -validity 10950 `
+      -storepass $pass -keypass $pass `
+      -dname "CN=Punkouter Software, O=Punkouter Software, C=US"
+  attrib +P -U "$vault\pofootball-upload.jks" "$vault\pofootball-upload.pass"
+  ```
+
+- `pofootball-upload.pass` — the store/alias password, one line, no trailing newline.
+- `pofootball-upload.pem` — the public cert, for Play App Signing.
+- `pofootball-play-service-account.json` — NOT created yet; see the SETUP block at
+  the top of `Tools/play_publish.py`.
 
 Unity does not serialize keystore passwords into `ProjectSettings`, so both Android
 builders read `POFOOTBALL_KEYSTORE_PASS` first and fall back to the `.pass` file.
-Without either, the build **aborts** rather than producing an unsigned artifact.
+Without either, the **release** APK and the AAB abort rather than produce an
+artifact that cannot update a Play install. The **development** APK does not: it
+falls back to the Android SDK debug key, because Play rejects a debuggable bundle
+outright, so the upload key buys a test-handset build nothing and demanding it only
+blocks the one artifact whose job is to get onto a phone today. That build logs a
+`BUILD SIGNING:` warning saying which key it used.
 
 ### The tools
 
@@ -323,6 +373,7 @@ Without either, the build **aborts** rather than producing an unsigned artifact.
 | *Tools → PoFootball → Configure Android Release Settings* | One-shot: identity, SDK levels, orientation, and the launcher icons (adaptive + round + legacy, 6 densities) from `Assets/Icons/`. Re-run after changing icon art |
 | *Tools → PoFootball → Build Android AAB (Play release)* | Signed bundle → `Builds/Android/PoFootball.aab`. Logs `AAB BUILD RESULT:` |
 | *Tools → PoFootball → Build Android APK* | Sideloadable APK on the SAME key, so it installs over a Play build → `Builds/Android/PoFootball.apk`. Logs `BUILD RESULT:` |
+| *Tools → PoFootball → Build Android APK (development)* | The same APK with Development Build on — the only artifact where `Debug.isDebugBuild` is true and therefore the only one whose DEBUG sheet appears. This is what goes on a test handset |
 | `Tools/play_publish.py` | Uploads a built AAB. Defaults to the `internal` track as a `draft`; `--dry-run` rehearses and discards |
 
 `Tools/play_publish.py` needs its own venv (`Tools/publish-venv`). Do not install it

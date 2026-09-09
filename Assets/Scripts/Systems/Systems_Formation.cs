@@ -3,144 +3,67 @@ using PoFootball.Models;
 namespace PoFootball.Systems
 {
     /// <summary>
-    /// The single fixed formation used every episode (Episode variety: random LOS,
-    /// fixed formation). Offense is an I-formation — quarterback under centre with
-    /// the fullback and halfback stacked directly behind — against a 4-3 defense
-    /// with two-high safeties.
+    /// The parts of the formation that never change, whichever alignment the teams
+    /// happen to be in.
     ///
-    /// Milestone 2 traded the third receiver for the fullback to keep the offense
-    /// at eleven.
+    /// WHAT MOVED OUT OF HERE AND WHY. This class used to be the one fixed
+    /// formation — an I-formation against a 4-3, twenty-two hard-coded offsets and
+    /// a single coverage table. The alignments now live in
+    /// <see cref="Systems_FormationBook"/>, eight per side, and which pair is on the
+    /// field for the current play lives in <see cref="Systems_FormationSelection"/>,
+    /// which is injected because it is per-play state.
     ///
-    /// Slot order is stable and IS the index each agent carries in the scene:
-    /// 0..10 offense, 11..21 defense. Every pair of slots is at least
-    /// MIN_SPAWN_SEPARATION apart, which is what makes acceptance criterion #12
-    /// hold by construction rather than by rejection sampling.
+    /// WHAT STAYED, AND WHY IT HAD TO. Two things are properties of the SQUAD rather
+    /// than of an alignment, and both are read where no injected object is
+    /// available:
+    ///
+    ///   The ROLE of a slot. Agent_FootballPlayer.CacheRole runs from Awake as well
+    ///   as from Construct, precisely so that an agent dropped into a scene with no
+    ///   lifetime scope still knows what it is. Role cannot depend on a formation
+    ///   anyway — a slot index selects the brain, the drawn shape and the one-hot
+    ///   role slice of the observation vector, so a formation that changed a role
+    ///   would be changing the squad, not the alignment.
+    ///
+    ///   The widest split, which the broadcast camera uses to frame the snap. It is
+    ///   now the widest across EVERY formation rather than the current one, so the
+    ///   camera does not resize itself between plays.
     /// </summary>
     public static class Systems_Formation
     {
         /// <summary>The quarterback takes the snap, so it starts with the ball.</summary>
-        public const int QUARTERBACK_SLOT_INDEX = 8;
+        public const int QUARTERBACK_SLOT_INDEX = Systems_FormationBook.QUARTERBACK_SLOT_INDEX;
 
-        public const int FULLBACK_SLOT_INDEX = 9;
+        public const int FULLBACK_SLOT_INDEX = Systems_FormationBook.FULLBACK_SLOT_INDEX;
 
-        public const int HALFBACK_SLOT_INDEX = 10;
+        public const int HALFBACK_SLOT_INDEX = Systems_FormationBook.HALFBACK_SLOT_INDEX;
 
-        // The eligible receivers a defender can be assigned to, and the three
-        // defenders that carry an assignment. Named because CoverageAssignmentFor
-        // is a table of pairs and a table of bare integers is unreadable and
-        // unverifiable.
-        private const int TIGHT_END_SLOT_INDEX = 5;
-        private const int WIDE_RECEIVER_LEFT_SLOT_INDEX = 6;
-        private const int WIDE_RECEIVER_RIGHT_SLOT_INDEX = 7;
-        private const int CORNERBACK_LEFT_SLOT_INDEX = 18;
-        private const int CORNERBACK_RIGHT_SLOT_INDEX = 19;
-        private const int STRONG_SAFETY_SLOT_INDEX = 21;
-
-        private static readonly Systems_FormationSlot[] Slots =
-        {
-            // --- Offense: attacks +Y, lines up at or behind the LOS -----------
-            new Systems_FormationSlot(Systems_PlayerRole.OffensiveLine, -3.0f, -0.8f),
-            new Systems_FormationSlot(Systems_PlayerRole.OffensiveLine, -1.5f, -0.8f),
-            new Systems_FormationSlot(Systems_PlayerRole.OffensiveLine, 0.0f, -0.8f),
-            new Systems_FormationSlot(Systems_PlayerRole.OffensiveLine, 1.5f, -0.8f),
-            new Systems_FormationSlot(Systems_PlayerRole.OffensiveLine, 3.0f, -0.8f),
-            new Systems_FormationSlot(Systems_PlayerRole.TightEnd, 4.5f, -0.8f),
-            new Systems_FormationSlot(Systems_PlayerRole.WideReceiver, -12.0f, -0.8f),
-            new Systems_FormationSlot(Systems_PlayerRole.WideReceiver, 12.0f, -0.8f),
-            new Systems_FormationSlot(Systems_PlayerRole.Quarterback, 0.0f, -2.5f),
-            new Systems_FormationSlot(Systems_PlayerRole.Fullback, 0.0f, -4.5f),
-            new Systems_FormationSlot(Systems_PlayerRole.RunningBack, 0.0f, -6.5f),
-
-            // --- Defense: attacks -Y, lines up beyond the LOS ------------------
-            new Systems_FormationSlot(Systems_PlayerRole.DefensiveLine, -2.5f, 0.8f),
-            new Systems_FormationSlot(Systems_PlayerRole.DefensiveLine, -0.9f, 0.8f),
-            new Systems_FormationSlot(Systems_PlayerRole.DefensiveLine, 0.9f, 0.8f),
-            new Systems_FormationSlot(Systems_PlayerRole.DefensiveLine, 2.5f, 0.8f),
-            new Systems_FormationSlot(Systems_PlayerRole.Linebacker, -4.0f, 4.5f),
-            new Systems_FormationSlot(Systems_PlayerRole.Linebacker, 0.0f, 4.5f),
-            new Systems_FormationSlot(Systems_PlayerRole.Linebacker, 4.0f, 4.5f),
-            new Systems_FormationSlot(Systems_PlayerRole.Cornerback, -12.0f, 7.0f),
-            new Systems_FormationSlot(Systems_PlayerRole.Cornerback, 12.0f, 7.0f),
-            new Systems_FormationSlot(Systems_PlayerRole.Safety, -5.0f, 13.0f),
-            new Systems_FormationSlot(Systems_PlayerRole.Safety, 5.0f, 13.0f)
-        };
-
-        public static int SlotCount => Slots.Length;
-
-        public static Systems_FormationSlot GetSlot(int index)
-        {
-            return Slots[index];
-        }
+        /// <summary>Twenty-two: eleven a side, in every formation.</summary>
+        public static int SlotCount => Systems_FormationBook.SLOTS_PER_SIDE * 2;
 
         /// <summary>
-        /// How far the widest player in the formation lines up from the centre of
-        /// the field, in metres. Currently the split receivers and the corners over
-        /// them, at 12.0.
-        ///
-        /// COMPUTED FROM THE TABLE RATHER THAN WRITTEN DOWN, because the one place
-        /// that needs it is Systems_BroadcastCameraView — it sizes the snap shot so
-        /// the whole formation fits on screen — and a hand-copied number is exactly
-        /// the kind that goes stale. It already had: the camera's own comments
-        /// justified its framing against "about x = +/-11 m" while this table has
-        /// said 12.0 for both the receivers and the corners, so the tight shot was
-        /// sized a metre short of the formation it was supposed to frame even at the
-        /// aspect it was designed for.
-        ///
-        /// Static readonly rather than const: it is a fold over the table, so it
-        /// cannot drift from it.
+        /// See <see cref="Systems_FormationBook.WidestSlotX"/> — the widest split in
+        /// any formation, folded over the tables rather than written down, so it
+        /// cannot go stale the way a hand-copied constant did before it.
         /// </summary>
-        public static readonly float WidestSlotX = ComputeWidestSlotX();
-
-        private static float ComputeWidestSlotX()
-        {
-            float widest = 0f;
-
-            for (int index = 0; index < Slots.Length; index++)
-            {
-                float distance = Slots[index].OffsetX < 0f
-                    ? -Slots[index].OffsetX
-                    : Slots[index].OffsetX;
-
-                if (distance > widest)
-                {
-                    widest = distance;
-                }
-            }
-
-            return widest;
-        }
+        public static float WidestSlotX => Systems_FormationBook.WidestSlotX;
 
         /// <summary>
-        /// The offensive slot a given defender covers man-to-man, or -1 for a
-        /// defender with no assignment — which means the deep middle.
+        /// The position group of a squad slot. Fixed for the life of the build:
+        /// slots 0..10 are the offense and 11..21 the defense, and the order within
+        /// each is the same in every formation — <see cref="Systems_FormationBook.Validate"/>
+        /// asserts it rather than trusting it.
         ///
-        /// Together with the four linemen rushing and the three linebackers holding
-        /// a zone, this is Cover 1: corners on the two split receivers, the strong
-        /// safety on the tight end, the free safety over the top.
-        ///
-        /// A FIXED TABLE RATHER THAN A NEAREST-RECEIVER SEARCH, for two reasons.
-        /// Nearest-receiver is quadratic in the squad and runs on every defender on
-        /// every decision, and worse, it is unstable: two defenders repeatedly claim
-        /// the same receiver and abandon it as the geometry crosses over, so the
-        /// coverage visibly flickers. A formation plays fixed assignments precisely
-        /// because that ambiguity is what offenses attack.
-        ///
-        /// Slot-indexed rather than role-indexed because both corners share a role
-        /// and they do not share an assignment.
+        /// Reads the base formation because any of them would give the same answer.
         /// </summary>
-        public static int CoverageAssignmentFor(int defenderSlotIndex)
+        public static Systems_PlayerRole RoleFor(int slotIndex)
         {
-            switch (defenderSlotIndex)
-            {
-                case CORNERBACK_LEFT_SLOT_INDEX:
-                    return WIDE_RECEIVER_LEFT_SLOT_INDEX;
-                case CORNERBACK_RIGHT_SLOT_INDEX:
-                    return WIDE_RECEIVER_RIGHT_SLOT_INDEX;
-                case STRONG_SAFETY_SLOT_INDEX:
-                    return TIGHT_END_SLOT_INDEX;
-                default:
-                    return -1;
-            }
+            return slotIndex < Systems_FormationBook.SLOTS_PER_SIDE
+                ? Systems_FormationBook
+                    .OffenseSlot(Systems_OffensiveFormation.ProI, slotIndex).Role
+                : Systems_FormationBook
+                    .DefenseSlot(
+                        Systems_DefensiveFormation.FourThreeBase,
+                        slotIndex - Systems_FormationBook.SLOTS_PER_SIDE).Role;
         }
     }
 }

@@ -120,6 +120,30 @@ namespace PoFootball.Views
             _safeArea.style.flexGrow = 1f;
             UnsafeRoot.Add(_safeArea);
 
+            // NEITHER OF THESE TWO CONTAINERS MAY BE A HIT-TEST TARGET, AND THIS IS
+            // NOT A MICRO-OPTIMISATION — IT IS WHY THE MENU'S PLAY BUTTON WORKS.
+            //
+            // Both default to PickingMode.Position and both fill the entire panel.
+            // A runtime panel consumes a pointer event whenever its hit test picks
+            // ANY element, so a screen whose root is pickable swallows every tap on
+            // the whole display, including the ones aimed at a panel underneath it.
+            //
+            // With one screen per scene that was invisible. It stopped being
+            // invisible the moment Systems_StatusHudView started drawing over the
+            // menu and the HUD at sortingOrder 300: on a device, MENU and DEBUG
+            // worked — they are inside the status HUD — and PLAY, QUIT and every
+            // other control in the game were dead, with no error anywhere, because
+            // the status HUD's empty safe-area root was picking first. Measured on a
+            // Pixel 9 Pro, not reasoned about: three taps on PLAY, no scene load in
+            // logcat.
+            //
+            // Ignore does not affect descendants — the bars, buttons and sheets
+            // inside are picked exactly as before. Systems_UiTheme.Layer() already
+            // does this for the same reason one level down; the containers this
+            // class owns simply never got the same treatment.
+            UnsafeRoot.pickingMode = PickingMode.Ignore;
+            _safeArea.pickingMode = PickingMode.Ignore;
+
             Root = _safeArea;
 
             ApplySafeArea();
@@ -211,9 +235,6 @@ namespace PoFootball.Views
                 return;
             }
 
-            _lastSafeArea = safeArea;
-            _lastScreenSize = screenSize;
-
             if (screenSize.x <= 0 || screenSize.y <= 0)
             {
                 return;
@@ -228,11 +249,28 @@ namespace PoFootball.Views
             // Before the first layout pass the resolved size is NaN. Leave the
             // inset at zero and pick it up next frame rather than writing NaN
             // padding, which silently collapses the whole tree.
+            //
+            // THE CACHE IS WRITTEN BELOW THIS GUARD, NOT ABOVE IT, AND THAT ONE LINE
+            // OF ORDERING IS THE WHOLE FEATURE. This method is first called from
+            // Start, which is BEFORE the panel has ever laid out, so the resolved
+            // size is reliably NaN on that first call. Recording safeArea and
+            // screenSize before returning meant every later call matched the cache
+            // and returned at the check above — so the padding was applied exactly
+            // never, and the class written to keep the game clock out from under a
+            // punch-hole camera silently did nothing on every device that has one.
+            //
+            // Found on the deployed build, not by reading this file: the diagnostic
+            // sheet reported "safe area 0 top / 0 bottom" on a Pixel 9 Pro whose
+            // Screen.cutouts is non-empty.
             if (float.IsNaN(panelWidth) || float.IsNaN(panelHeight)
                 || panelWidth <= 0f || panelHeight <= 0f)
             {
                 return;
             }
+
+            // Committed only now that the inset is actually about to be written.
+            _lastSafeArea = safeArea;
+            _lastScreenSize = screenSize;
 
             float leftPixels = safeArea.xMin;
             float rightPixels = screenSize.x - safeArea.xMax;

@@ -233,6 +233,24 @@ namespace PoFootball.Agents
 
         public bool IsCarrier => _isCarrier;
 
+        private Systems_FormationSelection _formations;
+
+        /// <summary>
+        /// The formations on the field this play, with a fallback for an agent that
+        /// never got a Construct.
+        ///
+        /// CacheRole is documented as idempotent precisely because an agent dropped
+        /// into a scene with no lifetime scope has to keep working, and the two
+        /// places that read alignment — a linebacker's zone anchor and a cover
+        /// defender's assignment — are on the per-decision path where a null
+        /// reference would be a hard crash rather than a degraded heuristic. A
+        /// lazily created selection answers with the base I-formation against a 4-3,
+        /// which is exactly what those two call sites read before formations
+        /// existed.
+        /// </summary>
+        private Systems_FormationSelection Formations =>
+            _formations ??= new Systems_FormationSelection();
+
         /// <summary>
         /// Called by Systems_GameLifetimeScope's build callback, which runs from the
         /// scope's Awake at execution order -5000 — before this component's Awake.
@@ -247,7 +265,8 @@ namespace PoFootball.Agents
             Systems_PlayerRegistry registry,
             Systems_Referee referee,
             Systems_SimMode simMode,
-            Systems_IIntentSink intentSink)
+            Systems_IIntentSink intentSink,
+            Systems_FormationSelection formations)
         {
             _play = play;
             _ball = ball;
@@ -257,6 +276,7 @@ namespace PoFootball.Agents
             _referee = referee;
             _simMode = simMode;
             _intentSink = intentSink;
+            _formations = formations;
 
             // Before Register, not after: the registry hands this instance to the
             // rest of the graph, and Role and Side are cached fields now rather
@@ -273,7 +293,7 @@ namespace PoFootball.Agents
         /// </summary>
         private void CacheRole()
         {
-            _role = Systems_Formation.GetSlot(_formationSlotIndex).Role;
+            _role = Systems_Formation.RoleFor(_formationSlotIndex);
             _side = Systems_RoleTable.SideOf(_role);
         }
 
@@ -1538,7 +1558,7 @@ namespace PoFootball.Agents
         /// </summary>
         private Vector2 LinebackerZone(Systems_IPlayerHandle carrier)
         {
-            float anchorX = Systems_Formation.GetSlot(_formationSlotIndex).OffsetX;
+            float anchorX = Formations.GetSlot(_formationSlotIndex).OffsetX;
 
             float x = anchorX
                 + ((carrier.Position.x - anchorX) * Systems_SimConstants.ZONE_BALL_LEAN);
@@ -1557,7 +1577,7 @@ namespace PoFootball.Agents
         /// </summary>
         private Vector2 CoverageSpot(Systems_IPlayerHandle carrier)
         {
-            int assignedSlot = Systems_Formation.CoverageAssignmentFor(_formationSlotIndex);
+            int assignedSlot = Formations.CoverageAssignmentFor(_formationSlotIndex);
 
             Systems_IPlayerHandle receiver = assignedSlot < 0 || _registry == null
                 ? null

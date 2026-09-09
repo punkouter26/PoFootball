@@ -75,9 +75,14 @@ namespace PoFootball.Tests
             _ball = new Systems_BallModel();
             _registry = new Systems_PlayerRegistry();
 
+            // A freshly constructed selection is the base I-formation against the
+            // 4-3 — exactly the alignment this suite was written against before
+            // formations became a set, so every expectation below still holds.
+            Systems_FormationSelection formations = new Systems_FormationSelection();
+
             for (int slot = 0; slot < Systems_PlayerRegistry.CAPACITY; slot++)
             {
-                Systems_FormationSlot definition = Systems_Formation.GetSlot(slot);
+                Systems_FormationSlot definition = formations.GetSlot(slot);
                 StubPlayer player = new StubPlayer
                 {
                     Id = slot,
