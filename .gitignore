@@ -166,6 +166,15 @@ STOP_TRAINING
 /[Aa]ssets/ML-Agents/Timers/
 /[Aa]ssets/ML-Agents/Timers.meta
 
+# ML-Agents recreates Assets/ML-Agents/ on every play session (it writes the
+# Timers folder below it) and Unity recreates Assets/Temp/. Only Timers/ was
+# ignored, so the two parent folders and their .meta files came back as
+# untracked churn after every run. They hold nothing but run artifacts.
+/[Aa]ssets/ML-Agents/
+/[Aa]ssets/ML-Agents.meta
+/[Aa]ssets/Temp/
+/[Aa]ssets/Temp.meta
+
 # The Unity Skills scene_screenshot tool writes captures here, under Assets/ and
 # therefore into the AssetDatabase. Run artifacts, never worth a diff.
 /[Aa]ssets/Screenshots/
