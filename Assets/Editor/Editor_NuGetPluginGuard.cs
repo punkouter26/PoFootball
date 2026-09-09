@@ -81,56 +81,34 @@ namespace PoFootball.EditorTools
         internal static void PinBeforeBuild()
         {
             Pin();
-            StripMcpDefinesFromPlayer();
+            StripMcpDefines(UnityEditor.Build.NamedBuildTarget.Android);
         }
 
         /// <summary>
-        /// The scripting defines the MCP bridge's own assemblies are gated on. Both
-        /// must be absent for the gate to close — the asmdefs list them together, so
-        /// dropping one is enough, and dropping both says what is meant.
+        /// Strips the MCP gate for one build target and hands back what was there,
+        /// so a caller that only wants it gone for the duration of a build can put
+        /// it back afterwards.
+        ///
+        /// STANDALONE NEEDS THIS TOO, AND FINDING OUT COST A BUILD. The pin above is
+        /// per-ASSEMBLY, not per-target: once it has run, those 42 DLLs are
+        /// Editor-only for every platform. So after any Android build, the very next
+        /// Standalone build — the training env — fails with the same CS0234s,
+        /// because com.IvanMurzak.Unity.MCP.Runtime is still gated IN for Standalone
+        /// and its precompiled references have just been gated OUT. A pre-existing
+        /// landmine that only detonates once someone builds for Android first, which
+        /// nobody in this project ever had.
+        ///
+        /// Restored afterwards for Standalone and not for Android, and the asymmetry
+        /// is deliberate: Standalone is the target the Editor normally sits on, and
+        /// leaving the gate shut there would take the MCP bridge out of everyday
+        /// development. Android is a target nobody edits under.
         /// </summary>
-        private static readonly string[] McpDefines =
+        internal static string StripMcpDefines(UnityEditor.Build.NamedBuildTarget target)
         {
-            "UNITY_MCP_READY",
-            "UNITY_MCP_DEPS_3",
-        };
+            string previous = PlayerSettings.GetScriptingDefineSymbols(target);
 
-        /// <summary>
-        /// Takes the MCP bridge's defines out of the ANDROID define set, which
-        /// excludes <c>com.IvanMurzak.Unity.MCP.Runtime</c> and every satellite
-        /// package's runtime assembly from the player build.
-        ///
-        /// THIS IS THE OTHER HALF OF THE PIN ABOVE, AND WITHOUT IT THE PIN IS A
-        /// BUILD BREAK. Pinning the NuGet closure to Editor-only makes those DLLs
-        /// unavailable to a player — which is the whole point — but
-        /// com.IvanMurzak.Unity.MCP.Runtime lists ten of them in its
-        /// precompiledReferences and is NOT Editor-only, so the Android compile went
-        /// looking for McpPlugin.dll, ReflectorNet.dll and the SignalR client and
-        /// found none of them. The first Android build this project ever attempted
-        /// died on 354 CS0246s, 352 of them from that one package. The two halves
-        /// were written years apart in spirit: one decided the DLLs must not ship,
-        /// the other was never told.
-        ///
-        /// Both asmdefs gate on these defines already — the package author put them
-        /// there precisely so the bridge can be switched off — so this is the
-        /// supported switch and not a workaround.
-        ///
-        /// ANDROID ONLY, DELIBERATELY. Editor assemblies compile against the ACTIVE
-        /// build target's define set, so stripping these globally would take the
-        /// bridge out of the Editor as well. Restricted to Android, the bridge is
-        /// live for the whole of normal development on Windows and absent only from
-        /// the artifact, which is the distinction being drawn.
-        ///
-        /// Asserted before every Android build for the same reason the pin is: this
-        /// is the one moment it has to be true, and the resolver that undoes the pin
-        /// can rewrite these too.
-        /// </summary>
-        private static void StripMcpDefinesFromPlayer()
-        {
-            var target = UnityEditor.Build.NamedBuildTarget.Android;
-
-            string[] current = PlayerSettings.GetScriptingDefineSymbols(target)
-                .Split(';', System.StringSplitOptions.RemoveEmptyEntries);
+            string[] current = previous.Split(
+                ';', System.StringSplitOptions.RemoveEmptyEntries);
 
             var kept = new List<string>(current.Length);
             var removed = new List<string>();
@@ -155,18 +133,105 @@ namespace PoFootball.EditorTools
 
             if (removed.Count == 0)
             {
-                Debug.Log("[NuGetGuard] Android defines already free of the MCP gate.");
-                return;
+                Debug.Log($"[NuGetGuard] {target.TargetName} defines already free of the MCP gate.");
+                return previous;
             }
 
             PlayerSettings.SetScriptingDefineSymbols(target, kept.ToArray());
             AssetDatabase.SaveAssets();
 
             Debug.Log(
-                $"[NuGetGuard] removed {string.Join(", ", removed)} from the Android "
-                + "define set; the MCP bridge's runtime assemblies are excluded from "
-                + "the player build.");
+                $"[NuGetGuard] removed {string.Join(", ", removed)} from the "
+                + $"{target.TargetName} define set; the MCP bridge's runtime "
+                + "assemblies are excluded from the player build.");
+
+            return previous;
         }
+
+        /// <summary>Puts back exactly what <see cref="StripMcpDefines"/> returned.</summary>
+        internal static void RestoreDefines(
+            UnityEditor.Build.NamedBuildTarget target, string previous)
+        {
+            if (previous == null)
+            {
+                return;
+            }
+
+            PlayerSettings.SetScriptingDefineSymbols(target, previous);
+            AssetDatabase.SaveAssets();
+        }
+
+        /// <summary>
+        /// Undoes <see cref="Pin"/> for everything except Roslyn — the exact inverse
+        /// of what the Android builders want, and deliberately so.
+        ///
+        /// The pin is per-assembly rather than per-target, so an Android build makes
+        /// these Editor-only for the Standalone training env too, and the env then
+        /// fails to compile com.IvanMurzak.Unity.MCP.Runtime against references that
+        /// have just been taken away from it. The env is a local, git-ignored
+        /// artifact that no player ever sees, so the cheap correct answer is to let
+        /// the assemblies back in rather than to fight the define gate — see the
+        /// comment in Editor_BuildMenu.Build for why the define route needs two
+        /// Editor invocations and cannot be a menu item.
+        ///
+        /// ROSLYN STAYS OFF. Those two are not an Editor-only question: a second
+        /// Microsoft.CodeAnalysis loaded beside com.unity.pipeline's own copy makes
+        /// every Roslyn type fail to initialise, which is why the class summary
+        /// singles them out. Letting them back in here would break `unity eval` and
+        /// the Device Simulator to save nothing.
+        /// </summary>
+        internal static void AllowInStandalonePlayer()
+        {
+            if (!Directory.Exists(PLUGIN_ROOT))
+            {
+                return;
+            }
+
+            string[] assemblies = Directory.GetFiles(
+                PLUGIN_ROOT, "*.dll", SearchOption.AllDirectories);
+
+            int reopened = 0;
+
+            for (int index = 0; index < assemblies.Length; index++)
+            {
+                string path = assemblies[index].Replace('\\', '/');
+
+                if (AssetImporter.GetAtPath(path) is not PluginImporter importer)
+                {
+                    continue;
+                }
+
+                if (RoslynAssemblies.Contains(Path.GetFileName(path)))
+                {
+                    continue;
+                }
+
+                if (importer.GetCompatibleWithAnyPlatform())
+                {
+                    continue;
+                }
+
+                importer.SetCompatibleWithAnyPlatform(true);
+                importer.SaveAndReimport();
+                reopened++;
+            }
+
+            Debug.Log(
+                $"[NuGetGuard] reopened {reopened} assemblies to all platforms for a "
+                + "Standalone build. The next Android build re-pins them.");
+        }
+
+        /// <summary>
+        /// The scripting defines the MCP bridge's own assemblies are gated on. Both
+        /// must be absent for the gate to close — the asmdefs list them together, so
+        /// dropping one is enough, and dropping both says what is meant.
+        /// </summary>
+        private static readonly string[] McpDefines =
+        {
+            "UNITY_MCP_READY",
+            "UNITY_MCP_DEPS_3",
+        };
+
 
         private static void Pin()
         {

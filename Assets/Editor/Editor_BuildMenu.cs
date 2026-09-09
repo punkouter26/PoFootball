@@ -1,4 +1,5 @@
 using UnityEditor;
+using UnityEditor.Build;
 using UnityEditor.Build.Reporting;
 using UnityEngine;
 
@@ -55,6 +56,26 @@ namespace PoFootball.EditorTools
                 BuildOptions.None);
         }
 
+        /// <summary>
+        /// The training env, from a command line.
+        ///
+        /// PUBLIC PURELY SO -executeMethod CAN REACH IT. CLAUDE.md tells you to
+        /// rebuild this env whenever the contract's DYNAMICS move — revision 8 is
+        /// the standing example, and the formations added on 2026-09-09 are another:
+        /// every observation and action shape is identical, so the handshake will
+        /// NOT refuse a stale env and a run against one is simply fitted to a
+        /// different game. An instruction that can only be followed by a human
+        /// clicking a menu item is an instruction that gets skipped on the day it
+        /// matters, which is exactly the failure the stamp cannot catch.
+        ///
+        ///     Unity.exe -batchmode -quit -nographics -projectPath &lt;root&gt; ^
+        ///       -executeMethod PoFootball.EditorTools.Editor_BuildMenu.BuildTrainingEnvHeadless
+        /// </summary>
+        public static void BuildTrainingEnvHeadless()
+        {
+            BuildTrainingEnv();
+        }
+
         [MenuItem("Tools/PoFootball/Build Training Env")]
         private static void BuildTrainingEnv()
         {
@@ -95,6 +116,29 @@ namespace PoFootball.EditorTools
                 targetGroup = BuildTargetGroup.Standalone,
                 options = options,
             };
+
+            // THE NUGET CLOSURE IS LET BACK INTO THIS PLAYER, AND THAT IS THE
+            // OPPOSITE OF WHAT THE ANDROID BUILDERS DO. The reasoning is not that it
+            // is harmless — it is 17 MB of SignalR and ASP.NET plumbing in an
+            // artifact twelve headless copies of which run a sweep — but that the
+            // alternative does not work in one Editor invocation.
+            //
+            // Editor_NuGetPluginGuard.Pin is per-ASSEMBLY, not per-target: once an
+            // Android build has run it, those DLLs are Editor-only for EVERY
+            // platform, and com.IvanMurzak.Unity.MCP.Runtime — still gated in for
+            // Standalone — then cannot find its references. Shutting the MCP define
+            // gate for Standalone fixes the compile but changing scripting defines
+            // queues a recompile, and BuildPlayer called behind a pending recompile
+            // dies in its "Immediate" phase before it reaches a single scene. That
+            // was measured, not guessed: the log reads "Requested script compilation
+            // because: Define symbols changed" immediately before the failure.
+            //
+            // A lean env therefore needs two Editor invocations — strip, then build —
+            // which is a CI script, not a menu item. Until someone wants that, the
+            // env carries the extra megabytes and always builds. Nothing in it is
+            // shipped to a player, the folder is git-ignored, and the trainer does
+            // not care.
+            Editor_NuGetPluginGuard.AllowInStandalonePlayer();
 
             BuildReport report = BuildPipeline.BuildPlayer(playerOptions);
             BuildSummary summary = report.summary;
