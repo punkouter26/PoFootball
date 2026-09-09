@@ -15,7 +15,7 @@ namespace PoFootball.EditorTools
     {
         private const string OUTPUT_PATH = "Builds/Android/PoFootball.apk";
 
-        [MenuItem("PoFootball/Build Android APK")]
+        [MenuItem("Tools/PoFootball/Build Android APK")]
         public static void Build()
         {
             if (EditorApplication.isPlaying)
@@ -42,6 +42,12 @@ namespace PoFootball.EditorTools
                                Editor_BuildAndroidAAB.KEYSTORE_PATH);
                 return;
             }
+
+            // Editor tooling must not ship. com.ivanmurzak.unity.mcp's resolver
+            // re-marks every assembly under Assets/Plugins/NuGet as "any platform"
+            // on each resolve, so the pin is asserted here rather than trusted —
+            // this is the only moment it has to be true. See Editor_NuGetPluginGuard.
+            Editor_NuGetPluginGuard.PinBeforeBuild();
 
             var scenes = Editor_BuildAndroidAAB.ResolveShipScenes();
             if (scenes == null)

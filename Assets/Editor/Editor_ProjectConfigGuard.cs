@@ -26,9 +26,9 @@ namespace PoFootball.EditorTools
     /// Driven through the Editor API rather than by editing ProjectSettings.asset
     /// or the scene YAML, because UNITY_RULES forbids hand-edited scene and meta
     /// files and the open Editor would overwrite such an edit on its next save
-    /// anyway. Same reasoning as PoFootball_RoslynGuard, which sits beside it.
+    /// anyway. Same reasoning as Editor_RoslynGuard, which sits beside it.
     /// </summary>
-    internal static class PoFootball_ProjectConfigGuard
+    internal static class Editor_ProjectConfigGuard
     {
         private const string MENU_SCENE_PATH = "Assets/Scenes/SCN_MENU.unity";
         private const string MAIN_CAMERA_TAG = "MainCamera";

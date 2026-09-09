@@ -35,12 +35,12 @@ namespace PoFootball.EditorTools
     /// that got deleted did.
     /// </summary>
     [InitializeOnLoad]
-    internal static class Systems_SimSpeed
+    internal static class Editor_SimSpeed
     {
         private const string PREF_KEY = "PoFootball.SimSpeed";
         private const string MENU_ROOT = "Tools/PoFootball/Sim Speed/";
 
-        static Systems_SimSpeed()
+        static Editor_SimSpeed()
         {
             EditorApplication.playModeStateChanged += OnPlayModeChanged;
         }

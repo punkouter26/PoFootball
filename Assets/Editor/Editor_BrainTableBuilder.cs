@@ -30,7 +30,7 @@ namespace PoFootball.EditorTools
     /// not actually implement. Getting that number wrong is precisely the failure
     /// Football_v01 was deleted for.
     /// </summary>
-    internal static class PoFootball_BrainTableBuilder
+    internal static class Editor_BrainTableBuilder
     {
         private const string AGENTS_ROOT = "Assets/Agents";
         private const string TABLE_PATH = "Assets/Resources/PoFootballBrains.asset";

@@ -47,7 +47,7 @@ namespace PoFootball.EditorTools
     /// day this project gains real UI or crowd art, and it refuses the shapes
     /// folder rather than trusting whoever runs it to remember why.
     /// </summary>
-    internal static class PoFootball_AtlasBuilder
+    internal static class Editor_AtlasBuilder
     {
         private const string ATLAS_FOLDER = "Assets/Art/Atlases";
 
@@ -189,7 +189,7 @@ namespace PoFootball.EditorTools
                     + "atlas. This tool deliberately does NOT pack "
                     + $"{SHADER_COUPLED_FOLDER}: PoFootball/Player samples _MainTex at "
                     + "offset UVs and treats outside-0..1 as empty, which an atlas "
-                    + "makes impossible. See PoFootball_AtlasBuilder's class comment.");
+                    + "makes impossible. See Editor_AtlasBuilder's class comment.");
                 return;
             }
 

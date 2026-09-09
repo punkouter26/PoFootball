@@ -25,9 +25,9 @@ namespace PoFootball.EditorTools
     /// Left in the project rather than deleted after use, because the situation
     /// recurs every time a view is pruned.
     /// </summary>
-    internal static class Systems_MissingScriptCleaner
+    internal static class Editor_MissingScriptCleaner
     {
-        [MenuItem("PoFootball/Clean Missing Scripts In Open Scenes")]
+        [MenuItem("Tools/PoFootball/Clean Missing Scripts In Open Scenes")]
         internal static void Clean()
         {
             int scenesTouched = 0;

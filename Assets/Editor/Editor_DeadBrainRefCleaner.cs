@@ -23,9 +23,9 @@ namespace PoFootball.EditorTools
     /// Hooking the cleanup behind the MCP menu path keeps the rule in
     /// <c>.claude/hooks/block-scene-edit.sh</c> enforced.
     /// </summary>
-    internal static class Systems_DeadBrainRefCleaner
+    internal static class Editor_DeadBrainRefCleaner
     {
-        private const string MENU_PATH = "PoFootball/Clear Dead m_Model References In Open Scenes";
+        private const string MENU_PATH = "Tools/PoFootball/Clear Dead m_Model References In Open Scenes";
 
         /// <summary>
         /// BehaviorParameters' serialized name for the brain reference — the field

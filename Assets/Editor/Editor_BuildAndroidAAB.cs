@@ -55,7 +55,7 @@ namespace PoFootball.EditorTools
             "Assets/Scenes/SCN_GAME.unity",
         };
 
-        [MenuItem("PoFootball/Build Android AAB (Play release)")]
+        [MenuItem("Tools/PoFootball/Build Android AAB (Play release)")]
         public static void Build()
         {
             if (EditorApplication.isPlaying)
@@ -79,6 +79,12 @@ namespace PoFootball.EditorTools
                 Debug.LogError("AAB BUILD RESULT: Aborted — keystore not found at " + KEYSTORE_PATH);
                 return;
             }
+
+            // Editor tooling must not ship. com.ivanmurzak.unity.mcp's resolver
+            // re-marks every assembly under Assets/Plugins/NuGet as "any platform"
+            // on each resolve, so the pin is asserted here rather than trusted —
+            // this is the only moment it has to be true. See Editor_NuGetPluginGuard.
+            Editor_NuGetPluginGuard.PinBeforeBuild();
 
             List<string> scenes = ResolveShipScenes();
             if (scenes == null)
