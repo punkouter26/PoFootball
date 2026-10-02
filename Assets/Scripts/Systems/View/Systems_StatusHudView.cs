@@ -16,7 +16,8 @@ namespace PoFootball.Views
     ///     top-left      the title, so a screenshot always says what it is of
     ///     top-centre    the live frame rate
     ///     top-right     MENU
-    ///     bottom-left   DEBUG, which opens the diagnostic sheet
+    ///     bottom-left   DEBUG, which opens the diagnostic sheet — development
+    ///                   builds and the Editor only, see DiagnosticsAllowed
     ///     bottom-right  the build version
     ///
     /// WHY IT IS SPAWNED AND NOT PLACED IN THE SCENES. Every other screen in this
@@ -179,6 +180,28 @@ namespace PoFootball.Views
             public string Text;
         }
 
+        /// <summary>
+        /// Whether this build may show the DEBUG chip and the sheet behind it.
+        ///
+        /// THE GATE WAS DOCUMENTED IN TWO PLACES AND IMPLEMENTED IN NEITHER.
+        /// CLAUDE.md calls the development APK "the only artifact whose DEBUG sheet
+        /// appears", and Editor_BuildAndroid says this sheet "is gated on
+        /// Debug.isDebugBuild, which is exactly right — a retail install has no
+        /// business quoting heap sizes at a player". Both were describing
+        /// Systems_PerformanceOverlayView, which did carry the check. When this
+        /// class superseded that one the check did not come with it, so the signed
+        /// Play bundle would have shipped a DEBUG button one tap from the device
+        /// model, the heap size and the first logged error.
+        ///
+        /// Only the chip and the sheet are gated. The frame rate, the version and
+        /// the session telemetry file are what a bug report from a retail install
+        /// needs, and none of them is an instrument panel.
+        ///
+        /// Debug.isDebugBuild rather than #if DEVELOPMENT_BUILD, for the reason
+        /// the class this replaced gives: Unity 6.6 deprecates the symbol.
+        /// </summary>
+        private static bool DiagnosticsAllowed => Debug.isDebugBuild;
+
         protected override void Awake()
         {
             base.Awake();
@@ -222,10 +245,14 @@ namespace PoFootball.Views
             layer.Add(BuildTopBar());
             layer.Add(BuildBottomBar());
 
-            _sheet = BuildDebugSheet();
-            layer.Add(_sheet);
+            if (DiagnosticsAllowed)
+            {
+                _sheet = BuildDebugSheet();
+                layer.Add(_sheet);
 
-            ApplySheetVisibility();
+                ApplySheetVisibility();
+            }
+
             Refresh();
         }
 
@@ -290,9 +317,18 @@ namespace PoFootball.Views
             Systems_UiTheme.SetPadding(
                 bar, Systems_UiTheme.SPACE_XS, Systems_UiTheme.SPACE_M);
 
-            // BOTTOM-LEFT.
-            _debugButton = BuildChip("DEBUG", OnDebugPressed);
-            bar.Add(_debugButton);
+            // BOTTOM-LEFT. A spacer where the chip would be in a release build:
+            // the bar spreads its children apart, and with one child the version
+            // would land in the left corner instead of the right.
+            if (DiagnosticsAllowed)
+            {
+                _debugButton = BuildChip("DEBUG", OnDebugPressed);
+                bar.Add(_debugButton);
+            }
+            else
+            {
+                bar.Add(Systems_UiTheme.Filler());
+            }
 
             // BOTTOM-RIGHT. CLAUDE.md section 3 asked for the build number on the
             // opening screen and got it in the top-left corner of SCN_MENU alone.
@@ -308,10 +344,10 @@ namespace PoFootball.Views
         }
 
         /// <summary>
-        /// A small pressable. Not ApplyControlActionSize: that sizes a 34%-wide
-        /// primary action, and these are chrome that must not eat the corners of a
-        /// portrait screen. Still comfortably over a 48 dp touch target once the
-        /// 1080-wide panel is scaled onto a handset.
+        /// A small pressable. Not one of Systems_UiTheme's action sizers: those size
+        /// a 78%-wide primary action, and these are chrome that must not eat the
+        /// corners of a portrait screen. Still comfortably over a 48 dp touch
+        /// target once the 1080-wide panel is scaled onto a handset.
         /// </summary>
         private static Button BuildChip(string label, Action onClick)
         {

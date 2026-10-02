@@ -330,11 +330,16 @@ namespace PoFootball.Views
             // Guarded rather than removed: AppendPlayerArrows still owns the steer
             // smoothing state, so re-enabling SHOW_PLAYER_ARROWS restores the
             // overlay exactly as it was with no other change.
+            // CS0162 is the compiler noticing the switch above is off, which is
+            // the point of it. Silenced here and nowhere else, so a genuinely
+            // unreachable line elsewhere in this file still warns.
+#pragma warning disable CS0162
             if (SHOW_PLAYER_ARROWS)
             {
                 float chase = 1f - Mathf.Exp(-CHASE_RATE * Time.deltaTime);
                 AppendPlayerArrows(chase, live);
             }
+#pragma warning restore CS0162
 
             if (live)
             {

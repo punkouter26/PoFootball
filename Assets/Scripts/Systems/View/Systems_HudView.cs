@@ -10,8 +10,8 @@ namespace PoFootball.Views
 {
     /// <summary>
     /// The in-game scoreboard: score, quarter, clock, possession, down and
-    /// distance, a result banner after every play, and the box score behind a
-    /// button.
+    /// distance, a result banner after every play, and the full box score on the
+    /// final overlay.
     ///
     /// Reads the game model for anything continuous (the clock) and subscribes for
     /// anything discrete (a play resolving, the final whistle). That split is
@@ -38,16 +38,42 @@ namespace PoFootball.Views
     ///   panel. The panel matches on width, so on a taller handset all of that
     ///   bunched against the top and left several hundred pixels of dead space.
     ///   Everything vertical is a percentage now.
+    ///
+    ///   THE BAR WAS TWO ROWS, AND THE TOP ONE WAS MOSTLY EMPTY. The scores sat at
+    ///   the outside edges of a row whose centre was deliberately blank, with the
+    ///   clock and the down on a second row beneath it: 229 panel units of chrome
+    ///   under a 76-unit status bar, a sixth of a 16:9 screen. It is one row now —
+    ///   score, clock, down, call, score. See BuildScoreboard for why the blank
+    ///   centre is no longer needed.
+    ///
+    ///   QUIT IS GONE. It did exactly what the status HUD's MENU chip does, from a
+    ///   96-unit button parked over the field, and it showed through the final
+    ///   scrim as a third button. The top-right corner is the one way out.
     /// </summary>
     public sealed class Systems_HudView : Systems_ScreenView, Systems_IInjectableView
     {
         /// <summary>
-        /// Reserved width for the clock, in panel units at the 1080-wide reference.
-        /// Sized for "14:22" — five glyphs at TEXT_TITLE in the condensed display
-        /// face — so the label never resizes as the clock counts down. See
-        /// BuildSituationRow.
+        /// Width of each team's block at the two ends of the bar. Fixed and equal,
+        /// so the situation group between them is centred on the screen rather
+        /// than on whichever score happens to be wider.
         /// </summary>
-        private const int CLOCK_MIN_WIDTH = 150;
+        private const int TEAM_BLOCK_WIDTH = 120;
+
+        /// <summary>
+        /// Width reserved on EACH side of the down-and-distance pill: the quarter
+        /// and clock on its left, the play call on its right. Equal on purpose —
+        /// the pill is then centred however wide either neighbour's text is, and
+        /// neither the clock ticking nor the call chip appearing at the snap can
+        /// move it. Sized for the widest of the two: "14:22" at TEXT_TITLE needs
+        /// about 110 panel units and the "FIELD GOAL" chip 141.
+        /// </summary>
+        private const int FLANK_WIDTH = 160;
+
+        /// <summary>
+        /// Distance from the bottom of the status bar to the top of the result
+        /// banner: the scoreboard's own height plus a gap.
+        /// </summary>
+        private const int BANNER_CLEARANCE = 156;
 
         /// <summary>How long a result banner stays up before fading itself out.</summary>
         private const float BANNER_SECONDS = 2.2f;
@@ -96,8 +122,13 @@ namespace PoFootball.Views
         private VisualElement _callChip;
         private Label _callLabel;
         private Label _finalHeadline;
-        private Label _finalScoreline;
-        private Label _finalTotals;
+
+        /// <summary>
+        /// Where the box score card goes at the whistle. Empty until then: the
+        /// numbers do not exist before the game ends, and a card of zeroes built
+        /// at kickoff would only have to be thrown away.
+        /// </summary>
+        private VisualElement _finalCardHost;
 
         /// <summary>Last whole second rendered, so the clock label is not rebuilt per frame.</summary>
         private int _lastClockKey = -1;
@@ -106,6 +137,13 @@ namespace PoFootball.Views
         private int _lastAwayScore = -1;
         private int _lastDown = -1;
         private int _lastQuarter = -1;
+
+        /// <summary>
+        /// Set the first time the game is seen in overtime, and never cleared.
+        /// Sticky because the phase moves on to Final at the whistle, and a game
+        /// that was settled in overtime should still say so under the result.
+        /// </summary>
+        private bool _sawOvertime;
 
         /// <summary>
         /// Deliberately seeded to a value the enum does not define, so the first
@@ -166,22 +204,11 @@ namespace PoFootball.Views
             layer.Add(BuildScoreboard());
 
             // ORDER IS Z-ORDER. The banner sits over the field and the final
-            // overlay sits over the banner. There is no longer a third layer: the
-            // box score panel and the STATS button that toggled it are gone, and
-            // the team totals they existed to show are now printed on the final
-            // overlay itself, which is the only moment a viewer wants them.
+            // overlay sits over the banner. Nothing else is on this layer: the way
+            // out of a live game is the status HUD's MENU chip, on its own panel
+            // above all of this.
             _bannerOverlay = BuildBanner();
             layer.Add(_bannerOverlay.Root);
-
-            // BELOW THE FINAL OVERLAY, AND THAT IS THE WHOLE POINT. This used to be
-            // added last, so QUIT drew ON TOP of the final scrim next to REMATCH and
-            // MENU — three buttons at the whistle, two of which looked identical and
-            // were not. MENU carries the finished game's numbers to the front end
-            // via Systems_GameSummary.From; QUIT calls the summary-less LoadMenu
-            // overload, so tapping the wrong one silently threw the LAST GAME card
-            // away. Ordering it under the overlay means the whistle covers it and
-            // the end of a game offers exactly the two endings it should.
-            layer.Add(BuildControlBar());
 
             _finalOverlay = BuildFinalOverlay();
             layer.Add(_finalOverlay.Root);
@@ -191,12 +218,26 @@ namespace PoFootball.Views
 
         // --- Scoreboard --------------------------------------------------------
 
+        /// <summary>
+        /// One row: home score, the situation, away score.
+        ///
+        /// WHY THE TOP CENTRE IS USABLE AGAIN. The previous layout kept the middle
+        /// of its first row empty because a centre punch-hole clipped the clock's
+        /// leading digit on a 1440x3088 handset. That was true when it was
+        /// written — Systems_ScreenView's safe-area inset was never being applied
+        /// at all, a bug fixed since. With the inset working, and the status bar
+        /// taking the 76 units directly beneath it, the first thing this bar draws
+        /// is already a full row clear of any cutout. The blank centre was
+        /// protecting against a failure that can no longer reach it, and it cost a
+        /// second row to do so.
+        /// </summary>
         private VisualElement BuildScoreboard()
         {
-            VisualElement bar = Systems_UiTheme.Column();
+            VisualElement bar = Systems_UiTheme.Row();
             bar.style.position = Position.Absolute;
             bar.style.left = 0;
             bar.style.right = 0;
+            bar.style.justifyContent = Justify.SpaceBetween;
 
             // BELOW THE STATUS HUD, NOT UNDER IT. Systems_StatusHudView reserves the
             // top strip on every screen for the title, the frame rate and MENU; at
@@ -212,92 +253,51 @@ namespace PoFootball.Views
             // shadows. Without it a translucent bar over dark turf reads as a patch
             // where the grass happens to be a different colour.
             Systems_UiTheme.ApplyElevation(bar);
-            // Slightly more room above than below. The safe-area inset already
-            // clears any cutout exactly; this stops the quarter label from sitting
-            // flush against the bottom edge of a punch-hole, which reads as a
-            // collision even when it technically is not one.
             Systems_UiTheme.SetPadding(
-                bar, Systems_UiTheme.SPACE_M, Systems_UiTheme.SPACE_M,
-                Systems_UiTheme.SPACE_M, Systems_UiTheme.SPACE_M);
+                bar, Systems_UiTheme.SPACE_S, Systems_UiTheme.SPACE_M);
 
-            bar.Add(BuildScoreRow());
-            bar.Add(BuildSituationRow());
+            bar.Add(BuildTeamBlock(Systems_TeamId.Home, out _homeScore, out _homePossession));
+            bar.Add(BuildSituation());
+            bar.Add(BuildTeamBlock(Systems_TeamId.Away, out _awayScore, out _awayPossession));
             return bar;
         }
 
-        private VisualElement BuildScoreRow()
-        {
-            VisualElement scoreRow = Systems_UiTheme.Row();
-            scoreRow.style.justifyContent = Justify.SpaceBetween;
-
-            scoreRow.Add(BuildTeamBlock(Systems_TeamId.Home, out _homeScore, out _homePossession));
-
-            // ONE LINE, NOT TWO, AND DELIBERATELY SO. The quarter used to sit on
-            // its own row directly above the clock, which put a label in the
-            // topmost centre of the screen — the single most likely place on a
-            // modern handset for a punch-hole camera to be. Insetting the safe area
-            // clears the clock, but the row above it is always going to be the
-            // thing closest to the hole. Putting the quarter inline beside the
-            // clock removes that row entirely, and "1ST 4:50" is how a broadcast
-            // graphic would write it anyway.
-            // AN EMPTY COLUMN, BECAUSE THE TOP CENTRE IS NOT OURS TO USE. The
-            // quarter and clock lived here, inline, specifically to avoid putting a
-            // second row under a punch-hole. It did not work: on a centre-cutout
-            // handset the hole clips the clock's LEADING DIGIT, so 1:07 reads ":07"
-            // and 14:22 loses the quarter-hour entirely. Verified on a 1440x3088
-            // centre punch-hole device at 1:39, 1:52 and 1:07.
-            //
-            // The safe-area inset is supposed to prevent exactly this and does not
-            // reach far enough here, so the layout no longer depends on it: the
-            // topmost row now spans the two scores at the OUTSIDE edges with
-            // nothing between them, and the clock has moved down beside the
-            // down-and-distance pill. A cutout can only ever eat empty space.
-            VisualElement centre = new VisualElement();
-            centre.style.flexGrow = 1f;
-            centre.style.flexBasis = 0f;
-            centre.pickingMode = PickingMode.Ignore;
-            scoreRow.Add(centre);
-
-            scoreRow.Add(BuildTeamBlock(Systems_TeamId.Away, out _awayScore, out _awayPossession));
-            return scoreRow;
-        }
-
         /// <summary>
-        /// The down and distance, given the emphasis it always deserved. A pill in
-        /// the accent colour, on its own line, larger than the scores beside it.
+        /// Clock, down and distance, play call — in that order, with the down in
+        /// the middle of the screen.
+        ///
+        /// The down and distance keeps the emphasis it was given: a pill in the
+        /// accent colour, the only thing on the bar that is. The two groups either
+        /// side of it are the same fixed width, which is what holds it still.
         /// </summary>
-        private VisualElement BuildSituationRow()
+        private VisualElement BuildSituation()
         {
             VisualElement situation = Systems_UiTheme.Row();
-            situation.style.justifyContent = Justify.Center;
-            situation.style.alignItems = Align.Center;
-            situation.style.marginTop = Systems_UiTheme.SPACE_S;
 
-            // The clock, relocated off the top-centre strip — see BuildScoreRow.
-            // Beside the situation pill it still reads as one broadcast lower-third
-            // and it is now a full row clear of any cutout.
+            // The quarter ABOVE the clock, both against the pill. Side by side they
+            // needed a reserved box for the clock to stop the row re-flowing every
+            // second, and the box left a four-glyph time floating a hundred units
+            // from its own quarter — "1ST        3:14" read as two unrelated
+            // labels. Stacked and right-aligned in a fixed-width column there is
+            // nothing beside the digits to push: the text changes width and
+            // nothing moves, which is the same guarantee without the gap.
+            VisualElement clockGroup = Systems_UiTheme.Column();
+            clockGroup.style.width = FLANK_WIDTH;
+            clockGroup.style.alignItems = Align.FlexEnd;
+
             _quarter = Systems_UiTheme.Caption("1ST");
-            _quarter.style.marginRight = Systems_UiTheme.SPACE_XS;
 
             _clock = Systems_UiTheme.Text(
                 "5:00", Systems_UiTheme.TEXT_TITLE,
                 Systems_UiTheme.TextPrimary, FontStyle.Bold);
-            _clock.style.marginRight = Systems_UiTheme.SPACE_L;
 
-            // A FIXED BOX, BECAUSE THE CLOCK IS THE ONE LABEL THAT CHANGES EVERY
-            // SECOND. Its text steps between four and five glyphs — "9:58" then
-            // "10:02" — and the digits are not the same width, so on every tick the
-            // row it sits in re-flowed and the down-and-distance pill beside it
-            // twitched sideways. UI Toolkit exposes no tabular-figure font feature,
-            // so the fix is to stop the label from resizing at all: reserve the
-            // widest case and centre inside it.
-            _clock.style.minWidth = CLOCK_MIN_WIDTH;
-            _clock.style.unityTextAlign = TextAnchor.MiddleCenter;
-
-            situation.Add(_quarter);
-            situation.Add(_clock);
+            clockGroup.Add(_quarter);
+            clockGroup.Add(_clock);
+            situation.Add(clockGroup);
 
             VisualElement pill = Systems_UiTheme.Row();
+            pill.style.marginLeft = Systems_UiTheme.SPACE_M;
+            pill.style.marginRight = Systems_UiTheme.SPACE_M;
             pill.style.backgroundColor = new Color(
                 Systems_UiTheme.Accent.r, Systems_UiTheme.Accent.g,
                 Systems_UiTheme.Accent.b, 0.14f);
@@ -319,7 +319,10 @@ namespace PoFootball.Views
             pill.Add(_fieldPosition);
             situation.Add(pill);
 
-            situation.Add(BuildCallChip());
+            VisualElement callSlot = Systems_UiTheme.Row();
+            callSlot.style.width = FLANK_WIDTH;
+            callSlot.Add(BuildCallChip());
+            situation.Add(callSlot);
 
             _situationPill = pill;
             return situation;
@@ -345,7 +348,6 @@ namespace PoFootball.Views
         private VisualElement BuildCallChip()
         {
             VisualElement chip = Systems_UiTheme.Row();
-            chip.style.marginLeft = Systems_UiTheme.SPACE_S;
             chip.style.backgroundColor = new Color(
                 Systems_UiTheme.TextPrimary.r,
                 Systems_UiTheme.TextPrimary.g,
@@ -365,7 +367,13 @@ namespace PoFootball.Views
                 FontStyle.Bold);
 
             chip.Add(_callLabel);
-            chip.style.display = DisplayStyle.None;
+
+            // Hidden, NOT removed from layout. As display: none the chip took its
+            // width out of a centred row at every snap and put it back at every
+            // whistle, so the clock and the pill stepped sideways twice a play.
+            // The slot it sits in is a fixed width either way; visibility only
+            // decides whether anything is drawn in it.
+            chip.style.visibility = Visibility.Hidden;
 
             _callChip = chip;
             return chip;
@@ -377,7 +385,9 @@ namespace PoFootball.Views
         /// </summary>
         private void RefreshCall()
         {
-            if (_play == null || _callChip == null)
+            // Nothing is being called once the game is over, and the final overlay
+            // has taken the chip down — see OnGameOver.
+            if (_play == null || _callChip == null || _finalOverlay.IsVisible)
             {
                 return;
             }
@@ -393,12 +403,12 @@ namespace PoFootball.Views
 
             if (call == Systems_PlayCall.None)
             {
-                _callChip.style.display = DisplayStyle.None;
+                _callChip.style.visibility = Visibility.Hidden;
                 return;
             }
 
             _callLabel.text = Systems_DisplayText.PlayCall(call);
-            _callChip.style.display = DisplayStyle.Flex;
+            _callChip.style.visibility = Visibility.Visible;
         }
 
         private static VisualElement BuildTeamBlock(
@@ -406,8 +416,7 @@ namespace PoFootball.Views
         {
             VisualElement block = Systems_UiTheme.Column();
             block.style.alignItems = Align.Center;
-            block.style.flexGrow = 1f;
-            block.style.flexBasis = 0f;
+            block.style.width = TEAM_BLOCK_WIDTH;
 
             VisualElement nameRow = Systems_UiTheme.Row();
             nameRow.style.justifyContent = Justify.Center;
@@ -460,10 +469,16 @@ namespace PoFootball.Views
 
             overlay.Content.style.alignItems = Align.Center;
 
-            // Percentage, not the old hard-coded top: 420. Roughly a third of the
-            // way down whatever screen this is, which keeps it clear of both the
-            // scoreboard and the middle of the field where the ball usually is.
-            overlay.Content.style.paddingTop = Length.Percent(30f);
+            // DIRECTLY UNDER THE SCOREBOARD, AND SAID SO IN UNITS. This was
+            // paddingTop: 30%, described as "a third of the way down whatever screen
+            // this is". It never was: a percentage padding resolves against the
+            // WIDTH of the containing block, on every axis, and this panel is 1080
+            // wide on every device — so it was a fixed 324 units that only looked
+            // like a proportion. The banner belongs just below the bar on every
+            // screen, clear of the middle of the field where the ball usually is,
+            // and that is a distance, not a ratio.
+            overlay.Content.style.paddingTop =
+                Systems_UiTheme.STATUS_BAR_HEIGHT + BANNER_CLEARANCE;
 
             _bannerHeadline = Systems_UiTheme.Text(
                 string.Empty, Systems_UiTheme.TEXT_BANNER,
@@ -488,17 +503,17 @@ namespace PoFootball.Views
                 "FINAL", Systems_UiTheme.TEXT_BANNER,
                 Systems_UiTheme.TextPrimary, FontStyle.Bold);
 
-            _finalScoreline = Systems_UiTheme.Text(
-                string.Empty, Systems_UiTheme.TEXT_TITLE, Systems_UiTheme.TextMuted);
-            _finalScoreline.style.marginBottom = Systems_UiTheme.SPACE_M;
+            _finalHeadline.style.marginBottom = Systems_UiTheme.SPACE_M;
 
-            // Team totals, filled in at the final whistle. One label rather than a
-            // table: four numbers a side is not a grid, and the panel that used to
-            // render it as one cost three hundred lines.
-            _finalTotals = Systems_UiTheme.Text(
-                string.Empty, Systems_UiTheme.TEXT_BODY, Systems_UiTheme.TextMuted);
-            _finalTotals.style.unityTextAlign = TextAnchor.MiddleCenter;
-            _finalTotals.style.marginBottom = Systems_UiTheme.SPACE_XL;
+            // The whole box score, on the screen that announces the result. It used
+            // to be two lines of totals here and the full table on the menu, a tap
+            // and a scene load away — and not at all for anyone who chose REMATCH.
+            // Stretched to the overlay's width rather than centred to its content,
+            // so the three columns have room to line up.
+            _finalCardHost = new VisualElement();
+            _finalCardHost.style.alignSelf = Align.Stretch;
+            _finalCardHost.style.marginBottom = Systems_UiTheme.SPACE_XL;
+            _finalCardHost.pickingMode = PickingMode.Ignore;
 
             // REMATCH reloads SCN_GAME rather than resetting the models in place.
             // Everything a second game needs to forget — the scoreboard, the box
@@ -511,19 +526,16 @@ namespace PoFootball.Views
                 "REMATCH", Systems_UiTheme.Action, Systems_SceneRouter.LoadGame);
             Systems_UiTheme.ApplyPrimaryActionSize(rematchButton);
 
-            // Carries the finished game's numbers to the menu, which outlives this
-            // scene's box score by the width of a scene load. Only this button does
-            // it — the in-game QUIT button leaves a game that has no result yet.
+            // The same destination as the status HUD's MENU chip above it, and now
+            // the same result: the summary is offered to the router at the whistle
+            // (see OnGameOver), so neither button has to remember to carry it.
             Button menuButton = Systems_UiTheme.Button(
-                "MENU",
-                Systems_UiTheme.SurfaceRaised,
-                () => Systems_SceneRouter.LoadMenu(Systems_GameSummary.From(_boxScore)));
+                "MENU", Systems_UiTheme.SurfaceRaised, Systems_SceneRouter.LoadMenu);
             menuButton.style.color = Systems_UiTheme.TextPrimary;
             Systems_UiTheme.ApplySecondaryActionSize(menuButton);
 
             overlay.Content.Add(_finalHeadline);
-            overlay.Content.Add(_finalScoreline);
-            overlay.Content.Add(_finalTotals);
+            overlay.Content.Add(_finalCardHost);
             overlay.Content.Add(rematchButton);
             overlay.Content.Add(menuButton);
             return overlay;
@@ -611,10 +623,22 @@ namespace PoFootball.Views
                 }
             }
 
-            if (force || _game.Quarter != _lastQuarter)
+            // OVERTIME IS A PHASE, NOT A FIFTH QUARTER. Systems_GameModel.BeginOvertime
+            // resets the clock and sets the phase and leaves Quarter at four, so
+            // keying this label on Quarter alone showed "4TH" beside a fresh clock
+            // for the whole of sudden death — and Systems_DisplayText's "OT" branch
+            // had never once been reached. Seen on a 38-45 game that ended with
+            // "4TH 2:28" on the board.
+            _sawOvertime |= _game.Phase == Systems_GamePhase.Overtime;
+
+            int period = _sawOvertime
+                ? Systems_GameRules.QUARTER_COUNT + 1
+                : _game.Quarter;
+
+            if (force || period != _lastQuarter)
             {
-                _lastQuarter = _game.Quarter;
-                _quarter.text = Systems_DisplayText.QuarterLabel(_lastQuarter);
+                _lastQuarter = period;
+                _quarter.text = Systems_DisplayText.QuarterLabel(period);
             }
 
             if (force || _game.Down != _lastDown)
@@ -646,8 +670,8 @@ namespace PoFootball.Views
         // --- Events --------------------------------------------------------------
 
         /// <summary>
-        /// The ball is live. Get the bottom bar out of the way — it is a between
-        /// downs control and there is nothing it can usefully do during a play.
+        /// The ball is live. Take the last play's banner down — it is describing
+        /// a down that is over, on top of the one that has started.
         /// </summary>
         private void OnSnapped(Systems_PlaySnappedMessage message)
         {
@@ -685,54 +709,6 @@ namespace PoFootball.Views
             RefreshSituation();
         }
 
-        /// <summary>
-        /// The one control available while the ball is live: leave.
-        ///
-        /// WHY IT EXISTS. There was a window in which this screen had no controls at
-        /// all between kickoff and the final whistle — the box-score panel and the
-        /// STATS button that opened it had been removed together, and the only two
-        /// buttons left were inside the final overlay. A viewer who started a game
-        /// was committed to the whole thing with no way back to the menu short of
-        /// killing the app.
-        ///
-        /// THE SPEED CYCLE IS GONE, AND ITS JUSTIFICATION WENT WITH IT. It existed
-        /// because "a full game is an hour in real time and the FINAL overlay is
-        /// effectively unreachable" — a claim that was already false when it was
-        /// written and is not close now. Systems_GameRules.QUARTER_SECONDS is 300,
-        /// not 900, and almost all of it is burned in huddles rather than in real
-        /// time, so a full game is a few minutes at 1x. A control that multiplies
-        /// wall-clock by eight is a strange thing to put on the front of a game
-        /// nobody has to wait for, and it invited a viewer to watch the simulation
-        /// at a speed the animation was never composed for.
-        ///
-        /// Nothing writes Time.timeScale anywhere in the project now, which is why
-        /// the OnDisable that used to reset it is gone too rather than left as a
-        /// guard against a writer that no longer exists.
-        /// </summary>
-        private VisualElement BuildControlBar()
-        {
-            VisualElement bar = Systems_UiTheme.Row();
-            bar.style.position = Position.Absolute;
-            bar.style.left = 0;
-            bar.style.right = 0;
-
-            // ABOVE THE STATUS HUD'S FOOTER, which owns DEBUG on the left and the
-            // version on the right. QUIT is centred so it never overlapped either
-            // horizontally, but at bottom: 0 all three sat in the same band and read
-            // as one row of three unrelated controls.
-            bar.style.bottom = Systems_UiTheme.STATUS_FOOTER_HEIGHT;
-            bar.style.justifyContent = Justify.Center;
-            Systems_UiTheme.SetPadding(bar, Systems_UiTheme.SPACE_M);
-
-            Button quit = Systems_UiTheme.Button(
-                "QUIT", Systems_UiTheme.SurfaceRaised, Systems_SceneRouter.LoadMenu);
-            quit.style.color = Systems_UiTheme.TextMuted;
-            Systems_UiTheme.ApplyControlActionSize(quit);
-
-            bar.Add(quit);
-            return bar;
-        }
-
         private static Color BannerColorFor(Systems_DownResolvedMessage message)
         {
             switch (message.Result)
@@ -761,42 +737,37 @@ namespace PoFootball.Views
                 ? "TIE GAME"
                 : $"{Systems_DisplayText.TeamName(message.Winner)} WINS";
 
-            _finalScoreline.text = $"{message.HomeScore} — {message.AwayScore}";
-            _finalTotals.text = BuildTotals();
+            // Frozen once, here, and used twice: the card on this overlay, and the
+            // menu's LAST GAME card after the scene that owns the box score is gone.
+            // Offered to the router now rather than by a button later, so MENU on
+            // the overlay and MENU in the status bar lead to the same screen.
+            Systems_GameSummary summary = Systems_GameSummary.From(_boxScore);
+            Systems_SceneRouter.OfferSummary(summary);
+
+            _finalCardHost.Clear();
+            _finalCardHost.Add(Systems_BoxScoreCard.Build("FINAL", summary));
 
             _bannerOverlay.Hide();
 
-            // THE DOWN AND DISTANCE IS NOT TRUE ANY MORE. Systems_GameFlowSystem
+            // NEITHER THE DOWN NOR THE CALL IS TRUE ANY MORE. Systems_GameFlowSystem
             // resolves the last play like any other, so the chains are left showing
             // whatever the next snap WOULD have been — a finished game sat under a
             // "1st & 10 OPP 46" pill above a 0:00 clock, describing a down that will
-            // never be played. There is no next situation, so nothing should claim
-            // there is; the clock beside it stays, because 0:00 is the true and
-            // interesting fact about a game that has ended.
+            // never be played, beside the call from a play that is over. Hidden
+            // rather than removed, so the clock beside them does not move; it
+            // stays, because 0:00 is the true and interesting fact about a game
+            // that has ended.
             if (_situationPill != null)
             {
-                _situationPill.style.display = DisplayStyle.None;
+                _situationPill.style.visibility = Visibility.Hidden;
+            }
+
+            if (_callChip != null)
+            {
+                _callChip.style.visibility = Visibility.Hidden;
             }
 
             _finalOverlay.Show();
-        }
-
-        /// <summary>
-        /// Both teams' totals as one block of text. Built once, at the whistle —
-        /// this is the only time it is shown, so there is nothing to keep in sync.
-        /// </summary>
-        private string BuildTotals()
-        {
-            Systems_TeamStatLine home = _boxScore.Team(Systems_TeamId.Home);
-            Systems_TeamStatLine away = _boxScore.Team(Systems_TeamId.Away);
-
-            return
-                $"{Systems_DisplayText.TeamName(Systems_TeamId.Home)}   "
-                + $"{Mathf.RoundToInt(home.TotalYards)} YDS   "
-                + $"{home.FirstDowns} 1ST   {home.Turnovers} TO\n"
-                + $"{Systems_DisplayText.TeamName(Systems_TeamId.Away)}   "
-                + $"{Mathf.RoundToInt(away.TotalYards)} YDS   "
-                + $"{away.FirstDowns} 1ST   {away.Turnovers} TO";
         }
     }
 }

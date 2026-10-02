@@ -104,8 +104,11 @@ namespace PoFootball.Views
             switch (call)
             {
                 case Systems_PlayCall.KeepQuarterback: return "QB KEEP";
-                case Systems_PlayCall.HandoffFullback: return "DIVE";
-                case Systems_PlayCall.HandoffHalfback: return "HANDOFF";
+                // The same two names the HUD chip uses (see PlayCall below). They
+                // were "DIVE" and "HANDOFF" here, so one play was announced as
+                // "FB DIVE" at the snap and "DIVE" at the whistle.
+                case Systems_PlayCall.HandoffFullback: return "FB DIVE";
+                case Systems_PlayCall.HandoffHalfback: return "HB RUN";
                 case Systems_PlayCall.Pass: return "PASS";
                 case Systems_PlayCall.Punt: return "PUNT";
                 case Systems_PlayCall.FieldGoal: return "FIELD GOAL";

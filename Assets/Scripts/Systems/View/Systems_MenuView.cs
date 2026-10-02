@@ -74,7 +74,9 @@ namespace PoFootball.Views
             // FIXED gap, with equal flexible space above and below it. The gap no
             // longer grows with the screen, so the composition holds its proportions
             // from a small phone to a foldable instead of stretching apart.
-            content.Add(Systems_UiTheme.Filler(1f));
+            VisualElement upper = Systems_UiTheme.Filler(1f);
+            upper.style.flexBasis = 0f;
+            content.Add(upper);
             content.Add(BuildTitle());
 
             VisualElement action = Systems_UiTheme.Column();
@@ -117,26 +119,38 @@ namespace PoFootball.Views
 
             // Trailing space, or the game that just finished.
             //
-            // The flexible space below the title card always sums to 1 — the same
-            // weight as above it — so on a first launch the composition is exactly
-            // centred, and when a result card appears it takes its room from the
-            // bottom rather than shoving PLAY up the screen. A button that moves
-            // between visits is a button the hand has to look for.
+            // TWO ZONES OF EQUAL WEIGHT AND ZERO BASIS, AND THE CARD LIVES INSIDE THE
+            // LOWER ONE. That is what keeps PLAY where it was. The previous version
+            // said the same thing in its comment and did not do it: the card was a
+            // sibling of the fillers, so its 526 units came out of the space the
+            // fillers were sharing and the whole title card rode up to make room.
+            // Measured on a 1080x1920 panel, PLAY sat at y = 1015 on first launch
+            // and y = 752 after a game — a button that moves between visits is a
+            // button the hand has to look for, and this one moved a quarter of the
+            // screen.
+            //
+            // A zone with a zero basis is sized by its weight alone, never by what
+            // is in it, so the card now takes its room from the bottom half and
+            // nothing above it can tell whether it is there.
             //
             // Consumed, not read: arriving here from anywhere but a finished game
             // leaves the zone empty exactly as before.
+            VisualElement lower = Systems_UiTheme.Filler(1f);
+            lower.style.flexBasis = 0f;
+            lower.style.justifyContent = Justify.Center;
+
             Systems_GameSummary summary = Systems_SceneRouter.TakeSummary();
 
-            if (summary == null)
+            if (summary != null)
             {
-                content.Add(Systems_UiTheme.Filler(1f));
+                string heading = summary.IsTie
+                    ? "LAST GAME — TIE"
+                    : $"LAST GAME — {Systems_DisplayText.TeamName(summary.Winner)} WON";
+
+                lower.Add(Systems_BoxScoreCard.Build(heading, summary));
             }
-            else
-            {
-                content.Add(Systems_UiTheme.Filler(0.55f));
-                content.Add(BuildFinalCard(summary));
-                content.Add(Systems_UiTheme.Filler(0.45f));
-            }
+
+            content.Add(lower);
 
             Root.Add(screen);
 
@@ -148,116 +162,6 @@ namespace PoFootball.Views
             // of every player-facing screen, alongside the title, the frame rate,
             // MENU and DEBUG. Systems_UiTheme.VersionStamp is kept for a screen that
             // wants its own, but nothing calls it.
-        }
-
-        /// <summary>
-        /// The last game's line, as a three-column table: stat name, home, away.
-        ///
-        /// A table rather than the HUD's single block of text because two teams'
-        /// numbers only mean anything next to each other — "312 yards" is a fact,
-        /// "312 to 96" is the game. The columns are fixed-weight so the digits line
-        /// up down the screen instead of jittering with the width of each label.
-        /// </summary>
-        private static VisualElement BuildFinalCard(Systems_GameSummary summary)
-        {
-            VisualElement card = Systems_UiTheme.Column();
-            card.style.backgroundColor = Systems_UiTheme.SurfaceRaised;
-            Systems_UiTheme.SetPadding(card, Systems_UiTheme.SPACE_M);
-            Systems_UiTheme.SetRadius(card, Systems_UiTheme.RADIUS);
-
-            Label heading = Systems_UiTheme.Caption(
-                summary.IsTie
-                    ? "LAST GAME — TIE"
-                    : $"LAST GAME — {Systems_DisplayText.TeamName(summary.Winner)} WON");
-            heading.style.unityTextAlign = TextAnchor.MiddleCenter;
-            heading.style.marginBottom = Systems_UiTheme.SPACE_S;
-            card.Add(heading);
-
-            card.Add(BuildHeaderRow());
-
-            Systems_TeamSummary home = summary.Home;
-            Systems_TeamSummary away = summary.Away;
-
-            card.Add(StatRow("SCORE", $"{home.Points}", $"{away.Points}", true));
-            card.Add(StatRow(
-                "TOTAL YDS",
-                $"{Mathf.RoundToInt(home.TotalYards)}",
-                $"{Mathf.RoundToInt(away.TotalYards)}"));
-            card.Add(StatRow(
-                "RUSH YDS",
-                $"{Mathf.RoundToInt(home.RushingYards)}",
-                $"{Mathf.RoundToInt(away.RushingYards)}"));
-            card.Add(StatRow(
-                "PASS YDS",
-                $"{Mathf.RoundToInt(home.PassingYards)}",
-                $"{Mathf.RoundToInt(away.PassingYards)}"));
-            card.Add(StatRow(
-                "PASSING",
-                $"{home.Completions}/{home.PassAttempts}",
-                $"{away.Completions}/{away.PassAttempts}"));
-            card.Add(StatRow("1ST DOWNS", $"{home.FirstDowns}", $"{away.FirstDowns}"));
-            card.Add(StatRow(
-                "YDS/PLAY",
-                home.YardsPerPlay.ToString("F1"),
-                away.YardsPerPlay.ToString("F1")));
-            card.Add(StatRow("TURNOVERS", $"{home.Turnovers}", $"{away.Turnovers}"));
-            card.Add(StatRow(
-                "TIME OF POSS",
-                Systems_DisplayText.Clock(home.TimeOfPossession),
-                Systems_DisplayText.Clock(away.TimeOfPossession)));
-
-            return card;
-        }
-
-        private static VisualElement BuildHeaderRow()
-        {
-            VisualElement row = Systems_UiTheme.Row();
-            row.style.marginBottom = Systems_UiTheme.SPACE_XS;
-
-            row.Add(Cell(string.Empty, Systems_UiTheme.TextMuted, 1.5f));
-
-            // Tinted to match the shapes on the field, so the column and the team
-            // are the same thing to look at.
-            row.Add(Cell(
-                Systems_DisplayText.TeamName(Systems_TeamId.Home),
-                Systems_UiTheme.ColorOf(Systems_TeamId.Home),
-                1f,
-                FontStyle.Bold));
-
-            row.Add(Cell(
-                Systems_DisplayText.TeamName(Systems_TeamId.Away),
-                Systems_UiTheme.ColorOf(Systems_TeamId.Away),
-                1f,
-                FontStyle.Bold));
-
-            return row;
-        }
-
-        private static VisualElement StatRow(
-            string label, string homeValue, string awayValue, bool emphasise = false)
-        {
-            VisualElement row = Systems_UiTheme.Row();
-
-            // The score line is the only row anyone reads first, so it is the only
-            // one given weight.
-            FontStyle weight = emphasise ? FontStyle.Bold : FontStyle.Normal;
-
-            row.Add(Cell(label, Systems_UiTheme.TextMuted, 1.5f));
-            row.Add(Cell(homeValue, Systems_UiTheme.TextPrimary, 1f, weight));
-            row.Add(Cell(awayValue, Systems_UiTheme.TextPrimary, 1f, weight));
-
-            return row;
-        }
-
-        private static Label Cell(
-            string value, Color color, float weight, FontStyle fontStyle = FontStyle.Normal)
-        {
-            Label cell = Systems_UiTheme.Text(
-                value, Systems_UiTheme.TEXT_CAPTION, color, fontStyle);
-            cell.style.flexGrow = weight;
-            cell.style.flexBasis = 0f;
-            cell.style.unityTextAlign = TextAnchor.MiddleCenter;
-            return cell;
         }
 
         /// <summary>

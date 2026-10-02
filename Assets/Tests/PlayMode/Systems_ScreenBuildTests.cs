@@ -56,7 +56,7 @@ namespace PoFootball.Tests
         private static UIDocument FindDocumentFor<TScreen>()
             where TScreen : Views.Systems_ScreenView
         {
-            TScreen screen = Object.FindFirstObjectByType<TScreen>();
+            TScreen screen = Object.FindAnyObjectByType<TScreen>();
 
             Assert.That(
                 screen, Is.Not.Null, $"no {typeof(TScreen).Name} in the loaded scene");
@@ -101,6 +101,21 @@ namespace PoFootball.Tests
             return false;
         }
 
+        private static Button FindButton(
+            System.Collections.Generic.List<VisualElement> elements, string text)
+        {
+            for (int index = 0; index < elements.Count; index++)
+            {
+                if (elements[index] is Button button && button.text == text)
+                {
+                    return button;
+                }
+            }
+
+            Assert.Fail($"no {text} button");
+            return null;
+        }
+
         private static bool HasLabelContaining(
             System.Collections.Generic.List<VisualElement> elements, string fragment)
         {
@@ -134,12 +149,112 @@ namespace PoFootball.Tests
             Assert.That(HasButton(all, "PLAY"), Is.True, "no PLAY button");
             Assert.That(
                 HasLabelContaining(all, "PO FOOTBALL"), Is.True, "no wordmark");
+        }
 
-            // CLAUDE.md section 3 requires the build number on the opening screen.
+        /// <summary>
+        /// The five-corner chrome, on the screen a player sees first.
+        ///
+        /// THE VERSION ASSERTION USED TO LIVE IN THE MENU TEST ABOVE, AND FAILED
+        /// THERE FOR AS LONG AS THE STAMP HAS BEEN IN THE RIGHT PLACE. The build
+        /// number moved off Systems_MenuView and onto the status HUD — its own
+        /// document, on its own panel — and the test went on searching the menu's
+        /// tree for it. It is asserted where it is drawn now, alongside the other
+        /// corners CLAUDE.md section 3 names.
+        ///
+        /// Not in batch mode: Systems_StatusHudBootstrap deliberately spawns no
+        /// HUD there, because there is no display to draw it on.
+        /// </summary>
+        [UnityTest]
+        public IEnumerator StatusHud_CarriesTheCornersOnTheMenu()
+        {
+            if (Application.isBatchMode)
+            {
+                Assert.Ignore("No status HUD is spawned in batch mode, by design.");
+            }
+
+            yield return LoadAndSettle("SCN_MENU");
+
+            System.Collections.Generic.List<VisualElement> all = Descendants(
+                FindDocumentFor<Views.Systems_StatusHudView>().rootVisualElement);
+
+            Assert.That(HasLabelContaining(all, "POFOOTBALL"), Is.True, "no title");
+            Assert.That(HasLabelContaining(all, "FPS"), Is.True, "no frame rate");
+            Assert.That(HasButton(all, "MENU"), Is.True, "no MENU chip");
             Assert.That(
                 HasLabelContaining(all, Application.version),
                 Is.True,
                 "no version stamp");
+
+            // The Editor is a debug build, so the chip is expected here. A release
+            // player has none — see Systems_StatusHudView.DiagnosticsAllowed.
+            Assert.That(
+                HasButton(all, "DEBUG"), Is.EqualTo(Debug.isDebugBuild), "DEBUG chip");
+        }
+
+        /// <summary>
+        /// PLAY must be in the same place whether or not the last game's card is
+        /// under it. It was not: the card took its height out of the space the
+        /// title block was centred in, and the button rode 263 units up a
+        /// 1920-unit panel on every return from a finished game.
+        /// </summary>
+        [UnityTest]
+        public IEnumerator Menu_PlayButtonDoesNotMoveWhenAResultCardIsShown()
+        {
+            yield return LoadAndSettle("SCN_MENU");
+            yield return null;
+
+            float firstLaunchY = FindButton(
+                Descendants(FindDocumentFor<Views.Systems_MenuView>().rootVisualElement),
+                "PLAY").worldBound.y;
+
+            Views.Systems_SceneRouter.OfferSummary(new Models.Systems_GameSummary(
+                default(Models.Systems_TeamSummary), default(Models.Systems_TeamSummary)));
+
+            yield return LoadAndSettle("SCN_MENU");
+            yield return null;
+
+            System.Collections.Generic.List<VisualElement> all = Descendants(
+                FindDocumentFor<Views.Systems_MenuView>().rootVisualElement);
+
+            Assert.That(
+                HasLabelContaining(all, "LAST GAME"), Is.True, "the result card did not build");
+
+            Assert.That(
+                FindButton(all, "PLAY").worldBound.y,
+                Is.EqualTo(firstLaunchY).Within(1f),
+                "PLAY moved when the result card appeared");
+        }
+
+        /// <summary>
+        /// A finished game's summary is shown once and is not carried into the
+        /// next game. The router holds it from the whistle so that either MENU
+        /// button delivers it; these are the two ways it must stop being held.
+        /// </summary>
+        [UnityTest]
+        public IEnumerator Router_SummaryIsTakenOnceAndDroppedByANewGame()
+        {
+            Models.Systems_GameSummary summary = new Models.Systems_GameSummary(
+                default(Models.Systems_TeamSummary), default(Models.Systems_TeamSummary));
+
+            Views.Systems_SceneRouter.OfferSummary(summary);
+
+            Assert.That(
+                Views.Systems_SceneRouter.TakeSummary(), Is.SameAs(summary), "summary lost");
+            Assert.That(
+                Views.Systems_SceneRouter.TakeSummary(), Is.Null, "summary shown twice");
+
+            Views.Systems_SceneRouter.OfferSummary(summary);
+            Views.Systems_SceneRouter.LoadGame();
+
+            Assert.That(
+                Views.Systems_SceneRouter.TakeSummary(),
+                Is.Null,
+                "a rematch carried the previous game's result with it");
+
+            // Let the load finish, so the next test does not start inside it.
+            yield return new WaitUntil(
+                () => SceneManager.GetActiveScene().name == Views.Systems_SceneRouter.GAME_SCENE);
+            yield return null;
         }
 
         /// <summary>
@@ -159,9 +274,10 @@ namespace PoFootball.Tests
         }
 
         /// <summary>
-        /// The HUD in a played game. QUIT is asserted specifically: there was a
-        /// window in which the only controls lived inside the final overlay, so a
-        /// live game had no way out of it at all.
+        /// The HUD in a played game. The way out is asserted specifically: there
+        /// was a window in which the only controls lived inside the final overlay,
+        /// so a live game had no exit at all. That exit is the status HUD's MENU
+        /// chip now — the in-field QUIT button duplicated it and is gone.
         /// </summary>
         [UnityTest]
         public IEnumerator Hud_BuildsItsTreeWithLiveGameControls()
@@ -175,9 +291,22 @@ namespace PoFootball.Tests
             System.Collections.Generic.List<VisualElement> all = Descendants(root);
 
             Assert.That(all, Is.Not.Empty, "the HUD built no elements at all");
-            Assert.That(HasButton(all, "QUIT"), Is.True, "no way to leave a live game");
+            Assert.That(HasButton(all, "QUIT"), Is.False, "QUIT is back on the field");
             Assert.That(HasButton(all, "REMATCH"), Is.True, "no rematch on the final overlay");
             Assert.That(HasButton(all, "MENU"), Is.True, "no menu button on the final overlay");
+
+            // No status HUD exists in batch mode, by design, so there is nothing
+            // to look for there.
+            if (!Application.isBatchMode)
+            {
+                Assert.That(
+                    HasButton(
+                        Descendants(
+                            FindDocumentFor<Views.Systems_StatusHudView>().rootVisualElement),
+                        "MENU"),
+                    Is.True,
+                    "no way to leave a live game");
+            }
         }
     }
 }

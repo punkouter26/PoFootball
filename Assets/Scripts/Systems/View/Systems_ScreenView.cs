@@ -282,6 +282,18 @@ namespace PoFootball.Views
 
             ExpandForCutouts(screenSize, ref topPixels, ref bottomPixels);
 
+            // A safe area is supposed to lie inside the screen. It does not always:
+            // for a frame after a resolution change the two are reported from
+            // different moments, and in the Editor a Device Simulator window left
+            // open beside the Game view answers Screen.safeArea for a 960x2658
+            // foldable while Screen.height says 1920 — which made the top inset
+            // minus 646 pixels. An inset is a distance. Floor it at zero rather
+            // than hand the layout engine a negative padding to interpret.
+            leftPixels = Mathf.Max(0f, leftPixels);
+            rightPixels = Mathf.Max(0f, rightPixels);
+            topPixels = Mathf.Max(0f, topPixels);
+            bottomPixels = Mathf.Max(0f, bottomPixels);
+
             float left = leftPixels / screenSize.x * panelWidth;
             float right = rightPixels / screenSize.x * panelWidth;
             float bottom = bottomPixels / screenSize.y * panelHeight;

@@ -388,8 +388,8 @@ namespace PoFootball.Views
 
             // Buttons are set in the DISPLAY face regardless of size. A label on a
             // button is read the way a score is — glanced at, never parsed — and
-            // Auto would flip PLAY and QUIT into different faces purely because
-            // ApplyControlActionSize drops the latter to TEXT_BODY.
+            // Auto would flip PLAY and the status chips into different faces purely
+            // because the chips drop to TEXT_CAPTION.
             ApplyFont(button, Typeface.Display, TEXT_TITLE);
             button.style.minHeight = TAP_TARGET;
             button.style.unityTextAlign = TextAnchor.MiddleCenter;
@@ -438,25 +438,6 @@ namespace PoFootball.Views
         {
             ApplyPrimaryActionSize(button);
             button.style.fontSize = TEXT_TITLE;
-        }
-
-        /// <summary>
-        /// A control that sits over the live field — QUIT, the speed cycle.
-        /// Deliberately smaller and quieter than the two above: these are an escape
-        /// hatch, not the point of the screen.
-        ///
-        /// Here rather than in Systems_HudView, where it lived as a third private
-        /// sizer. The whole reason the other two are in this class is that the same
-        /// component coming out different on two screens is a bug a user cannot
-        /// explain, and a sizer that opts out of that rule by living elsewhere is
-        /// how the drift starts again.
-        /// </summary>
-        public static void ApplyControlActionSize(Button button)
-        {
-            button.style.width = Length.Percent(34f);
-            button.style.maxWidth = 260;
-            button.style.minHeight = TAP_TARGET;
-            button.style.fontSize = TEXT_BODY;
         }
 
         // --- Transitions -------------------------------------------------------
