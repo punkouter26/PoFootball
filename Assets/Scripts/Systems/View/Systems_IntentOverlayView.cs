@@ -8,8 +8,9 @@ namespace PoFootball.Views
 {
     /// <summary>
     /// Draws what each policy just decided: a curved arrow per player showing the
-    /// drive and steer it emitted, and a read line from the quarterback to the
-    /// receiver its aim vector currently selects.
+    /// drive and steer it emitted, a read line from the quarterback to the
+    /// receiver its aim vector currently selects, and the pocket clock round the
+    /// quarterback that says how long that read has left.
     ///
     /// WHY THIS IS THE FEATURE AND NOT DECORATION. Twenty-two shapes moving around
     /// a green rectangle is a simulation you can watch; it is not a simulation you
@@ -134,6 +135,32 @@ namespace PoFootball.Views
 
         /// <summary>Alpha of the read line while a throw is not currently legal.</summary>
         private const float READ_LINE_BLOCKED_ALPHA = 0.3f;
+
+        /// <summary>
+        /// Radius of the pocket clock, in metres. Outside the 0.5 m body and the
+        /// carrier glow PoFootball/Player draws around it, inside the nearest
+        /// lineman, so the ring belongs unmistakably to the quarterback.
+        /// </summary>
+        private const float POCKET_RING_RADIUS = 1.2f;
+
+        private const float POCKET_RING_WIDTH = 0.17f;
+
+        /// <summary>
+        /// Chords in a full ring. The arc is drawn as straight quads, and at this
+        /// radius forty of them are each under a fifth of a metre long — a couple
+        /// of pixels at broadcast framing, which is below where a chord reads as
+        /// one.
+        /// </summary>
+        private const int POCKET_RING_SEGMENTS = 40;
+
+        /// <summary>
+        /// Distance to the nearest rusher at which the ring starts to redden, and
+        /// the distance at which it is fully red. The near figure is a body width
+        /// past contact (two 0.5 m radii): by then the hit is the next thing that
+        /// happens.
+        /// </summary>
+        private const float PRESSURE_FAR = 8f;
+        private const float PRESSURE_NEAR = 1.6f;
 
         /// <summary>
         /// The mesh is rebuilt every frame and its real bounds change every frame
@@ -501,6 +528,16 @@ namespace PoFootball.Views
                 return;
             }
 
+            bool legal = _play.PhysicsTick <= Systems_SimConstants.THROW_WINDOW_TICKS
+                && passer.Position.y <= _play.LineOfScrimmageY;
+
+            // Before the target test, not after: the clock is about the
+            // quarterback, and it keeps running whether or not he has found anyone.
+            if (legal)
+            {
+                AppendPocketClock(passer, intent.ThrowArmed);
+            }
+
             float speed = Systems_BallSystem.ThrowSpeedFor(
                 Mathf.Clamp01(intent.Aim.magnitude));
 
@@ -511,9 +548,6 @@ namespace PoFootball.Views
             {
                 return;
             }
-
-            bool legal = _play.PhysicsTick <= Systems_SimConstants.THROW_WINDOW_TICKS
-                && passer.Position.y <= _play.LineOfScrimmageY;
 
             Color color = Systems_UiTheme.Accent;
 
@@ -530,6 +564,108 @@ namespace PoFootball.Views
             Vector2 to = Systems_BallSystem.LeadPoint(from, target, speed);
 
             AppendDashedLine(from, to, width, color);
+        }
+
+        /// <summary>
+        /// The pocket clock: a ring round the quarterback that drains as the throw
+        /// window closes and reddens as the rush arrives.
+        ///
+        /// BOTH HALVES ARE THINGS THE SIMULATION ALREADY ENFORCES AND NEVER SHOWED.
+        /// Systems_SimConstants.THROW_WINDOW_TICKS is a hard rule — past it the
+        /// release is refused and the quarterback is a runner — and nothing on
+        /// screen said it existed, so a throw that came out at the last tick and
+        /// one that came out in rhythm looked the same, and a quarterback who held
+        /// the ball until the window shut simply appeared to give up. The pressure
+        /// is the distance to the nearest man on the other side, which is the thing
+        /// every sack is a failure to read.
+        ///
+        /// Together they are the tension of a passing down in one shape: the ring
+        /// is how long he has, the colour is how long he actually has.
+        ///
+        /// It drains CLOCKWISE FROM THE TOP, because that is how every clock a
+        /// viewer has ever seen runs down. Top is +Y, which is downfield on every
+        /// snap for the reason Systems_BroadcastCameraView gives.
+        ///
+        /// Appended to the same mesh as the read line, so it is no extra draw call.
+        /// </summary>
+        private void AppendPocketClock(Systems_IPlayerHandle passer, bool armed)
+        {
+            float remaining = 1f - Mathf.Clamp01(
+                _play.PhysicsTick / (float)Systems_SimConstants.THROW_WINDOW_TICKS);
+
+            int segments = Mathf.CeilToInt(POCKET_RING_SEGMENTS * remaining);
+
+            if (segments <= 0)
+            {
+                return;
+            }
+
+            float pressure = 1f - Mathf.InverseLerp(
+                PRESSURE_NEAR, PRESSURE_FAR, NearestOpponentDistance(passer));
+
+            Color color = Color.Lerp(
+                Systems_UiTheme.Accent, Systems_UiTheme.Negative, pressure);
+
+            color.a = 0.55f + (0.35f * pressure);
+
+            // Same emphasis the read line gets on the decision step that asks for
+            // the release.
+            float width = POCKET_RING_WIDTH * (armed ? 1.6f : 1f);
+
+            Color32 packed = color;
+            Vector2 centre = passer.Position;
+
+            // Negative: the sweep runs clockwise. The chords are resized to fit the
+            // sweep exactly rather than drawn at a fixed angle, so the arc ends
+            // where the fraction says and not at the next whole segment — a fixed
+            // step would make the ring tick down forty times instead of draining.
+            float sweep = -2f * Mathf.PI * remaining;
+            float step = sweep / segments;
+
+            Vector2 from = centre + (Vector2.up * POCKET_RING_RADIUS);
+
+            for (int segment = 1; segment <= segments; segment++)
+            {
+                float angle = (Mathf.PI * 0.5f) + (step * segment);
+
+                Vector2 to = centre + (new Vector2(Mathf.Cos(angle), Mathf.Sin(angle))
+                    * POCKET_RING_RADIUS);
+
+                AppendTaperedQuad(from, to, width, width, packed, packed);
+
+                from = to;
+            }
+        }
+
+        /// <summary>
+        /// Metres from the passer to the closest player on the other side. One scan
+        /// of the roster per frame, and only on a passing down with the ball still
+        /// in the quarterback's hands.
+        /// </summary>
+        private float NearestOpponentDistance(Systems_IPlayerHandle passer)
+        {
+            float nearestSqr = PRESSURE_FAR * PRESSURE_FAR;
+
+            for (int slotIndex = 0;
+                 slotIndex < Systems_PlayerRegistry.CAPACITY;
+                 slotIndex++)
+            {
+                Systems_IPlayerHandle handle = _registry.Get(slotIndex);
+
+                if (handle == null || handle.Side == passer.Side)
+                {
+                    continue;
+                }
+
+                float sqrDistance = (handle.Position - passer.Position).sqrMagnitude;
+
+                if (sqrDistance < nearestSqr)
+                {
+                    nearestSqr = sqrDistance;
+                }
+            }
+
+            return Mathf.Sqrt(nearestSqr);
         }
 
         /// <summary>

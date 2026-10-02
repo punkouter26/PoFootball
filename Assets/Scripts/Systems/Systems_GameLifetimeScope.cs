@@ -90,6 +90,20 @@ namespace PoFootball.Systems
                     .As<Systems_IIntentSink, Systems_IIntentSource>();
             }
 
+            // Off-ball collisions, for the puff and the thud. The same question as
+            // the intent sink above and so the same switch: a trainer is not
+            // listening, and gets the binding that publishes nothing.
+            if (presentationBudget.EffectsEnabled)
+            {
+                builder.Register<Systems_IContactSink, Systems_ContactRelay>(
+                    Lifetime.Singleton);
+            }
+            else
+            {
+                builder.Register<Systems_IContactSink, Systems_NullContactSink>(
+                    Lifetime.Singleton);
+            }
+
             builder.Register<Systems_PlayModel>(Lifetime.Singleton);
             builder.Register<Systems_BallModel>(Lifetime.Singleton);
             builder.Register<Systems_FieldModel>(Lifetime.Singleton);
@@ -107,6 +121,9 @@ namespace PoFootball.Systems
             builder.RegisterMessageBroker<Systems_PlayEndedMessage>(messagePipeOptions);
             builder.RegisterMessageBroker<Systems_TackleMessage>(messagePipeOptions);
             builder.RegisterMessageBroker<Systems_ScoreMessage>(messagePipeOptions);
+            builder.RegisterMessageBroker<Systems_PassThrownMessage>(messagePipeOptions);
+            builder.RegisterMessageBroker<Systems_PassCaughtMessage>(messagePipeOptions);
+            builder.RegisterMessageBroker<Systems_ContactMessage>(messagePipeOptions);
 
             // Registered in both modes so a view can subscribe without caring which
             // one it is in. In training nothing ever publishes them.

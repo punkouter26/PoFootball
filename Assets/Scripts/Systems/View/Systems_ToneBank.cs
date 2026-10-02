@@ -19,7 +19,7 @@ namespace PoFootball.Views
     /// Nothing here allocates after Build — clips are created once and reused.
     /// </summary>
     /// <remarks>
-    /// Five cues, one bed, one UI tick, and the synthesis primitives. A second
+    /// Eight cues, one bed, one UI tick, and the synthesis primitives. A second
     /// file once extended this with crowd layers, cue variants, an organ and a PA;
     /// it was three times the size of this one and none of it told a viewer
     /// anything about the game, so it is gone. Keep additions here to sounds that
@@ -71,6 +71,86 @@ namespace PoFootball.Views
                 float thump = Mathf.Sin(2f * Mathf.PI * 90f * t) * Mathf.Exp(-22f * t);
 
                 return envelope * 0.55f * ((lowPassState * 0.8f) + (thump * 0.6f));
+            });
+        }
+
+        /// <summary>
+        /// Pads meeting away from the ball: a shove, not a pop. It is heard several
+        /// times on every play and the tackle is heard once, so the two must not be
+        /// confusable — a block that sounded like a hit would announce the end of a
+        /// play that is still going. Same construction as the impact with the top
+        /// taken off: the filter nearly shut, a slower attack so there is no crack
+        /// at the front, and a lower thump carrying most of it.
+        /// </summary>
+        public static AudioClip Block()
+        {
+            System.Random random = new System.Random(20261004);
+            float lowPassState = 0f;
+
+            return Build("Block", 0.16f, (t, duration) =>
+            {
+                float envelope = Attack(t, 0.006f) * Release(t, duration, 0.12f);
+
+                float noise = (float)((random.NextDouble() * 2.0) - 1.0);
+
+                // A pole this far shut leaves a fraction of the noise's level
+                // behind it, which is what the gain below is making back.
+                lowPassState += (noise - lowPassState) * 0.09f;
+
+                float thump = Mathf.Sin(2f * Mathf.PI * 62f * t) * Mathf.Exp(-16f * t);
+
+                return envelope * 0.6f * ((lowPassState * 1.6f) + (thump * 0.7f));
+            });
+        }
+
+        /// <summary>
+        /// The ball leaving the hand: a short breath of noise whose brightness
+        /// rises as it goes. A filter opening rather than a pitch climbing, because
+        /// a thrown ball is air moving and has no note — the same reason the impact
+        /// is noise and not a tone.
+        /// </summary>
+        public static AudioClip Throw()
+        {
+            System.Random random = new System.Random(20261002);
+            float lowPassState = 0f;
+
+            return Build("Throw", 0.2f, (t, duration) =>
+            {
+                float envelope = Attack(t, 0.03f) * Release(t, duration, 0.14f);
+
+                float noise = (float)((random.NextDouble() * 2.0) - 1.0);
+
+                // The pole moves from nearly shut to half open across the clip,
+                // which is the whole of the whoosh.
+                float openness = Mathf.Lerp(0.04f, 0.5f, t / duration);
+                lowPassState += (noise - lowPassState) * openness;
+
+                return envelope * 0.5f * lowPassState;
+            });
+        }
+
+        /// <summary>
+        /// Hands on leather: a slap, shorter and brighter than the pad pop, with a
+        /// small knock under it. It has to be told apart from a tackle by ear on
+        /// the same play, a second or so before one, so it shares the impact's
+        /// construction and none of its numbers — half the length, no low thump,
+        /// and a filter left open enough to keep the snap of the attack.
+        /// </summary>
+        public static AudioClip Catch()
+        {
+            System.Random random = new System.Random(20261003);
+            float lowPassState = 0f;
+
+            return Build("Catch", 0.11f, (t, duration) =>
+            {
+                float envelope = Attack(t, 0.001f) * Release(t, duration, 0.09f);
+
+                float noise = (float)((random.NextDouble() * 2.0) - 1.0);
+                lowPassState += (noise - lowPassState) * 0.6f;
+
+                float knock = Mathf.Sin(2f * Mathf.PI * 310f * t) * Mathf.Exp(-60f * t);
+
+                return envelope * 0.5f * ((lowPassState * 0.7f) + (knock * 0.5f));
             });
         }
 

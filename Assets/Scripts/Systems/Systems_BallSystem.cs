@@ -1,3 +1,4 @@
+using MessagePipe;
 using PoFootball.Models;
 using UnityEngine;
 
@@ -11,21 +12,32 @@ namespace PoFootball.Systems
     /// its own entry point, so the ball is always resolved before the referee
     /// evaluates boundaries and the clock. Relying on entry-point registration
     /// order for that would be a silent trap.
+    ///
+    /// THE TWO PUBLISHERS ARE PRESENTATION TAPS, NOT RULES. A release and a catch
+    /// are announced after the model has already been updated, nothing in the
+    /// simulation subscribes to either, and in training they are published to
+    /// nobody — a handful of empty dispatches per play.
     /// </summary>
     public sealed class Systems_BallSystem
     {
         private readonly Systems_BallModel _ball;
         private readonly Systems_PlayModel _play;
         private readonly Systems_PlayerRegistry _registry;
+        private readonly IPublisher<Systems_PassThrownMessage> _thrownPublisher;
+        private readonly IPublisher<Systems_PassCaughtMessage> _caughtPublisher;
 
         public Systems_BallSystem(
             Systems_BallModel ball,
             Systems_PlayModel play,
-            Systems_PlayerRegistry registry)
+            Systems_PlayerRegistry registry,
+            IPublisher<Systems_PassThrownMessage> thrownPublisher,
+            IPublisher<Systems_PassCaughtMessage> caughtPublisher)
         {
             _ball = ball;
             _play = play;
             _registry = registry;
+            _thrownPublisher = thrownPublisher;
+            _caughtPublisher = caughtPublisher;
         }
 
         /// <summary>
@@ -110,6 +122,11 @@ namespace PoFootball.Systems
             {
                 bool intercepted = catcher.Side == Systems_TeamSide.Defense;
 
+                // Measured before the ball is attached: AttachTo moves it onto the
+                // catcher, and the throw's length is to where it was actually met.
+                float airYards =
+                    Vector2.Distance(_ball.ThrowOrigin, _ball.Position) / Systems_FieldModel.YARD;
+
                 catcher.SetCarrier(true);
                 _ball.AttachTo(catcher.Id, catcher.Position);
 
@@ -117,6 +134,9 @@ namespace PoFootball.Systems
                 {
                     _play.MarkPassCompleted();
                 }
+
+                _caughtPublisher.Publish(
+                    new Systems_PassCaughtMessage(catcher.Id, intercepted, airYards));
 
                 // An offensive catch is a completion and the play continues. A
                 // defensive catch is a turnover and ends it.
@@ -238,7 +258,8 @@ namespace PoFootball.Systems
         {
             float speed = ThrowSpeedFor(power);
 
-            ResolveThrowTarget(thrower, aim, speed, out Vector2 direction);
+            Systems_IPlayerHandle target =
+                ResolveThrowTarget(thrower, aim, speed, out Vector2 direction);
 
             // The BALL goes where the quarterback actually pointed, blended toward
             // the perfect lead. ResolveThrowTarget stays pure and keeps returning
@@ -251,6 +272,9 @@ namespace PoFootball.Systems
 
             thrower.SetCarrier(false);
             _ball.Throw(thrower.Id, thrower.Position, direction * speed);
+
+            _thrownPublisher.Publish(new Systems_PassThrownMessage(
+                thrower.Id, target == null ? -1 : target.Id, speed));
         }
 
         /// <summary>

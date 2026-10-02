@@ -2,6 +2,7 @@ using System;
 using System.Globalization;
 using System.IO;
 using System.Text;
+using Unity.Profiling;
 using UnityEngine;
 using UnityEngine.Rendering;
 using UnityEngine.UIElements;
@@ -41,6 +42,23 @@ namespace PoFootball.Views
     /// It costs one float written into a pre-allocated ring per frame. Everything
     /// that allocates is behind a quarter-second countdown, and the findings are
     /// only composed while the sheet is actually open.
+    ///
+    /// IT CAN SAY WHERE THE TIME WENT, NOT ONLY THAT IT WENT. "Below target" used
+    /// to end with "it is rendering or simulation load", which is the question,
+    /// not the answer. Six ProfilerRecorders settle it: the render counters say
+    /// how much was drawn, and two player-loop timers say what a physics tick
+    /// costs before anything is drawn at all. They are read by the engine, not
+    /// sampled here, so they add nothing to the per-frame path above.
+    ///
+    /// EVERY ONE OF THOSE NAMES WAS READ OFF THE RUNNING EDITOR, and two of the
+    /// obvious ones were wrong. Unity 6.6 has no "Draw Calls Count" in the Render
+    /// category — it is split by how the call was issued — and the counter that
+    /// does carry that exact name belongs to UI Toolkit, so a recorder opened by
+    /// name alone silently reports the HUD's own draw calls as the game's. And
+    /// ML-Agents brackets inference with the legacy Profiler.BeginSample, which a
+    /// ProfilerRecorder cannot see at all: there is no separate inference timer
+    /// here because there is nothing to attach one to. The agent step below
+    /// contains it.
     /// </summary>
     [DefaultExecutionOrder(-70)]
     [DisallowMultipleComponent]
@@ -62,6 +80,52 @@ namespace PoFootball.Views
 
         /// <summary>Findings the sheet will show. Beyond six the point is lost anyway.</summary>
         private const int MAX_FINDINGS = 6;
+
+        /// <summary>
+        /// Frames each timer keeps. One second at 60 FPS: the step cost is steady
+        /// from tick to tick, so a short window is enough and stays current.
+        /// </summary>
+        private const int TIMER_WINDOW = 60;
+
+        /// <summary>
+        /// Every MonoBehaviour FixedUpdate in one tick. In a game scene that is
+        /// the ML-Agents academy step and nothing else of any size: twenty-two
+        /// players observing, deciding — heuristic or model — and applying the
+        /// action. The referee and the director are VContainer entry points and
+        /// run in their own player-loop slot, outside this marker.
+        /// </summary>
+        private const string AGENT_STEP_MARKER = "FixedUpdate.ScriptRunBehaviourFixedUpdate";
+
+        private const string PHYSICS_STEP_MARKER = "FixedUpdate.Physics2DFixedUpdate";
+
+        /// <summary>
+        /// What one tick may cost before it is a finding, in milliseconds. Half a
+        /// 60 FPS frame: at 1x a frame carries a tick five times in six, so past
+        /// this the simulation has taken most of the budget before the renderer
+        /// has started.
+        /// </summary>
+        private const float STEP_BUDGET_MS = 8f;
+
+        /// <summary>
+        /// Set-pass calls a frame before it is a finding: twice what SCN_GAME
+        /// costs today.
+        ///
+        /// MEASURED 2026-10-02, 1080x1920, every effect on: 139 set-pass calls,
+        /// of which 52 are everything that is not a shadow. The other ninety are
+        /// Systems_StadiumRigView's one casting light — about four passes per
+        /// caster. With two lights casting, which is how this rig used to be
+        /// built, the same scene cost 225.
+        ///
+        /// A tripwire rather than a limit. Nobody has measured what a handset
+        /// tolerates, so this cannot say 139 is too many; it can say the number
+        /// doubled, which nothing in this game should make it do.
+        /// </summary>
+        private const int SET_PASS_BUDGET = 280;
+
+        /// <summary>A timer that has no reading yet, or no marker to read.</summary>
+        private const float NO_READING = -1f;
+
+        private const float NANOSECONDS_PER_MILLISECOND = 1000000f;
 
         private readonly float[] _samples = new float[SAMPLE_CAPACITY];
         private readonly float[] _sortScratch = new float[SAMPLE_CAPACITY];
@@ -93,6 +157,16 @@ namespace PoFootball.Views
 
         private bool _telemetryWritten;
 
+        // Instruments. Structs wrapping a native handle: started in OnEnable,
+        // disposed in OnDisable, and an invalid one reads as "no reading" rather
+        // than throwing, which is what a renamed counter in a later Unity will be.
+        private ProfilerRecorder _setPassCalls;
+        private ProfilerRecorder _standardDraws;
+        private ProfilerRecorder _instancedDraws;
+        private ProfilerRecorder _batcherDraws;
+        private ProfilerRecorder _agentStep;
+        private ProfilerRecorder _physicsStep;
+
         /// <summary>
         /// One diagnosed problem. Severity is the sort key and nothing else — the
         /// numbers are arbitrary, their ORDER is the claim being made. A struct in a
@@ -120,12 +194,16 @@ namespace PoFootball.Views
             // The single most useful thing a debug sheet can say is "something threw".
             // Nothing else in this project was watching for that on a device.
             Application.logMessageReceived += OnLogMessage;
+            StartInstruments();
         }
 
         private void OnDisable()
         {
             Application.logMessageReceived -= OnLogMessage;
+
+            // Telemetry first: it reads the instruments it is about to lose.
             WriteTelemetry();
+            StopInstruments();
         }
 
         protected override void Start()
@@ -482,9 +560,39 @@ namespace PoFootball.Views
                 Add(ref count, 70,
                     "The game is running below target: " + Fixed(1000f / median, 0)
                     + " FPS against 60. This is a sustained cost rather than a "
-                    + "spike, so it is rendering or simulation load, not garbage. "
-                    + "Clear Presentation Effects on the scene's lifetime scope to "
-                    + "see whether the field alone holds 60.");
+                    + "spike, so it is load, not garbage. " + AttributeFrameCost(median));
+            }
+
+            // Clamped, because a timer with no reading reports NO_READING and one
+            // missing instrument must not subtract from the other.
+            ReadTimer(_agentStep, out float agentStepMs, out _);
+            ReadTimer(_physicsStep, out float physicsStepMs, out _);
+
+            agentStepMs = Mathf.Max(0f, agentStepMs);
+            physicsStepMs = Mathf.Max(0f, physicsStepMs);
+
+            if (agentStepMs + physicsStepMs > STEP_BUDGET_MS)
+            {
+                Add(ref count, 72,
+                    "The simulation step is expensive: " + Fixed(agentStepMs, 1)
+                    + " ms for the twenty-two players to decide and act and "
+                    + Fixed(physicsStepMs, 1) + " ms of physics, on every 20 ms "
+                    + "tick. That is spent before anything is drawn, so no graphics "
+                    + "setting gets it back. If a trained brain is loaded this is "
+                    + "inference; if not, it is the heuristic.");
+            }
+
+            long setPass = Reading(_setPassCalls);
+
+            if (setPass > SET_PASS_BUDGET)
+            {
+                Add(ref count, 45,
+                    "The renderer is changing state " + setPass + " times a frame, "
+                    + "more than twice what this scene normally costs. Either "
+                    + "something has stopped batching — most often code touching "
+                    + "`renderer.material`, which clones the material per object "
+                    + "— or a second light has started casting shadows, at about "
+                    + "ninety set-pass calls each.");
             }
 
             if (_allocPerSecond > 8192f)
@@ -639,11 +747,184 @@ namespace PoFootball.Views
             _builder.Append(_warningCount);
             _builder.Append(" warnings\n");
 
+            AppendRenderReadings(_builder);
+            _builder.Append('\n');
+            AppendStepReadings(_builder);
+            _builder.Append('\n');
+
             _builder.Append(SystemInfo.deviceModel);
             _builder.Append("   |   ");
             _builder.Append(SystemInfo.operatingSystem);
 
             _sheetRaw.text = _builder.ToString();
+        }
+
+        // --- Instruments -------------------------------------------------------
+
+        private void StartInstruments()
+        {
+            // By category AND name. "Draw Calls Count" on its own resolves to UI
+            // Toolkit's counter, not the renderer's — see the class note.
+            _setPassCalls = ProfilerRecorder.StartNew(
+                ProfilerCategory.Render, "SetPass Calls Count");
+            _standardDraws = ProfilerRecorder.StartNew(
+                ProfilerCategory.Render, "Standard Draw Calls Count");
+            _instancedDraws = ProfilerRecorder.StartNew(
+                ProfilerCategory.Render, "Standard Instanced Draw Calls Count");
+            _batcherDraws = ProfilerRecorder.StartNew(
+                ProfilerCategory.Render, "SRP Batcher Draw Calls Count");
+
+            _agentStep = StartTimer(AGENT_STEP_MARKER);
+            _physicsStep = StartTimer(PHYSICS_STEP_MARKER);
+        }
+
+        private void StopInstruments()
+        {
+            // Dispose is safe on a recorder that never became valid, and on one
+            // already disposed — OnDisable runs again on a scene unload.
+            _setPassCalls.Dispose();
+            _standardDraws.Dispose();
+            _instancedDraws.Dispose();
+            _batcherDraws.Dispose();
+            _agentStep.Dispose();
+            _physicsStep.Dispose();
+        }
+
+        /// <summary>
+        /// By name alone, because the player-loop markers sit in a category
+        /// ProfilerCategory has no constant for, and these two names are unique.
+        /// </summary>
+        private static ProfilerRecorder StartTimer(string marker)
+        {
+            return new ProfilerRecorder(
+                marker, TIMER_WINDOW,
+                ProfilerRecorderOptions.Default | ProfilerRecorderOptions.StartImmediately);
+        }
+
+        private static long Reading(ProfilerRecorder counter)
+        {
+            return counter.Valid ? counter.LastValue : 0L;
+        }
+
+        /// <summary>
+        /// Draw calls of every kind the 2D renderer issues. The engine counts them
+        /// separately by how they were submitted; a viewer wants the sum.
+        /// </summary>
+        private long DrawCalls()
+        {
+            return Reading(_standardDraws) + Reading(_instancedDraws)
+                + Reading(_batcherDraws);
+        }
+
+        /// <summary>
+        /// Mean cost of a marker over its window, two ways: per call, which for a
+        /// player-loop marker is per physics tick and does not move with Sim
+        /// Speed, and per rendered frame, which does and is what a frame-rate
+        /// finding needs. Both are NO_READING until the marker has fired.
+        /// </summary>
+        private static void ReadTimer(
+            ProfilerRecorder timer, out float perCallMs, out float perFrameMs)
+        {
+            perCallMs = NO_READING;
+            perFrameMs = NO_READING;
+
+            if (!timer.Valid)
+            {
+                return;
+            }
+
+            int frames = timer.Count;
+            long nanoseconds = 0L;
+            long calls = 0L;
+
+            for (int frame = 0; frame < frames; frame++)
+            {
+                ProfilerRecorderSample sample = timer.GetSample(frame);
+                nanoseconds += sample.Value;
+                calls += sample.Count;
+            }
+
+            if (calls == 0L || frames == 0)
+            {
+                return;
+            }
+
+            perCallMs = nanoseconds / (float)calls / NANOSECONDS_PER_MILLISECOND;
+            perFrameMs = nanoseconds / (float)frames / NANOSECONDS_PER_MILLISECOND;
+        }
+
+        /// <summary>
+        /// The second half of the below-target finding: which side of the frame
+        /// the time is on, from the two step timers.
+        /// </summary>
+        private string AttributeFrameCost(float frameMs)
+        {
+            ReadTimer(_agentStep, out _, out float agentFrameMs);
+            ReadTimer(_physicsStep, out _, out float physicsFrameMs);
+
+            if (agentFrameMs < 0f || physicsFrameMs < 0f)
+            {
+                return "Clear Presentation Effects on the scene's lifetime scope "
+                    + "to see whether the field alone holds 60.";
+            }
+
+            float simulationMs = agentFrameMs + physicsFrameMs;
+
+            if (simulationMs > frameMs * 0.5f)
+            {
+                return "Most of it is the simulation: " + Fixed(simulationMs, 1)
+                    + " ms of each " + Fixed(frameMs, 1) + " ms frame goes on "
+                    + "stepping the players and the physics, which no graphics "
+                    + "setting will change.";
+            }
+
+            return "It is not the simulation, which takes only "
+                + Fixed(simulationMs, 1) + " ms of each " + Fixed(frameMs, 1)
+                + " ms frame — it is rendering: " + DrawCalls() + " draw calls in "
+                + Reading(_setPassCalls) + " set-pass calls. Clear Presentation "
+                + "Effects on the scene's lifetime scope to confirm the field "
+                + "alone holds 60.";
+        }
+
+        private void AppendRenderReadings(StringBuilder builder)
+        {
+            builder.Append("draw ");
+
+            if (!_setPassCalls.Valid)
+            {
+                builder.Append("counters unavailable");
+                return;
+            }
+
+            builder.Append(DrawCalls());
+            builder.Append(" calls (");
+            builder.Append(Reading(_batcherDraws));
+            builder.Append(" SRP-batched)   |   ");
+            builder.Append(Reading(_setPassCalls));
+            builder.Append(" set-pass");
+        }
+
+        private void AppendStepReadings(StringBuilder builder)
+        {
+            ReadTimer(_agentStep, out float agentStepMs, out _);
+            ReadTimer(_physicsStep, out float physicsStepMs, out _);
+
+            builder.Append("per tick: agents ");
+            AppendMilliseconds(builder, agentStepMs);
+            builder.Append("   |   physics ");
+            AppendMilliseconds(builder, physicsStepMs);
+        }
+
+        private static void AppendMilliseconds(StringBuilder builder, float milliseconds)
+        {
+            if (milliseconds < 0f)
+            {
+                builder.Append("n/a");
+                return;
+            }
+
+            AppendFixed(builder, milliseconds, 2);
+            builder.Append(" ms");
         }
 
         // --- Logs --------------------------------------------------------------
@@ -729,6 +1010,20 @@ namespace PoFootball.Views
                     UnityEngine.Profiling.Profiler.GetMonoUsedSizeLong()
                     / BYTES_PER_MEGABYTE, 2));
                 AppendNumber(json, "physicsMs", Fixed(Time.fixedDeltaTime * 1000f, 2));
+
+                // The last second before the scene closed, not a session mean:
+                // these are steady-state costs and the window is all that is kept.
+                // A timer with no reading is written as -1, not omitted, so every
+                // file has the same keys.
+                ReadTimer(_agentStep, out float agentStepMs, out _);
+                ReadTimer(_physicsStep, out float physicsStepMs, out _);
+
+                AppendNumber(json, "agentStepMs", Fixed(agentStepMs, 3));
+                AppendNumber(json, "physicsStepMs", Fixed(physicsStepMs, 3));
+                AppendNumber(json, "drawCalls",
+                    DrawCalls().ToString(CultureInfo.InvariantCulture));
+                AppendNumber(json, "setPassCalls",
+                    Reading(_setPassCalls).ToString(CultureInfo.InvariantCulture));
                 AppendNumber(json, "sessionSeconds", Fixed(Time.realtimeSinceStartup, 1));
                 AppendNumber(json, "errors",
                     _errorCount.ToString(CultureInfo.InvariantCulture));

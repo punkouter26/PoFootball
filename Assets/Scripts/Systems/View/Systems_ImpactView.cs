@@ -29,6 +29,25 @@ namespace PoFootball.Views
     /// impact on the field is the same buffer and the same material, so a
     /// four-man pile-up costs exactly what one tackle costs.
     ///
+    /// A CATCH FLASHES TOO, THROUGH THE SAME SYSTEM AND BY THE SAME ARGUMENT. Hands
+    /// on the ball is the other moment of contact in a play, and until
+    /// Systems_PassCaughtMessage existed it left no mark on the field at all: the
+    /// ball's trail simply stopped. The burst is sized by how far the ball flew,
+    /// over the longest throw the simulation permits, so a deep ball brought in
+    /// forty yards downfield reads as bigger than a checkdown — and it is gold for
+    /// the offense and red for an interception, the two colours the HUD already
+    /// uses for a good result and a bad one. No second particle system and no
+    /// second draw call: it is two more calls into the buffer the tackle uses.
+    ///
+    /// A BLOCK PUFFS, AND DOES NOT FLASH. Systems_ContactMessage is every other
+    /// collision between opponents — the line engaging, a receiver jammed — sized
+    /// by the impulse the solver applied. It gets dust thrown out sideways from
+    /// between the two bodies and nothing else: no white flash and no bright
+    /// spark, because Systems_PostProcessView's bloom is thresholded so that only
+    /// the carrier and the hit that stops him exceed it, and a field that flashes
+    /// ten times a play has stopped saying which collision mattered. Same buffer,
+    /// same material, still one draw call.
+    ///
     /// NO CAMERA SHAKE, DELIBERATELY. Systems_BroadcastCameraView used to kick on a
     /// big hit and drop into slow motion, and both were removed — the slow motion
     /// because a presentation view driving Time.timeScale stranded the editor at
@@ -70,10 +89,69 @@ namespace PoFootball.Views
         private static readonly Color SparkColor = new Color(1f, 0.949f, 0.804f, 0.95f);
         private static readonly Color FlashColor = new Color(1f, 1f, 1f, 0.5f);
 
+        /// <summary>
+        /// The longest pass the simulation can throw, in yards: top speed for the
+        /// whole of the flight cap. The range a catch is sized over, derived rather
+        /// than typed so it moves with either constant.
+        /// </summary>
+        private const float LONGEST_THROW_YARDS =
+            Systems_SimConstants.PASS_SPEED_MAX
+            * Systems_SimConstants.MAX_FLIGHT_TICKS
+            * Systems_GameRules.SECONDS_PER_TICK
+            / Systems_FieldModel.YARD;
+
+        /// <summary>
+        /// Floor under a catch's size, so a two-yard flip still registers. A hit
+        /// has no such floor because a hit that barely clears the tackle threshold
+        /// SHOULD barely show.
+        /// </summary>
+        private const float CATCH_MIN_REACH = 0.25f;
+
+        private const float CATCH_FLASH_ALPHA = 0.55f;
+
+        private const int MIN_DUST = 2;
+        private const int MAX_DUST = 7;
+
+        private const float DUST_SPEED_MIN = 1f;
+        private const float DUST_SPEED_MAX = 3f;
+        private const float DUST_LIFETIME = 0.42f;
+        private const float DUST_SIZE = 0.3f;
+
+        /// <summary>
+        /// How far along the seam between the two bodies a mote may start, in
+        /// metres either side of the contact point — most of a body radius.
+        ///
+        /// THE DUST IS SPREAD BY WHERE IT STARTS, NOT BY HOW FAST IT LEAVES, and
+        /// that was found on a capture rather than reasoned out. The system's
+        /// velocity limit is shared with the sparks and pulls everything to about
+        /// 1.5 m/s within a few frames, whatever it was launched at: tripling the
+        /// launch speed moved the dust by a pixel. Emitted from the point itself
+        /// it never got out from between the two players and sat on the contact
+        /// like a sticker.
+        /// </summary>
+        private const float DUST_SEAM = 0.45f;
+
+        /// <summary>
+        /// Half-angle of the fan the dust leaves in, in radians, about the line
+        /// the two bodies are squeezing it out along.
+        /// </summary>
+        private const float DUST_SPREAD = 0.5f;
+
+        /// <summary>
+        /// Chalk and dry turf. Pale so it shows against the grass, and well short
+        /// of opaque white so it stays under the bloom threshold — see the class
+        /// note on why a block must not flash.
+        /// </summary>
+        private static readonly Color DustColor = new Color(0.8f, 0.77f, 0.64f, 0.5f);
+
         private Systems_PlayerRegistry _registry;
         private Systems_PresentationBudget _budget;
         private ISubscriber<Systems_TackleMessage> _tackleSubscriber;
+        private ISubscriber<Systems_PassCaughtMessage> _caughtSubscriber;
+        private ISubscriber<Systems_ContactMessage> _contactSubscriber;
         private IDisposable _tackleSubscription;
+        private IDisposable _caughtSubscription;
+        private IDisposable _contactSubscription;
 
         private ParticleSystem _particles;
         private ParticleSystem.EmitParams _emit;
@@ -96,11 +174,15 @@ namespace PoFootball.Views
         public void Construct(
             Systems_PlayerRegistry registry,
             Systems_PresentationBudget budget,
-            ISubscriber<Systems_TackleMessage> tackleSubscriber)
+            ISubscriber<Systems_TackleMessage> tackleSubscriber,
+            ISubscriber<Systems_PassCaughtMessage> caughtSubscriber,
+            ISubscriber<Systems_ContactMessage> contactSubscriber)
         {
             _registry = registry;
             _budget = budget;
             _tackleSubscriber = tackleSubscriber;
+            _caughtSubscriber = caughtSubscriber;
+            _contactSubscriber = contactSubscriber;
         }
 
         private void Start()
@@ -124,6 +206,8 @@ namespace PoFootball.Views
 
             BuildParticles(source);
             _tackleSubscription = _tackleSubscriber.Subscribe(OnTackle);
+            _caughtSubscription = _caughtSubscriber?.Subscribe(OnPassCaught);
+            _contactSubscription = _contactSubscriber?.Subscribe(OnContact);
         }
 
         private void OnDestroy()
@@ -134,6 +218,12 @@ namespace PoFootball.Views
             // would silently stop every future hit from being drawn.
             _tackleSubscription?.Dispose();
             _tackleSubscription = null;
+
+            _caughtSubscription?.Dispose();
+            _caughtSubscription = null;
+
+            _contactSubscription?.Dispose();
+            _contactSubscription = null;
         }
 
         private void BuildParticles(Material source)
@@ -267,18 +357,93 @@ namespace PoFootball.Views
                 closing = closing.normalized;
             }
 
-            EmitFlash(point, force);
-            EmitSparks(point, closing, force);
+            EmitFlash(point, force, FlashColor);
+            EmitSparks(point, closing, force, SparkColor);
         }
 
-        private void EmitFlash(Vector2 point, float force)
+        /// <summary>
+        /// The burst on the hands that caught it. Radial, with no closing bias:
+        /// a tackle has a direction — one body running through another — and a
+        /// catch does not.
+        /// </summary>
+        private void OnPassCaught(Systems_PassCaughtMessage message)
+        {
+            Systems_IPlayerHandle catcher = _registry.FindById(message.CatcherId);
+
+            if (catcher == null)
+            {
+                return;
+            }
+
+            float reach = Mathf.Max(
+                CATCH_MIN_REACH, Mathf.Clamp01(message.AirYards / LONGEST_THROW_YARDS));
+
+            Color color = message.Intercepted
+                ? Systems_UiTheme.Negative
+                : Systems_UiTheme.Accent;
+
+            Color flash = color;
+            flash.a = CATCH_FLASH_ALPHA;
+
+            EmitFlash(catcher.Position, reach, flash);
+            EmitSparks(catcher.Position, Vector2.zero, reach, color);
+        }
+
+        /// <summary>
+        /// Dust out of the seam between two bodies.
+        ///
+        /// ALONG THE TANGENT, NOT THE NORMAL. The normal is the line the two of
+        /// them are pushing along, and that line is full of player. What a
+        /// collision throws out leaves at right angles to it, both ways — which
+        /// is also why it does not matter that the message cannot say which body
+        /// its normal points away from.
+        /// </summary>
+        private void OnContact(Systems_ContactMessage message)
+        {
+            float strength = message.Strength;
+            Vector2 tangent = new Vector2(-message.Normal.y, message.Normal.x);
+
+            int count = Mathf.RoundToInt(Mathf.Lerp(MIN_DUST, MAX_DUST, strength));
+
+            for (int mote = 0; mote < count; mote++)
+            {
+                float side = (mote & 1) == 0 ? 1f : -1f;
+                float spread = ((NextFloat() * 2f) - 1f) * DUST_SPREAD;
+
+                float cosine = Mathf.Cos(spread);
+                float sine = Mathf.Sin(spread);
+
+                Vector2 direction = new Vector2(
+                    (tangent.x * cosine) - (tangent.y * sine),
+                    (tangent.x * sine) + (tangent.y * cosine)) * side;
+
+                float speed = Mathf.Lerp(
+                    DUST_SPEED_MIN, DUST_SPEED_MAX, strength * (0.5f + NextFloat()));
+
+                // See DUST_SEAM: this offset, not the speed, is what gets the dust
+                // out from between the two bodies.
+                Vector2 origin = message.Point
+                    + (tangent * (side * DUST_SEAM * (0.35f + (0.65f * NextFloat()))));
+
+                _emit = default;
+                _emit.position = origin;
+                _emit.velocity = direction * speed;
+                _emit.startLifetime = DUST_LIFETIME * (0.7f + (NextFloat() * 0.6f));
+                _emit.startSize = DUST_SIZE * (0.6f + (strength * 0.9f));
+                _emit.startColor = DustColor;
+
+                _particles.Emit(_emit, 1);
+            }
+        }
+
+        private void EmitFlash(Vector2 point, float force, Color color)
         {
             _emit = default;
             _emit.position = point;
             _emit.velocity = Vector3.zero;
             _emit.startLifetime = FLASH_LIFETIME;
             _emit.startSize = Mathf.Lerp(FLASH_SIZE_MIN, FLASH_SIZE_MAX, force);
-            _emit.startColor = FlashColor;
+            _emit.startColor = color;
 
             _particles.Emit(_emit, 1);
         }
@@ -291,7 +456,7 @@ namespace PoFootball.Views
         /// speed. The loop runs at most eighteen times and only when a tackle is
         /// published — a handful of times a play, not per frame.
         /// </summary>
-        private void EmitSparks(Vector2 point, Vector2 closing, float force)
+        private void EmitSparks(Vector2 point, Vector2 closing, float force, Color color)
         {
             int count = Mathf.RoundToInt(Mathf.Lerp(MIN_SPARKS, MAX_SPARKS, force));
 
@@ -315,7 +480,7 @@ namespace PoFootball.Views
                 _emit.velocity = direction.normalized * speed;
                 _emit.startLifetime = SPARK_LIFETIME * (0.7f + (NextFloat() * 0.6f));
                 _emit.startSize = SPARK_SIZE * (0.6f + (force * 0.8f));
-                _emit.startColor = SparkColor;
+                _emit.startColor = color;
 
                 _particles.Emit(_emit, 1);
             }

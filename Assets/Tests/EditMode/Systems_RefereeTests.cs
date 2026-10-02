@@ -65,6 +65,8 @@ namespace PoFootball.Tests
         private StubPublisher<Systems_PlayEndedMessage> _ended;
         private StubPublisher<Systems_TackleMessage> _tackled;
         private StubPublisher<Systems_ScoreMessage> _scored;
+        private StubPublisher<Systems_PassThrownMessage> _thrown;
+        private StubPublisher<Systems_PassCaughtMessage> _caught;
         private Systems_Referee _referee;
         private StubPlayer _quarterback;
 
@@ -94,7 +96,9 @@ namespace PoFootball.Tests
 
             _quarterback = (StubPlayer)_registry.Get(Systems_Formation.QUARTERBACK_SLOT_INDEX);
 
-            _ballSystem = new Systems_BallSystem(_ball, _play, _registry);
+            _thrown = new StubPublisher<Systems_PassThrownMessage>();
+            _caught = new StubPublisher<Systems_PassCaughtMessage>();
+            _ballSystem = new Systems_BallSystem(_ball, _play, _registry, _thrown, _caught);
             _ended = new StubPublisher<Systems_PlayEndedMessage>();
             _tackled = new StubPublisher<Systems_TackleMessage>();
             _scored = new StubPublisher<Systems_ScoreMessage>();
@@ -300,6 +304,113 @@ namespace PoFootball.Tests
 
             Assert.That(_ball.IsHeld, Is.True);
             Assert.That(_play.PassCompleted, Is.True);
+        }
+
+        // --- Pass announcements -----------------------------------------------
+        //
+        // Presentation taps: the camera frames the receiver named on the release,
+        // and the catch is the only thing that tells a viewer a completion
+        // happened before the tackle does. Neither changes a rule, so these pin
+        // only what the subscribers rely on.
+
+        [Test]
+        public void AThrow_AnnouncesTheReceiverItWasResolvedTo()
+        {
+            _quarterback.Position = Vector2.zero;
+            MoveEveryoneFarAway();
+
+            StubPlayer receiver = (StubPlayer)_registry.Get(6);
+            receiver.Position = new Vector2(0f, 12f);
+
+            _ballSystem.Throw(_quarterback, Vector2.up, 0f);
+
+            Assert.That(_thrown.Count, Is.EqualTo(1));
+            Assert.That(
+                _thrown.Last.ThrowerId, Is.EqualTo(Systems_Formation.QUARTERBACK_SLOT_INDEX));
+            Assert.That(_thrown.Last.TargetId, Is.EqualTo(6));
+            Assert.That(
+                _thrown.Last.Speed, Is.EqualTo(Systems_BallSystem.ThrowSpeedFor(0f)).Within(1e-4f));
+        }
+
+        [Test]
+        public void ACompletion_IsAnnouncedOnce_WithTheDistanceTheBallFlew()
+        {
+            _quarterback.Position = Vector2.zero;
+            MoveEveryoneFarAway();
+
+            StubPlayer receiver = (StubPlayer)_registry.Get(6);
+            receiver.Position = new Vector2(0f, 9f);
+
+            _ballSystem.Throw(_quarterback, Vector2.up, 0f);
+
+            for (int tick = 0; tick < 60 && !_ball.IsHeld; tick++)
+            {
+                _referee.FixedTick();
+            }
+
+            // A few more ticks with the receiver now carrying: the announcement
+            // belongs to the catch, not to every tick the ball is held after it.
+            for (int tick = 0; tick < 5; tick++)
+            {
+                _referee.FixedTick();
+            }
+
+            Assert.That(_caught.Count, Is.EqualTo(1));
+            Assert.That(_caught.Last.CatcherId, Is.EqualTo(6));
+            Assert.That(_caught.Last.Intercepted, Is.False);
+
+            // Caught somewhere inside the catch radius short of the receiver, so
+            // the throw is a little under his nine metres and never over it.
+            float receiverYards = 9f / Systems_FieldModel.YARD;
+            float radiusYards = Systems_SimConstants.CATCH_RADIUS / Systems_FieldModel.YARD;
+
+            Assert.That(_caught.Last.AirYards, Is.LessThanOrEqualTo(receiverYards));
+            Assert.That(
+                _caught.Last.AirYards, Is.GreaterThanOrEqualTo(receiverYards - radiusYards - 1f));
+        }
+
+        [Test]
+        public void AnInterception_IsAnnouncedAsOne()
+        {
+            _quarterback.Position = Vector2.zero;
+            MoveEveryoneFarAway();
+
+            StubPlayer receiver = (StubPlayer)_registry.Get(6);
+            receiver.Position = new Vector2(0f, 20f);
+
+            StubPlayer safety = (StubPlayer)_registry.Get(20);
+            safety.Position = new Vector2(0f, 6f);
+
+            _ballSystem.Throw(_quarterback, Vector2.up, 0f);
+
+            for (int tick = 0; tick < 60 && _play.Phase != Systems_PlayPhase.Dead; tick++)
+            {
+                _referee.FixedTick();
+            }
+
+            Assert.That(_caught.Count, Is.EqualTo(1));
+            Assert.That(_caught.Last.CatcherId, Is.EqualTo(20));
+            Assert.That(_caught.Last.Intercepted, Is.True);
+        }
+
+        [Test]
+        public void AnIncompletion_AnnouncesNoCatch()
+        {
+            _quarterback.Position = Vector2.zero;
+            MoveEveryoneFarAway();
+
+            _ballSystem.Throw(_quarterback, Vector2.left, 0f);
+
+            for (int tick = 0;
+                 tick <= Systems_SimConstants.MAX_FLIGHT_TICKS + 2
+                 && _play.Phase != Systems_PlayPhase.Dead;
+                 tick++)
+            {
+                _referee.FixedTick();
+            }
+
+            Assert.That(_thrown.Count, Is.EqualTo(1));
+            Assert.That(_caught.Count, Is.EqualTo(0));
         }
 
         [Test]

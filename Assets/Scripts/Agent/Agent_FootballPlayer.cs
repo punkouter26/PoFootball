@@ -219,6 +219,12 @@ namespace PoFootball.Agents
         /// </summary>
         private Systems_IIntentSink _intentSink;
 
+        /// <summary>
+        /// Where a collision the referee does not rule on is reported, for
+        /// presentation. Null-checked for the reason <see cref="_intentSink"/> is.
+        /// </summary>
+        private Systems_IContactSink _contactSink;
+
         public int Id => _formationSlotIndex;
 
         public Systems_PlayerRole Role => _role;
@@ -266,6 +272,7 @@ namespace PoFootball.Agents
             Systems_Referee referee,
             Systems_SimMode simMode,
             Systems_IIntentSink intentSink,
+            Systems_IContactSink contactSink,
             Systems_FormationSelection formations)
         {
             _play = play;
@@ -276,6 +283,7 @@ namespace PoFootball.Agents
             _referee = referee;
             _simMode = simMode;
             _intentSink = intentSink;
+            _contactSink = contactSink;
             _formations = formations;
 
             // Before Register, not after: the registry hands this instance to the
@@ -921,11 +929,6 @@ namespace PoFootball.Agents
 
         private void OnCollisionEnter2D(Collision2D collision)
         {
-            if (!_isCarrier || _referee == null)
-            {
-                return;
-            }
-
             if (!collision.gameObject.TryGetComponent(out Agent_FootballPlayer other))
             {
                 return;
@@ -936,7 +939,55 @@ namespace PoFootball.Agents
                 return;
             }
 
+            if (!_isCarrier)
+            {
+                ReportOffBallContact(other, collision);
+                return;
+            }
+
+            if (_referee == null)
+            {
+                return;
+            }
+
             _referee.ReportContactWithCarrier(other.Id, collision.relativeVelocity.magnitude);
+        }
+
+        /// <summary>
+        /// A collision between two opponents neither of whom has the ball, handed
+        /// to presentation. Nothing in the simulation reads it — no reward, no
+        /// rule, no observation — so it is not part of the action contract and a
+        /// brain cannot tell whether it is being reported.
+        ///
+        /// ONE REPORT PER PAIR. Both bodies get this callback for the same
+        /// collision, so the lower id speaks for the two of them.
+        ///
+        /// THE CARRIER'S CONTACTS ARE NOT REPORTED, from either side. Those belong
+        /// to the referee, and the one that brings him down is already published
+        /// as Systems_TackleMessage — reporting it here as well would draw and
+        /// sound the same hit twice.
+        ///
+        /// ONLY WHILE THE PLAY IS LIVE. The reset between plays teleports
+        /// twenty-two bodies into a formation, and a pair that lands overlapping
+        /// is separated by the solver with an impulse that no block produced.
+        /// </summary>
+        private void ReportOffBallContact(Agent_FootballPlayer other, Collision2D collision)
+        {
+            if (_contactSink == null || other._isCarrier
+                || _formationSlotIndex > other._formationSlotIndex)
+            {
+                return;
+            }
+
+            if (_play == null || _play.Phase != Systems_PlayPhase.Live
+                || collision.contactCount == 0)
+            {
+                return;
+            }
+
+            ContactPoint2D contact = collision.GetContact(0);
+
+            _contactSink.Report(contact.point, contact.normal, contact.normalImpulse);
         }
 
         /// <summary>

@@ -211,4 +211,43 @@ half4 TurfAlbedo(float2 uv)
     return half4(albedo, 1.0);
 }
 
+// --- Down markers ---------------------------------------------------------
+//
+// The line of scrimmage and the line to gain, sideline to sideline, laid over
+// a colour the caller has already finished with.
+//
+// A SEPARATE FUNCTION, CALLED AFTER THE SPRITE TINT, and that ordering is the
+// reason it is not simply the last few lines of TurfAlbedo. Both fragment
+// shaders multiply the field by the SpriteRenderer's colour. These two lines
+// are not paint on the grass; they are the broadcast's own overlay, and they
+// must not take on whatever the renderer happens to be tinted — which is not
+// hypothetical: SCN_GAME's turf renderer carries a dark green left over from
+// when the field was a flat quad, and under it a first-down line came out the
+// colour of the turf it was drawn on. Systems_FieldRenderer clears that tint
+// at runtime now, but anything that tints the field again should still not be
+// able to recolour these. They are still lit, in the lit pass, so they sit on
+// the field rather than floating over it.
+//
+// Wider than a yard line on purpose. At the broadcast camera's widest framing
+// a 0.14 yd line is about a pixel; these have to be found at a glance from the
+// top of a phone screen. The line to gain is drawn second so that on a down of
+// inches, where the two overlap, it is the one left visible — it is the one
+// the play is about.
+half3 TurfDownMarkers(half3 color, float2 uv)
+{
+    float halfTotal = _HalfLengthYards + _EndZoneYards;
+    float yardsY = (uv.y - 0.5) * 2.0 * halfTotal;
+    float gradientY = fwidth(yardsY);
+
+    float halfDownLine = _DownLineWidthYards * 0.5;
+
+    float scrimmageLine = TurfBand(abs(yardsY - _ScrimmageY), halfDownLine, gradientY);
+    float lineToGain = TurfBand(abs(yardsY - _LineToGainY), halfDownLine, gradientY);
+
+    color = lerp(color, _ScrimmageColor.rgb, scrimmageLine * _DownLineOpacity);
+    color = lerp(color, _LineToGainColor.rgb, lineToGain * _DownLineOpacity);
+
+    return color;
+}
+
 #endif // POFOOTBALL_TURF_PATTERN_INCLUDED

@@ -8981,6 +8981,7 @@ GameObject:
   - component: {fileID: 2008628107}
   - component: {fileID: 2008628106}
   - component: {fileID: 2008628105}
+  - component: {fileID: 2008628109}
   m_Layer: 0
   m_Name: Presentation
   m_TagString: Untagged
@@ -9106,6 +9107,14 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 11aef5263fac8c8468e7bd4911a029df, type: 3}
   m_Name: 
   m_EditorClassIdentifier: PoFootball.Views::PoFootball.Views.Systems_PostProcessView
+  _bloomThreshold: 1.35
+  _bloomIntensity: 0.9
+  _bloomScatter: 0.55
+  _vignetteIntensity: 0.16
+  _vignetteSmoothness: 0.5
+  _postContrast: 5
+  _postSaturation: 8
+  _volumePriority: 100
 --- !u!114 &2008628108
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -9118,7 +9127,33 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 8a60b2944a6ab734a845106e852d5bf3, type: 3}
   m_Name: 
   m_EditorClassIdentifier: PoFootball.Views::PoFootball.Views.Systems_StadiumRigView
+  _ambientIntensity: 0.62
+  _ambientColor: {r: 0.72, g: 0.79, b: 0.92, a: 1}
+  _bankColor: {r: 1, g: 0.96, b: 0.88, a: 1}
+  _bankIntensity: 1.25
+  _fillIntensity: 0.65
+  _bankSidelineOffset: 14
+  _bankLengthwiseOffset: 29.260798
+  _bankOuterRadius: 85
+  _bankInnerRadius: 8
+  _bankFalloff: 0.35
+  _shadowIntensity: 0.82
+  _shadowSoftness: 0.55
   _castPlayerShadows: 1
+  _leverageAmbientDrop: 0.16
+  _leverageBankColor: {r: 1, g: 0.87, b: 0.68, a: 1}
+--- !u!114 &2008628109
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 2008628098}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 96e4304dc9d5a0c43959c2aa14637d4c, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: PoFootball.Views::PoFootball.Views.Systems_DriveTrailView
 --- !u!1660057539 &9223372036854775807
 SceneRoots:
   m_ObjectHideFlags: 0

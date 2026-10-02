@@ -54,6 +54,18 @@ Shader "PoFootball/Turf"
         _WearCenterY("Wear centre (yards from 50)", Float) = 0
         _WearSpreadYards("Wear spread", Float) = 9
 
+        // The two lines a broadcast paints on the grass. Both default to a
+        // position far off the quad, which is how "not drawn" is spelled here:
+        // a material nobody has told about a down shows no marker rather than
+        // one stuck on the 50. Systems_FieldRenderer moves them every snap.
+        [Header(Down markers)]
+        _ScrimmageColor("Line of scrimmage", Color) = (0.208, 0.447, 0.929, 1)
+        _LineToGainColor("Line to gain", Color) = (0.984, 0.788, 0.220, 1)
+        _DownLineWidthYards("Down marker width", Float) = 0.34
+        _DownLineOpacity("Down marker opacity", Range(0, 1)) = 0.9
+        _ScrimmageY("Line of scrimmage (yards from 50)", Float) = 1000
+        _LineToGainY("Line to gain (yards from 50)", Float) = 1000
+
         // Required so a SpriteRenderer can drive this shader. Sprite-Lit-Default
         // declares the same set; leaving any of them out makes the material fail
         // to bind when Unity falls back to the legacy sprite path.
@@ -87,6 +99,8 @@ Shader "PoFootball/Turf"
             half4 _HomeEndZone;              \
             half4 _AwayEndZone;              \
             half4 _WearColor;                \
+            half4 _ScrimmageColor;           \
+            half4 _LineToGainColor;          \
             float _HalfLengthYards;          \
             float _HalfWidthYards;           \
             float _EndZoneYards;             \
@@ -97,7 +111,11 @@ Shader "PoFootball/Turf"
             float _HashInsetYards;           \
             float _WearAmount;               \
             float _WearCenterY;              \
-            float _WearSpreadYards;
+            float _WearSpreadYards;          \
+            float _DownLineWidthYards;       \
+            float _DownLineOpacity;          \
+            float _ScrimmageY;               \
+            float _LineToGainY;
         ENDHLSL
 
         Pass
@@ -151,6 +169,7 @@ Shader "PoFootball/Turf"
             half4 TurfFragment(Varyings input) : SV_Target
             {
                 half4 albedo = TurfAlbedo(input.uv) * input.color;
+                albedo.rgb = TurfDownMarkers(albedo.rgb, input.uv);
 
                 SurfaceData2D surfaceData;
                 InputData2D inputData;
@@ -266,7 +285,9 @@ Shader "PoFootball/Turf"
 
             half4 UnlitFragment(Varyings input) : SV_Target
             {
-                return TurfAlbedo(input.uv) * input.color;
+                half4 color = TurfAlbedo(input.uv) * input.color;
+                color.rgb = TurfDownMarkers(color.rgb, input.uv);
+                return color;
             }
             ENDHLSL
         }

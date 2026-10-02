@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using PoFootball.Models;
 using PoFootball.Systems;
 using UnityEngine;
@@ -22,21 +23,37 @@ namespace PoFootball.Views
     /// a thing that had never once happened, because `grep ShadowCaster2D` matched
     /// nothing in any of the three scenes.
     ///
-    /// WHAT IT BUILDS. A dimmed, cool global for ambient fill, plus four warm banks
+    /// WHAT IT BUILDS. A dimmed, cool global for ambient fill, four warm banks
     /// arranged as a real stadium's are — outside the sidelines, past both
-    /// twenty-five yard lines. The banks are what make a player read as an object
-    /// standing ON the turf rather than a decal printed on it, and they are what
-    /// give the turf shader's mow stripes and wear patch something to be shaded by.
+    /// twenty-five yard lines — and one key a long way beyond a corner. The banks
+    /// are what make a player read as an object standing ON the turf rather than a
+    /// decal printed on it, and they are what give the turf shader's mow stripes
+    /// and wear patch something to be shaded by. The key is the only light that
+    /// casts a shadow.
     ///
-    /// ONLY TWO OF THE FOUR CAST SHADOWS, AND THAT IS A BUDGET, NOT AN OVERSIGHT.
-    /// URP's 2D shadows cost one shadow-mesh render per caster per shadow-casting
-    /// light, so four casting banks against twenty-two players is eighty-eight
-    /// shadow draws a frame on a phone that also has to run the simulation. Two
-    /// casting banks on the near side give the direction cue — every body's shadow
-    /// falls the same way, which is what tells the eye where the ground is — and
-    /// the two far banks are pure fill at half intensity. Doubling the shadow count
-    /// would not have made the second shadow readable at this camera distance; it
-    /// would only have halved the frame rate.
+    /// ONE LIGHT CASTS, AND IT IS NOT ONE OF THE BANKS. The two near-side banks
+    /// used to, on a budget of one shadow-mesh render per caster per casting
+    /// light. Measured with Systems_StatusHudView's set-pass counter on
+    /// 2026-10-02 the real figure is about four: 225 set-pass calls a frame with
+    /// two banks casting and 52 with none, so shadows were three quarters of
+    /// everything this scene drew. One caster is 148.
+    ///
+    /// SWITCHING ONE BANK OFF DOES NOT WORK, and that was seen on a capture
+    /// rather than assumed. A shadow can only subtract the light its own caster
+    /// put there, and a bank's light has fallen away to nothing by the far
+    /// twenty: with the north bank alone casting, a play at the south end had no
+    /// shadows at all. Two banks hid that — each half of the field had its own —
+    /// at the price of every body throwing two shadows that crossed at midfield.
+    ///
+    /// So the caster is a separate key, far enough out and with a core wide enough
+    /// that the whole field sits inside it. Every shadow falls the same way at the
+    /// same strength from goal line to goal line, which is the direction cue the
+    /// two banks were there to give. It stands beyond a CORNER and not level with
+    /// the fifty, because a light abeam of midfield throws its shadows parallel to
+    /// the yard lines, where they read as mowing stripes.
+    ///
+    /// It holds 60 FPS on a laptop either way; nobody has measured a handset.
+    /// <see cref="_castPlayerShadows"/> is the switch if one cannot afford it.
     ///
     /// THE SHADOW SHAPE IS THE SPRITE'S BOUNDING BOX, NOT ITS SILHOUETTE. A
     /// ShadowCaster2D added at runtime cannot be told to derive its outline from
@@ -83,8 +100,8 @@ namespace PoFootball.Views
             + "produced a perfectly legible field with NO VISIBLE SHADOWS, because "
             + "a shadow can only subtract the light a bank contributed, and against "
             + "a bright ambient that contribution is a small fraction of the total. "
-            + "This has to sit BELOW the casting banks for a shadow to darken "
-            + "anything. Measured against a live capture, not reasoned about.")]
+            + "The lower this sits against the casting light, the darker a shadow "
+            + "is. Measured against a live capture, not reasoned about.")]
         [Range(0f, 1f)]
         [SerializeField] private float _ambientIntensity = 0.62f;
 
@@ -95,10 +112,9 @@ namespace PoFootball.Views
         [Tooltip("Warm white, the colour of a metal-halide floodlight.")]
         [SerializeField] private Color _bankColor = new Color(1f, 0.96f, 0.88f, 1f);
 
-        [Tooltip("Intensity of the two near, shadow-casting banks.")]
-        [SerializeField] private float _bankIntensity = 1.25f;
-
-        [Tooltip("Fill banks run quieter so the shadow direction stays unambiguous.")]
+        [Tooltip(
+            "Intensity of each of the four banks. None of them casts: they are "
+            + "fill, and the key below is what a shadow is measured against.")]
         [SerializeField] private float _fillIntensity = 0.65f;
 
         [Tooltip(
@@ -130,6 +146,36 @@ namespace PoFootball.Views
         [Range(0f, 1f)]
         [SerializeField] private float _bankFalloff = 0.35f;
 
+        [Header("Key")]
+        [Tooltip(
+            "Intensity of the one shadow-casting light. It trades shadow depth "
+            + "against overall brightness, and Systems_PostProcessView's bloom "
+            + "threshold was tuned against the brightness. Measured on one frozen "
+            + "frame against the two-bank rig it replaced: 0.35 matches its mean "
+            + "brightness to within one percent but leaves the shadows faint, 0.45 "
+            + "is three percent over at midfield and seven at the ends. Peak "
+            + "brightness did not move at any of them.")]
+        [SerializeField] private float _keyIntensity = 0.4f;
+
+        [Tooltip(
+            "How far outside the sideline the key stands, in metres. With the "
+            + "lengthwise offset it sets the angle every shadow falls at.")]
+        [SerializeField] private float _keySidelineOffset = 36f;
+
+        [Tooltip(
+            "Distance from the 50 to the key along the length of the field. Well "
+            + "past the end line on purpose: level with any part of the field, its "
+            + "shadows there run parallel to the yard lines.")]
+        [SerializeField] private float _keyLengthwiseOffset = 95f;
+
+        [Tooltip(
+            "The fully-bright core. Larger than the distance to the farthest "
+            + "corner of the field, so the key is the same strength everywhere a "
+            + "player can stand — which is what makes the shadows uniform.")]
+        [SerializeField] private float _keyInnerRadius = 150f;
+
+        [SerializeField] private float _keyOuterRadius = 230f;
+
         [Header("Shadows")]
         [Range(0f, 1f)]
         [SerializeField] private float _shadowIntensity = 0.82f;
@@ -142,15 +188,69 @@ namespace PoFootball.Views
             + "the per-caster cost on a device that cannot afford it.")]
         [SerializeField] private bool _castPlayerShadows = true;
 
+        // THE RIG REACTS BY GETTING MOODIER, NEVER BRIGHTER, and that is a
+        // constraint rather than a taste. Systems_PostProcessView tuned its bloom
+        // threshold against THIS rig's intensities so that only the carrier's rim
+        // and a hit flash cross it, and records what happens when the margin is
+        // too thin: every saturated jersey under a casting bank picks up a halo
+        // and the carrier glow stops meaning anything. Turning the banks UP for a
+        // big down — the obvious reading of "the lights respond" — spends exactly
+        // that margin, at the moment the picture most needs to be clean. So
+        // leverage pulls the ambient DOWN and tints the banks warmer, both of
+        // which can only ever subtract light: more contrast, deeper shadows, no
+        // pixel brighter than it was.
+        [Header("Leverage")]
+        [Tooltip(
+            "How far the ambient falls at full leverage — fourth and goal, late, "
+            + "in a one-score game. Subtracted from Ambient Intensity, so it is "
+            + "also how much deeper the shadows get.")]
+        [Range(0f, 0.4f)]
+        [SerializeField] private float _leverageAmbientDrop = 0.16f;
+
+        [Tooltip(
+            "Bank colour at full leverage. Must not exceed Bank Color in any "
+            + "channel, or the rig brightens and the yard lines start to bloom.")]
+        [SerializeField] private Color _leverageBankColor = new Color(1f, 0.87f, 0.68f, 1f);
+
+        /// <summary>
+        /// Leverage units per second the rig moves at: two seconds from an
+        /// ordinary down to the biggest one. Slow on purpose — a lighting change
+        /// fast enough to be seen happening reads as a flicker, and this should be
+        /// noticed as a mood rather than as an event.
+        /// </summary>
+        private const float LEVERAGE_RATE = 0.5f;
+
+        /// <summary>Change in shown leverage below which the lights are left alone.</summary>
+        private const float LEVERAGE_EPSILON = 0.004f;
+
         private Systems_PresentationBudget _budget;
         private Systems_PlayerRegistry _registry;
 
+        /// <summary>
+        /// Read for Systems_Leverage and nothing else. A Game-mode registration:
+        /// like Systems_HudView, this component is in SCN_GAME only.
+        /// </summary>
+        private Systems_GameModel _game;
+
+        // Held as Behaviour and cast back inside ApplyLeverage, for the reason
+        // BeginLightHolder gives: Light2D cannot appear in a member's signature in
+        // this assembly, and a field's type is one.
+        private readonly List<Behaviour> _ambients = new List<Behaviour>(1);
+        // The four banks and the key: everything the leverage tint is applied to.
+        private readonly List<Behaviour> _banks = new List<Behaviour>(5);
+
+        private float _shownLeverage;
+        private float _appliedLeverage;
+
         [Inject]
         public void Construct(
-            Systems_PresentationBudget budget, Systems_PlayerRegistry registry)
+            Systems_PresentationBudget budget,
+            Systems_PlayerRegistry registry,
+            Systems_GameModel game)
         {
             _budget = budget;
             _registry = registry;
+            _game = game;
         }
 
         /// <summary>
@@ -173,6 +273,50 @@ namespace PoFootball.Views
             if (_castPlayerShadows)
             {
                 AttachShadowCasters();
+            }
+        }
+
+        /// <summary>
+        /// Eases the rig toward the leverage of the coming snap.
+        ///
+        /// Polled rather than subscribed to, like the crowd in Systems_AudioView
+        /// and for the same reason: the game model already describes the next down
+        /// by the time the dead-ball hold begins, so the mood changes through the
+        /// huddle rather than at the snap. Nothing is written to a light on a frame
+        /// where the shown value has not moved — which is nearly all of them.
+        /// </summary>
+        private void Update()
+        {
+            if (_game == null)
+            {
+                return;
+            }
+
+            _shownLeverage = Mathf.MoveTowards(
+                _shownLeverage, Systems_Leverage.Of(_game), LEVERAGE_RATE * Time.deltaTime);
+
+            if (Mathf.Abs(_shownLeverage - _appliedLeverage) < LEVERAGE_EPSILON)
+            {
+                return;
+            }
+
+            _appliedLeverage = _shownLeverage;
+            ApplyLeverage(_shownLeverage);
+        }
+
+        private void ApplyLeverage(float leverage)
+        {
+            float ambient = Mathf.Max(0f, _ambientIntensity - (_leverageAmbientDrop * leverage));
+            Color bankColor = Color.Lerp(_bankColor, _leverageBankColor, leverage);
+
+            for (int index = 0; index < _ambients.Count; index++)
+            {
+                ((Light2D)_ambients[index]).intensity = ambient;
+            }
+
+            for (int index = 0; index < _banks.Count; index++)
+            {
+                ((Light2D)_banks[index]).color = bankColor;
             }
         }
 
@@ -200,14 +344,13 @@ namespace PoFootball.Views
                 lights[index].intensity = _ambientIntensity;
                 lights[index].color = _ambientColor;
 
-                // AND IT MUST NOT CAST. The class note budgets this rig at two
-                // casting lights precisely because URP 2D spends one shadow-mesh
-                // render per caster per casting light, and there are twenty-two
-                // casters — but it only ever set that flag on the banks it BUILDS.
-                // The Global is the one light it inherits rather than creates, and
-                // SCN_GAME shipped it with shadows on, so the scene ran three
-                // casting lights: sixty-six shadow draws a frame against the
-                // forty-four the design allows.
+                // AND IT MUST NOT CAST. The class note budgets this rig at one
+                // casting light, because every one of them costs a set of passes
+                // per caster and there are twenty-two casters — but the rig only
+                // ever set that flag on the lights it BUILDS. The Global is the
+                // one light it inherits rather than creates, and SCN_GAME shipped
+                // it with shadows on, so the scene ran one more casting light
+                // than the design allowed.
                 //
                 // Measured in play mode: 5 Light2D, 3 with shadowsEnabled, 22
                 // ShadowCaster2D, 217 draw calls. Clearing this is twenty-two fewer
@@ -216,6 +359,8 @@ namespace PoFootball.Views
                 // "shadow" it casts has no direction to come from and only flattens
                 // the ambient fill that the banks are supposed to be read against.
                 lights[index].shadowsEnabled = false;
+
+                _ambients.Add(lights[index]);
 
                 foundGlobal = true;
             }
@@ -230,39 +375,59 @@ namespace PoFootball.Views
                 ambient.color = _ambientColor;
                 ambient.shadowsEnabled = false;
 
+                _ambients.Add(ambient);
+
                 holder.SetActive(true);
             }
         }
 
         /// <summary>
-        /// Four banks at the corners. The two on the +X sideline cast; the two
-        /// opposite are fill — see the class note on the shadow budget.
+        /// Four fill banks at the corners and the key beyond the north-east one.
+        /// Only the key casts — see the class note on the shadow budget.
         /// </summary>
         private void BuildBanks()
         {
             float x = Systems_FieldModel.HALF_WIDTH + _bankSidelineOffset;
             float y = _bankLengthwiseOffset;
 
-            CreateBank("Bank_NearNorth", new Vector3(x, y, 0f), castsShadows: true);
-            CreateBank("Bank_NearSouth", new Vector3(x, -y, 0f), castsShadows: true);
-            CreateBank("Bank_FarNorth", new Vector3(-x, y, 0f), castsShadows: false);
-            CreateBank("Bank_FarSouth", new Vector3(-x, -y, 0f), castsShadows: false);
+            CreateBank("Bank_NearNorth", new Vector3(x, y, 0f));
+            CreateBank("Bank_NearSouth", new Vector3(x, -y, 0f));
+            CreateBank("Bank_FarNorth", new Vector3(-x, y, 0f));
+            CreateBank("Bank_FarSouth", new Vector3(-x, -y, 0f));
+
+            Vector3 keyPosition = new Vector3(
+                Systems_FieldModel.HALF_WIDTH + _keySidelineOffset, _keyLengthwiseOffset, 0f);
+
+            CreatePointLight(
+                "Key", keyPosition, _keyIntensity, _keyInnerRadius, _keyOuterRadius,
+                castsShadows: true);
         }
 
-        private void CreateBank(string bankName, Vector3 position, bool castsShadows)
+        private void CreateBank(string bankName, Vector3 position)
         {
-            GameObject holder = BeginLightHolder(bankName, position);
+            CreatePointLight(
+                bankName, position, _fillIntensity, _bankInnerRadius, _bankOuterRadius,
+                castsShadows: false);
+        }
 
-            Light2D bank = holder.AddComponent<Light2D>();
-            bank.lightType = Light2D.LightType.Point;
-            bank.color = _bankColor;
-            bank.intensity = castsShadows ? _bankIntensity : _fillIntensity;
-            bank.pointLightOuterRadius = _bankOuterRadius;
-            bank.pointLightInnerRadius = _bankInnerRadius;
-            bank.falloffIntensity = _bankFalloff;
-            bank.shadowsEnabled = castsShadows;
-            bank.shadowIntensity = _shadowIntensity;
-            bank.shadowSoftness = _shadowSoftness;
+        private void CreatePointLight(
+            string lightName, Vector3 position, float intensity, float innerRadius,
+            float outerRadius, bool castsShadows)
+        {
+            GameObject holder = BeginLightHolder(lightName, position);
+
+            Light2D light = holder.AddComponent<Light2D>();
+            light.lightType = Light2D.LightType.Point;
+            light.color = _bankColor;
+            light.intensity = intensity;
+            light.pointLightOuterRadius = outerRadius;
+            light.pointLightInnerRadius = innerRadius;
+            light.falloffIntensity = _bankFalloff;
+            light.shadowsEnabled = castsShadows;
+            light.shadowIntensity = _shadowIntensity;
+            light.shadowSoftness = _shadowSoftness;
+
+            _banks.Add(light);
 
             holder.SetActive(true);
         }
@@ -344,7 +509,7 @@ namespace PoFootball.Views
             }
 
             Debug.Log(
-                $"[PoFootball] Stadium rig: 4 banks, 2 casting, {attached} shadow casters.");
+                $"[PoFootball] Stadium rig: 4 banks and a key, 1 casting, {attached} shadow casters.");
         }
     }
 }

@@ -27,6 +27,14 @@ namespace PoFootball.Views
     /// line of scrimmage. It is one material write per play, which is why this
     /// subscribes rather than polling — the LOS changes a handful of times a
     /// quarter, not sixty times a second.
+    ///
+    /// SO DO THE DOWN MARKERS, IN THE SAME WRITE. The line of scrimmage and the
+    /// line to gain are two more floats on the property block the wear already
+    /// goes out on, so the two lines every televised game has drawn since 1998
+    /// cost this one no draw call and no object. Until they existed nothing on the
+    /// field said how far the offense had to go: the distance was a number on the
+    /// HUD, and whether a run had made it was something a viewer learned from the
+    /// banner afterwards rather than watched happen.
     /// </summary>
     [DefaultExecutionOrder(-200)]
     [RequireComponent(typeof(SpriteRenderer))]
@@ -46,6 +54,15 @@ namespace PoFootball.Views
         private static readonly int EndZoneId = Shader.PropertyToID("_EndZoneYards");
         private static readonly int WearCenterId = Shader.PropertyToID("_WearCenterY");
         private static readonly int WearAmountId = Shader.PropertyToID("_WearAmount");
+        private static readonly int ScrimmageId = Shader.PropertyToID("_ScrimmageY");
+        private static readonly int LineToGainId = Shader.PropertyToID("_LineToGainY");
+
+        /// <summary>
+        /// Where a down marker goes to not be drawn, in yards from the 50. Matches
+        /// the shader's own default for both properties: well off the quad, so the
+        /// band test can never reach it.
+        /// </summary>
+        private const float MARKER_HIDDEN_YARDS = 1000f;
 
         /// <summary>How chewed the turf is on the opening snap. A groundsman's pitch.</summary>
         private const float WEAR_AT_KICKOFF = 0.12f;
@@ -73,12 +90,22 @@ namespace PoFootball.Views
         private ISubscriber<Systems_PlaySnappedMessage> _snappedSubscriber;
         private IDisposable _snappedSubscription;
 
+        /// <summary>
+        /// Read for the distance to go, and from the PLAY model rather than the game
+        /// model on purpose: Systems_GameModel is a Game-mode registration, and the
+        /// play model carries the same down and distance in both modes.
+        /// </summary>
+        private Systems_PlayModel _play;
+
         private SpriteRenderer _renderer;
         private MaterialPropertyBlock _properties;
 
         [Inject]
-        public void Construct(ISubscriber<Systems_PlaySnappedMessage> snappedSubscriber)
+        public void Construct(
+            Systems_PlayModel play,
+            ISubscriber<Systems_PlaySnappedMessage> snappedSubscriber)
         {
+            _play = play;
             _snappedSubscriber = snappedSubscriber;
         }
 
@@ -103,6 +130,22 @@ namespace PoFootball.Views
             // there would then be two turf materials to keep in step
             // (.claude/rules/performance.md).
             _renderer.sharedMaterial = _turfMaterial;
+
+            // THE SCENE'S TINT GOES, AND IT WAS QUIETLY RECOLOURING THE WHOLE FIELD.
+            // SCN_GAME's turf renderer carries (0.11, 0.35, 0.16) — the green the
+            // pitch was when it was a flat stretched pixel. PoFootball/Turf
+            // multiplies its output by the renderer colour, as every sprite shader
+            // does, so that leftover was applied on top of a pattern that already
+            // has its own grass: the white yard lines came out green, the red and
+            // blue end zones came out near black, and the grass itself rendered at
+            // about a third of the brightness the material asks for. Nothing
+            // failed; the field simply never looked like its own material.
+            //
+            // Cleared here rather than in the scene for the reason
+            // HideLegacyMarkings disables rather than deletes: the tint is the
+            // right colour for the flat sprite this component replaces, so taking
+            // the component off still gives back a green field.
+            _renderer.color = Color.white;
 
             FitToField();
             PushFieldMetrics();
@@ -236,11 +279,42 @@ namespace PoFootball.Views
                 WEAR_CEILING,
                 1f - Mathf.Exp(-_playsRun / (float)WEAR_TIME_CONSTANT_PLAYS));
 
+            float scrimmageYards = message.LineOfScrimmageY / Systems_FieldModel.YARD;
+
             _renderer.GetPropertyBlock(_properties);
-            _properties.SetFloat(
-                WearCenterId, message.LineOfScrimmageY / Systems_FieldModel.YARD);
+            _properties.SetFloat(WearCenterId, scrimmageYards);
             _properties.SetFloat(WearAmountId, wear);
+            _properties.SetFloat(ScrimmageId, scrimmageYards);
+            _properties.SetFloat(LineToGainId, LineToGainYards(message.LineOfScrimmageY));
             _renderer.SetPropertyBlock(_properties);
+        }
+
+        /// <summary>
+        /// Where the line to gain sits, in yards from the 50, or off the field
+        /// entirely when there is no line to draw.
+        ///
+        /// GOAL TO GO HAS NO LINE TO GAIN. The chains cannot be set past the goal
+        /// line — Systems_GameModel clamps its own marker there for the same reason
+        /// — so the thing the offense has to reach is the goal line itself, which
+        /// is already painted. A second, yellow line laid on top of it would say
+        /// "first down here" about a place where the only thing on offer is a
+        /// touchdown.
+        /// </summary>
+        private float LineToGainYards(float lineOfScrimmageY)
+        {
+            if (_play == null)
+            {
+                return MARKER_HIDDEN_YARDS;
+            }
+
+            float markerY = lineOfScrimmageY + (_play.YardsToGo * Systems_FieldModel.YARD);
+
+            if (markerY >= Systems_FieldModel.ATTACKING_GOAL_LINE_Y)
+            {
+                return MARKER_HIDDEN_YARDS;
+            }
+
+            return markerY / Systems_FieldModel.YARD;
         }
     }
 }
