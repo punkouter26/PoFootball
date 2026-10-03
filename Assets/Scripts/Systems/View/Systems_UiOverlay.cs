@@ -29,6 +29,7 @@ namespace PoFootball.Views
         private readonly VisualElement _content;
         private readonly bool _blocksInput;
 
+        private IVisualElementScheduledItem _beginShow;
         private IVisualElementScheduledItem _autoHide;
         private IVisualElementScheduledItem _finishHide;
 
@@ -91,7 +92,37 @@ namespace PoFootball.Views
             // Next frame, not this one. The element has just become visible and its
             // resolved opacity is still the old value; setting the target in the
             // same frame gives the transition nothing to animate from and it snaps.
-            _root.schedule.Execute(() => _root.style.opacity = 1f).ExecuteLater(0);
+            //
+            // HELD, SO Hide CAN TAKE IT BACK. This used to be fire-and-forget, and
+            // a Show and a Hide in the same frame then ended with the overlay
+            // fading IN: Hide wrote opacity 0, this ran a frame later and wrote 1,
+            // and the element stayed up until the finish-hide popped it off. That
+            // is every final whistle — the last play's result banner is shown and
+            // the game-over handler hides it before the frame is out.
+            _beginShow = _root.schedule.Execute(() => _root.style.opacity = 1f);
+            _beginShow.ExecuteLater(0);
+        }
+
+        /// <summary>
+        /// A tap on the dimmed area outside the content closes the overlay — what a
+        /// thumb expects of a sheet, and the reason DONE is not the only way out.
+        /// Only for an overlay that blocks input; one that does not never sees the
+        /// tap.
+        /// </summary>
+        public Systems_UiOverlay DismissOnScrimTap()
+        {
+            _root.RegisterCallback<ClickEvent>(OnScrimClicked);
+            return this;
+        }
+
+        private void OnScrimClicked(ClickEvent evt)
+        {
+            // The scrim and the empty part of the content box, never the sheet or
+            // anything on it.
+            if (evt.target == _root || evt.target == _content)
+            {
+                Hide();
+            }
         }
 
         /// <summary>
@@ -131,10 +162,14 @@ namespace PoFootball.Views
         /// <summary>
         /// A pending auto-hide from the previous play would otherwise fire in the
         /// middle of the next one, and a pending finish-hide would blank an overlay
-        /// that has just been reopened.
+        /// that has just been reopened. A pending begin-show would fade in an
+        /// overlay that has since been hidden.
         /// </summary>
         private void CancelSchedules()
         {
+            _beginShow?.Pause();
+            _beginShow = null;
+
             _autoHide?.Pause();
             _autoHide = null;
 

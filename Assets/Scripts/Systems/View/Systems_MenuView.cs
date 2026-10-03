@@ -115,22 +115,19 @@ namespace PoFootball.Views
             hint.style.unityTextAlign = TextAnchor.MiddleCenter;
             action.Add(hint);
 
-            Systems_UiOverlay soundSheet = BuildSoundSheet();
+            // ONE WAY IN TO EVERYTHING THAT IS NOT PLAY. SOUND and GAME SEED were
+            // two full-width buttons opening two separate sheets, so the screen
+            // whose job is to point at one button had three of the same size, and
+            // every setting added later would have been a fourth. They are two
+            // tabs of one sheet now.
+            Systems_UiOverlay settingsSheet = BuildSettingsSheet();
 
-            Button sound = Systems_UiTheme.Button(
-                "SOUND", Systems_UiTheme.SurfaceRaised, soundSheet.Show);
-            sound.style.color = Systems_UiTheme.TextPrimary;
-            sound.style.marginTop = Systems_UiTheme.SPACE_L;
-            Systems_UiTheme.ApplySecondaryActionSize(sound);
-            action.Add(sound);
-
-            Systems_UiOverlay seedSheet = BuildSeedSheet();
-
-            Button seed = Systems_UiTheme.Button(
-                "GAME SEED", Systems_UiTheme.SurfaceRaised, seedSheet.Show);
-            seed.style.color = Systems_UiTheme.TextPrimary;
-            Systems_UiTheme.ApplySecondaryActionSize(seed);
-            action.Add(seed);
+            Button settings = Systems_UiTheme.Button(
+                "SETTINGS", Systems_UiTheme.SurfaceRaised, settingsSheet.Show);
+            settings.style.color = Systems_UiTheme.TextPrimary;
+            settings.style.marginTop = Systems_UiTheme.SPACE_L;
+            Systems_UiTheme.ApplySecondaryActionSize(settings);
+            action.Add(settings);
 
             content.Add(action);
 
@@ -171,9 +168,8 @@ namespace PoFootball.Views
 
             Root.Add(screen);
 
-            // Last children, so each paints over the whole menu when shown.
-            Root.Add(soundSheet.Root);
-            Root.Add(seedSheet.Root);
+            // Last child, so it paints over the whole menu when shown.
+            Root.Add(settingsSheet.Root);
 
             // THE VERSION STAMP IS NOT BUILT HERE ANY MORE. It used to be added as a
             // top-left overlay by this screen and by nothing else, so the build
@@ -186,90 +182,135 @@ namespace PoFootball.Views
         }
 
         /// <summary>
-        /// Master, effects and crowd, on a sheet docked to the bottom of the screen.
-        ///
-        /// WHY IT EXISTS. Systems_AudioSettings has persisted three player-owned
-        /// levels since the mix moved out of SCN_GAME's serialized fields — its own
-        /// summary says "a volume is something a player changes" — and nothing on
-        /// any screen let a player change them. The effects default is 0.18 and the
-        /// crowd 0.06, so on a quiet phone the game was close to silent with no way
-        /// to turn it up.
-        ///
-        /// A BOTTOM SHEET, NOT A SCREEN. Three sliders do not justify a scene or a
-        /// navigation stack, the bottom of a portrait phone is where the thumb
-        /// already is, and an overlay over the menu cannot move PLAY (see the zone
-        /// note in BuildUi). Each slider writes through on change; the settings
-        /// class saves immediately, so killing the app keeps the level.
+        /// Height the tab panes are held to, so switching tabs changes what is in
+        /// the sheet and never how tall it is. Three TAP_TARGET rows of sliders is
+        /// 288; the seed pane's caption, mode button and field come to about the
+        /// same. A sheet that resized under the thumb would move DONE.
         /// </summary>
-        private static Systems_UiOverlay BuildSoundSheet()
+        private const int SETTINGS_PANE_HEIGHT = 304;
+
+        /// <summary>
+        /// Everything a player can change, on one sheet docked to the bottom of the
+        /// screen, one tab per subject.
+        ///
+        /// WHY THE SETTINGS EXIST AT ALL. Systems_AudioSettings has persisted three
+        /// player-owned levels since the mix moved out of SCN_GAME's serialized
+        /// fields, and for a long time nothing on any screen let a player change
+        /// them — the effects default is 0.18 and the crowd 0.06, so on a quiet
+        /// phone the game was close to silent with no way to turn it up. A seed is
+        /// a whole game (Systems_GameSettings), and the final sheet shows the one
+        /// just played; this is where a seed someone wrote down becomes a game on
+        /// this phone.
+        ///
+        /// A BOTTOM SHEET, NOT A SCREEN. A handful of controls does not justify a
+        /// scene or a navigation stack, the bottom of a portrait phone is where the
+        /// thumb already is, and an overlay over the menu cannot move PLAY (see the
+        /// zone note in BuildUi).
+        ///
+        /// TABS, NOT ONE SHEET PER SUBJECT. It was two sheets behind two buttons.
+        /// The tabs are the sheet's title, they sit at its top edge, and a third
+        /// subject is a third tab rather than a fourth button on the menu.
+        ///
+        /// Every control writes through on change and the settings classes save
+        /// immediately, so DONE — or a tap on the dimmed menu above — only closes
+        /// it, and killing the app keeps the level.
+        /// </summary>
+        private static Systems_UiOverlay BuildSettingsSheet()
         {
             Systems_UiOverlay overlay = new Systems_UiOverlay(
-                "SoundSheet", blocksInput: true, scrim: Systems_UiTheme.SurfaceScrim);
+                "SettingsSheet", blocksInput: true, scrim: Systems_UiTheme.SurfaceScrim)
+                .DismissOnScrimTap();
 
             overlay.Content.style.justifyContent = Justify.FlexEnd;
             overlay.Content.style.paddingBottom = Systems_UiTheme.STATUS_FOOTER_HEIGHT;
 
-            VisualElement sheet = Systems_UiTheme.Column();
-            sheet.style.backgroundColor = Systems_UiTheme.SurfaceRaised;
-            sheet.style.alignItems = Align.Stretch;
-            sheet.style.borderTopLeftRadius = Systems_UiTheme.RADIUS * 2;
-            sheet.style.borderTopRightRadius = Systems_UiTheme.RADIUS * 2;
-            Systems_UiTheme.SetPadding(sheet, Systems_UiTheme.SPACE_L, Systems_UiTheme.SPACE_XL);
-            Systems_UiTheme.ApplyElevation(sheet);
+            VisualElement sheet = Systems_UiTheme.BottomSheet();
 
-            Label title = Systems_UiTheme.Text(
-                "SOUND", Systems_UiTheme.TEXT_TITLE, Systems_UiTheme.TextPrimary, FontStyle.Bold);
-            title.style.marginBottom = Systems_UiTheme.SPACE_M;
-            sheet.Add(title);
+            VisualElement soundPane = BuildSoundPane();
+            VisualElement seedPane = BuildSeedPane();
 
-            sheet.Add(LevelRow("MASTER", Systems_AudioSettings.Master,
-                value => Systems_AudioSettings.Master = value));
-            sheet.Add(LevelRow("EFFECTS", Systems_AudioSettings.Effects,
-                value => Systems_AudioSettings.Effects = value));
-            sheet.Add(LevelRow("CROWD", Systems_AudioSettings.Crowd,
-                value => Systems_AudioSettings.Crowd = value));
+            VisualElement panes = Systems_UiTheme.Column();
+            panes.style.height = SETTINGS_PANE_HEIGHT;
+            panes.Add(soundPane);
+            panes.Add(seedPane);
+
+            Button soundTab = null;
+            Button seedTab = null;
+
+            soundTab = Tab("SOUND", () => SelectTab(soundTab, seedTab, soundPane, seedPane));
+            seedTab = Tab("GAME SEED", () => SelectTab(seedTab, soundTab, seedPane, soundPane));
+            seedTab.style.marginLeft = Systems_UiTheme.SPACE_S;
+
+            VisualElement tabs = Systems_UiTheme.Row();
+            tabs.name = "SettingsTabs";
+            tabs.style.marginBottom = Systems_UiTheme.SPACE_M;
+            tabs.Add(soundTab);
+            tabs.Add(seedTab);
+
+            SelectTab(soundTab, seedTab, soundPane, seedPane);
 
             Button done = Systems_UiTheme.Button("DONE", Systems_UiTheme.Action, overlay.Hide);
-            done.style.marginTop = Systems_UiTheme.SPACE_L;
+            done.style.marginTop = Systems_UiTheme.SPACE_M;
             done.style.alignSelf = Align.Center;
             Systems_UiTheme.ApplySecondaryActionSize(done);
+
+            sheet.Add(tabs);
+            sheet.Add(panes);
             sheet.Add(done);
 
             overlay.Content.Add(sheet);
             return overlay;
         }
 
-        /// <summary>
-        /// A new game every time, or the same one — and which one.
-        ///
-        /// WHY IT IS ON THE MENU. A seed is a whole game (Systems_GameSettings), and
-        /// the final overlay shows the one just played. Without somewhere to type
-        /// it, that number could be read and never used: this is where a seed
-        /// someone wrote down, or was sent, becomes a game on this phone.
-        ///
-        /// The same docked sheet as SOUND, for the same reasons. Each control
-        /// writes through on change, so DONE only closes it.
-        /// </summary>
-        private static Systems_UiOverlay BuildSeedSheet()
+        private static Button Tab(string label, System.Action onClick)
         {
-            Systems_UiOverlay overlay = new Systems_UiOverlay(
-                "SeedSheet", blocksInput: true, scrim: Systems_UiTheme.SurfaceScrim);
+            Button tab = Systems_UiTheme.Button(label, Systems_UiTheme.SurfaceOverField, onClick);
+            tab.style.flexGrow = 1f;
+            tab.style.flexBasis = 0f;
+            tab.style.fontSize = Systems_UiTheme.TEXT_BODY;
+            return tab;
+        }
 
-            overlay.Content.style.justifyContent = Justify.FlexEnd;
-            overlay.Content.style.paddingBottom = Systems_UiTheme.STATUS_FOOTER_HEIGHT;
+        /// <summary>
+        /// The selected tab takes the action tint — it is the sheet's title — and
+        /// the other drops back to chrome. Display rather than a fade between the
+        /// panes: both occupy the same box, and a cross-fade would put two sets of
+        /// controls under the thumb for a fifth of a second.
+        /// </summary>
+        private static void SelectTab(
+            Button selected, Button other, VisualElement selectedPane, VisualElement otherPane)
+        {
+            selected.style.backgroundColor = Systems_UiTheme.Action;
+            selected.style.color = Systems_UiTheme.SurfaceRaised;
 
-            VisualElement sheet = Systems_UiTheme.Column();
-            sheet.style.backgroundColor = Systems_UiTheme.SurfaceRaised;
-            sheet.style.alignItems = Align.Stretch;
-            sheet.style.borderTopLeftRadius = Systems_UiTheme.RADIUS * 2;
-            sheet.style.borderTopRightRadius = Systems_UiTheme.RADIUS * 2;
-            Systems_UiTheme.SetPadding(sheet, Systems_UiTheme.SPACE_L, Systems_UiTheme.SPACE_XL);
-            Systems_UiTheme.ApplyElevation(sheet);
+            other.style.backgroundColor = Systems_UiTheme.SurfaceOverField;
+            other.style.color = Systems_UiTheme.TextPrimary;
 
-            Label title = Systems_UiTheme.Text(
-                "GAME SEED", Systems_UiTheme.TEXT_TITLE, Systems_UiTheme.TextPrimary, FontStyle.Bold);
-            title.style.marginBottom = Systems_UiTheme.SPACE_S;
-            sheet.Add(title);
+            selectedPane.style.display = DisplayStyle.Flex;
+            otherPane.style.display = DisplayStyle.None;
+        }
+
+        /// <summary>Master, effects and crowd.</summary>
+        private static VisualElement BuildSoundPane()
+        {
+            VisualElement pane = Systems_UiTheme.Column();
+            pane.name = "SoundPane";
+
+            pane.Add(LevelRow("MASTER", Systems_AudioSettings.Master,
+                value => Systems_AudioSettings.Master = value));
+            pane.Add(LevelRow("EFFECTS", Systems_AudioSettings.Effects,
+                value => Systems_AudioSettings.Effects = value));
+            pane.Add(LevelRow("CROWD", Systems_AudioSettings.Crowd,
+                value => Systems_AudioSettings.Crowd = value));
+
+            return pane;
+        }
+
+        /// <summary>A new game every time, or the same one — and which one.</summary>
+        private static VisualElement BuildSeedPane()
+        {
+            VisualElement pane = Systems_UiTheme.Column();
+            pane.name = "SeedPane";
 
             Label explanation = Systems_UiTheme.Text(
                 "A seed decides the whole game. The same seed plays the same game, "
@@ -278,7 +319,7 @@ namespace PoFootball.Views
                 Systems_UiTheme.TextMuted);
             explanation.style.whiteSpace = WhiteSpace.Normal;
             explanation.style.marginBottom = Systems_UiTheme.SPACE_M;
-            sheet.Add(explanation);
+            pane.Add(explanation);
 
             UnsignedIntegerField seedField = new UnsignedIntegerField("SEED")
             {
@@ -287,7 +328,6 @@ namespace PoFootball.Views
             seedField.style.fontSize = Systems_UiTheme.TEXT_BODY;
             seedField.style.color = Systems_UiTheme.TextPrimary;
             seedField.style.minHeight = Systems_UiTheme.TAP_TARGET;
-            seedField.style.marginBottom = Systems_UiTheme.SPACE_M;
             seedField.labelElement.style.color = Systems_UiTheme.TextMuted;
             seedField.labelElement.style.minWidth = 180;
             seedField.SetEnabled(Systems_GameSettings.SeedFixed);
@@ -309,17 +349,9 @@ namespace PoFootball.Views
             mode.style.fontSize = Systems_UiTheme.TEXT_BODY;
             mode.style.marginBottom = Systems_UiTheme.SPACE_M;
 
-            sheet.Add(mode);
-            sheet.Add(seedField);
-
-            Button done = Systems_UiTheme.Button("DONE", Systems_UiTheme.Action, overlay.Hide);
-            done.style.marginTop = Systems_UiTheme.SPACE_L;
-            done.style.alignSelf = Align.Center;
-            Systems_UiTheme.ApplySecondaryActionSize(done);
-            sheet.Add(done);
-
-            overlay.Content.Add(sheet);
-            return overlay;
+            pane.Add(mode);
+            pane.Add(seedField);
+            return pane;
         }
 
         private static string SeedModeLabel(bool isFixed)
@@ -337,6 +369,11 @@ namespace PoFootball.Views
 
             Slider slider = new Slider(0f, 1f) { value = level };
             slider.style.flexGrow = 1f;
+
+            // The same track and 40-unit dragger as the highlight scrubber. The
+            // stock knob is about ten units across — a target for a mouse.
+            slider.style.height = Systems_UiTheme.STATUS_CHIP_HEIGHT;
+            Systems_UiTheme.StyleSlider(slider);
             slider.RegisterValueChangedCallback(change => write(change.newValue));
 
             row.Add(label);

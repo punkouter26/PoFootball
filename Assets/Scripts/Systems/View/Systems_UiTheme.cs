@@ -598,6 +598,67 @@ namespace PoFootball.Views
             element.style.borderRightColor = Color.clear;
         }
 
+        // --- Sheets and sliders --------------------------------------------------
+
+        /// <summary>
+        /// The body of a sheet docked to the bottom of the screen: raised surface,
+        /// rounded on the two corners that face the content above it, square where
+        /// it meets the status footer.
+        ///
+        /// ONE FACTORY, BECAUSE THERE WERE THREE COPIES. The menu's SOUND sheet and
+        /// its GAME SEED sheet each spelled out these seven lines, and the final
+        /// whistle's docked result would have been the third. The menu's settings
+        /// sheet and Systems_HudView's final dock both start here.
+        /// </summary>
+        public static VisualElement BottomSheet()
+        {
+            VisualElement sheet = Column();
+            sheet.style.backgroundColor = SurfaceRaised;
+            sheet.style.alignItems = Align.Stretch;
+            sheet.style.borderTopLeftRadius = RADIUS * 2;
+            sheet.style.borderTopRightRadius = RADIUS * 2;
+            SetPadding(sheet, SPACE_L, SPACE_XL);
+            ApplyElevation(sheet);
+            return sheet;
+        }
+
+        /// <summary>
+        /// Restyles a stock Slider from code, because the project ships no USS.
+        /// The tracker and dragger are found by the slider's own published class
+        /// names rather than by walking its children, so a theme that reorders
+        /// them cannot break this.
+        ///
+        /// Moved here from Systems_HighlightReel, which was the only slider that
+        /// had been styled: the menu's three volume sliders were still the runtime
+        /// theme's grey track and 10-unit knob, on the same panel as a 40-unit
+        /// dragger in the game.
+        /// </summary>
+        public static void StyleSlider(Slider slider)
+        {
+            VisualElement tracker = slider.Q(className: BaseSlider<float>.trackerUssClassName);
+
+            if (tracker != null)
+            {
+                tracker.style.top = Length.Percent(50f);
+                tracker.style.height = SPACE_S;
+                tracker.style.marginTop = -SPACE_S / 2;
+                tracker.style.backgroundColor = SurfaceScrim;
+                SetRadius(tracker, SPACE_S / 2);
+            }
+
+            VisualElement dragger = slider.Q(className: BaseSlider<float>.draggerUssClassName);
+
+            if (dragger != null)
+            {
+                dragger.style.top = Length.Percent(50f);
+                dragger.style.width = SPACE_XL;
+                dragger.style.height = SPACE_XL;
+                dragger.style.marginTop = -SPACE_XL / 2;
+                dragger.style.backgroundColor = Action;
+                SetRadius(dragger, SPACE_XL / 2);
+            }
+        }
+
         /// <summary>Pins an element to all four edges of its parent.</summary>
         public static void FillParent(VisualElement element)
         {

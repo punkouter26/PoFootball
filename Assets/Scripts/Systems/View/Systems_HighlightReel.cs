@@ -52,11 +52,15 @@ namespace PoFootball.Views
     internal sealed class Systems_HighlightReel
     {
         /// <summary>
-        /// Width every transport control is held to, so PLAY and PAUSE do not
-        /// resize the row when they swap. Sized for "PAUSE" at TEXT_BODY in the
-        /// display face plus its padding.
+        /// Width every transport control is held to, so the row is five equal
+        /// targets whatever is drawn on each. Sized for "PAUSE" at TEXT_BODY when
+        /// that was a word; kept now that it is a glyph, because the width is the
+        /// thumb's and not the label's.
         /// </summary>
         private const int CONTROL_MIN_WIDTH = 120;
+
+        /// <summary>Side of a transport glyph, inside a chip-height control.</summary>
+        private const int ICON_SIZE = 28;
 
         /// <summary>Recorded ticks per second of playback: real time.</summary>
         private const float TICKS_PER_SECOND = 1f / Systems_GameRules.SECONDS_PER_TICK;
@@ -78,7 +82,7 @@ namespace PoFootball.Views
         private Label _indexLabel;
         private Label _detailLabel;
         private Slider _slider;
-        private Button _playButton;
+        private Systems_UiIcon _playIcon;
 
         private int _index;
         private float _cursor;
@@ -249,10 +253,9 @@ namespace PoFootball.Views
         }
 
         /// <summary>
-        /// A stock UI Toolkit Slider over the tick index, restyled from code
-        /// because the project ships no USS. The tracker and dragger are found by
-        /// the slider's own published class names rather than by walking its
-        /// children, so a theme that reorders them cannot break this.
+        /// A stock UI Toolkit Slider over the tick index, restyled by
+        /// Systems_UiTheme.StyleSlider — the same track and dragger as the menu's
+        /// volume sliders.
         /// </summary>
         private VisualElement BuildScrubber()
         {
@@ -264,28 +267,7 @@ namespace PoFootball.Views
             _slider.style.marginRight = 0f;
             _slider.style.marginBottom = 0f;
 
-            VisualElement tracker = _slider.Q(className: BaseSlider<float>.trackerUssClassName);
-
-            if (tracker != null)
-            {
-                tracker.style.top = Length.Percent(50f);
-                tracker.style.height = Systems_UiTheme.SPACE_S;
-                tracker.style.marginTop = -Systems_UiTheme.SPACE_S / 2;
-                tracker.style.backgroundColor = Systems_UiTheme.SurfaceScrim;
-                Systems_UiTheme.SetRadius(tracker, Systems_UiTheme.SPACE_S / 2);
-            }
-
-            VisualElement dragger = _slider.Q(className: BaseSlider<float>.draggerUssClassName);
-
-            if (dragger != null)
-            {
-                dragger.style.top = Length.Percent(50f);
-                dragger.style.width = Systems_UiTheme.SPACE_XL;
-                dragger.style.height = Systems_UiTheme.SPACE_XL;
-                dragger.style.marginTop = -Systems_UiTheme.SPACE_XL / 2;
-                dragger.style.backgroundColor = Systems_UiTheme.Action;
-                Systems_UiTheme.SetRadius(dragger, Systems_UiTheme.SPACE_XL / 2);
-            }
+            Systems_UiTheme.StyleSlider(_slider);
 
             _slider.RegisterValueChangedCallback(OnScrubbed);
             return _slider;
@@ -298,8 +280,15 @@ namespace PoFootball.Views
             row.style.flexShrink = 0f;
             row.style.marginTop = Systems_UiTheme.SPACE_S;
 
-            row.Add(Control("PREV", Systems_UiTheme.SurfaceScrim, OnPrevious));
-            row.Add(Control("NEXT", Systems_UiTheme.SurfaceScrim, OnNext));
+            // GLYPHS FOR THE THREE CONTROLS EVERY PLAYER ALREADY KNOWS. Previous,
+            // next and play/pause are shapes nobody has to read; the single-tick
+            // steps stay "-1" and "+1" because no icon says "one tick" and those do.
+            row.Add(IconControl(
+                Systems_UiIcon.Glyph.Previous, "PreviousHighlight",
+                Systems_UiTheme.SurfaceScrim, Systems_UiTheme.TextPrimary, OnPrevious, out _));
+            row.Add(IconControl(
+                Systems_UiIcon.Glyph.Next, "NextHighlight",
+                Systems_UiTheme.SurfaceScrim, Systems_UiTheme.TextPrimary, OnNext, out _));
 
             VisualElement gap = new VisualElement();
             gap.style.width = Systems_UiTheme.SPACE_L;
@@ -308,9 +297,10 @@ namespace PoFootball.Views
 
             row.Add(Control("-1", Systems_UiTheme.SurfaceScrim, OnStepBack));
 
-            _playButton = Control("PAUSE", Systems_UiTheme.Action, OnPlayPressed);
-            _playButton.style.color = Systems_UiTheme.SurfaceRaised;
-            row.Add(_playButton);
+            row.Add(IconControl(
+                Systems_UiIcon.Glyph.Pause, "PlayPause",
+                Systems_UiTheme.Action, Systems_UiTheme.SurfaceRaised, OnPlayPressed,
+                out _playIcon));
 
             row.Add(Control("+1", Systems_UiTheme.SurfaceScrim, OnStepForward));
             return row;
@@ -333,6 +323,19 @@ namespace PoFootball.Views
             button.style.marginRight = Systems_UiTheme.SPACE_XS;
             Systems_UiTheme.SetPadding(
                 button, Systems_UiTheme.SPACE_XS, Systems_UiTheme.SPACE_M);
+            return button;
+        }
+
+        private static Button IconControl(
+            Systems_UiIcon.Glyph glyph,
+            string name,
+            Color tint,
+            Color iconTint,
+            System.Action onClick,
+            out Systems_UiIcon icon)
+        {
+            Button button = Control(string.Empty, tint, onClick);
+            icon = Systems_UiIcon.AddTo(button, glyph, ICON_SIZE, iconTint, name);
             return button;
         }
 
@@ -472,7 +475,9 @@ namespace PoFootball.Views
         private void SetPlaying(bool playing)
         {
             _playing = playing;
-            _playButton.text = playing ? "PAUSE" : "PLAY";
+            _playIcon.Set(
+                playing ? Systems_UiIcon.Glyph.Pause : Systems_UiIcon.Glyph.Play,
+                Systems_UiTheme.SurfaceRaised);
         }
 
         private float LastFrame()

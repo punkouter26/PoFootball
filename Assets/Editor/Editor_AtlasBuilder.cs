@@ -196,9 +196,6 @@ namespace PoFootball.EditorTools
 
             EnsureFolder(ATLAS_FOLDER);
 
-            SpriteAtlasAsset atlas = new SpriteAtlasAsset();
-            atlas.SetIncludeInBuild(true);
-
             SpriteAtlasPackingSettings packing = new SpriteAtlasPackingSettings
             {
                 padding = ATLAS_PADDING,
@@ -206,8 +203,6 @@ namespace PoFootball.EditorTools
                 enableTightPacking = true,
                 blockOffset = 1,
             };
-
-            atlas.SetPackingSettings(packing);
 
             SpriteAtlasTextureSettings texture = new SpriteAtlasTextureSettings
             {
@@ -217,8 +212,6 @@ namespace PoFootball.EditorTools
                 filterMode = FilterMode.Bilinear,
             };
 
-            atlas.SetTextureSettings(texture);
-
             TextureImporterPlatformSettings platform = new TextureImporterPlatformSettings
             {
                 maxTextureSize = MAX_ATLAS_SIZE,
@@ -226,15 +219,34 @@ namespace PoFootball.EditorTools
                 textureCompression = TextureImporterCompression.Compressed,
             };
 
-            atlas.SetPlatformSettings(platform);
-
             Object folder = AssetDatabase.LoadAssetAtPath<Object>(UI_ART_FOLDER);
+
+            SpriteAtlasAsset atlas = new SpriteAtlasAsset();
             atlas.Add(new[] { folder });
 
             string atlasPath = $"{ATLAS_FOLDER}/UiAtlas.spriteatlasv2";
             SpriteAtlasAsset.Save(atlas, atlasPath);
+            AssetDatabase.ImportAsset(atlasPath);
 
-            AssetDatabase.Refresh();
+            // THE SETTINGS LIVE ON THE IMPORTER NOW. A v2 atlas keeps only its
+            // packables in the asset; the four SpriteAtlasAsset.Set* calls this
+            // used to make are obsolete and raised CS0618 on every compile.
+            SpriteAtlasImporter importer =
+                AssetImporter.GetAtPath(atlasPath) as SpriteAtlasImporter;
+
+            if (importer == null)
+            {
+                Debug.LogError(
+                    $"[PoFootball] {atlasPath} was written but has no SpriteAtlasImporter, "
+                    + "so its packing and texture settings were not applied.");
+                return;
+            }
+
+            importer.includeInBuild = true;
+            importer.packingSettings = packing;
+            importer.textureSettings = texture;
+            importer.SetPlatformSettings(platform);
+            importer.SaveAndReimport();
 
             Debug.Log($"[PoFootball] Wrote {atlasPath} packing {UI_ART_FOLDER}.");
         }

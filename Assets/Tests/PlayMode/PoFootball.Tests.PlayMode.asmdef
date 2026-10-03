@@ -9,6 +9,7 @@
         "PoFootball.Agents",
         "PoFootball.Views",
         "MessagePipe",
+        "VContainer",
         "Unity.ML-Agents",
         "Unity.Mathematics",
         "UnityEngine.TestRunner",

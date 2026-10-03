@@ -1,9 +1,11 @@
 using System.Collections;
+using MessagePipe;
 using NUnit.Framework;
 using UnityEngine;
 using UnityEngine.SceneManagement;
 using UnityEngine.TestTools;
 using UnityEngine.UIElements;
+using VContainer;
 
 namespace PoFootball.Tests
 {
@@ -372,6 +374,151 @@ namespace PoFootball.Tests
             yield return WaitForScene(Views.Systems_SceneRouter.MENU_SCENE);
 
             Assert.That(Time.timeScale, Is.EqualTo(1f), "leaving a game at 2x left the menu running fast");
+        }
+
+        /// <summary>
+        /// The end of the loop the test above does not reach: the final whistle,
+        /// the docked result sheet, and REMATCH into a clean second game.
+        ///
+        /// The whistle is PUBLISHED rather than played to — a real game is ten
+        /// minutes, and what is under test is what the screens do when it ends,
+        /// not how it got there. Three things are pinned: the sheet is one view
+        /// that fits on the panel with its primary action in the bottom half, the
+        /// live transport is gone, and the game REMATCH loads is not the one that
+        /// just ended.
+        /// </summary>
+        [UnityTest]
+        public IEnumerator FinalWhistle_DocksOneSheetAndRematchStartsClean()
+        {
+            yield return LoadAndSettle("SCN_GAME");
+
+            Views.Systems_HudView firstHud = Object.FindAnyObjectByType<Views.Systems_HudView>();
+            VisualElement root = FindDocumentFor<Views.Systems_HudView>().rootVisualElement;
+
+            VisualElement overlay = root.Q("FinalScore");
+            Assert.That(overlay, Is.Not.Null, "no final overlay");
+            Assert.That(
+                overlay.resolvedStyle.visibility, Is.EqualTo(Visibility.Hidden),
+                "the final overlay is up before the game has ended");
+
+            Systems.Systems_GameLifetimeScope scope =
+                Object.FindAnyObjectByType<Systems.Systems_GameLifetimeScope>();
+
+            scope.Container
+                .Resolve<IPublisher<Systems.Systems_GameOverMessage>>()
+                .Publish(new Systems.Systems_GameOverMessage(21, 14));
+
+            yield return null;
+            yield return null;
+
+            Assert.That(
+                overlay.resolvedStyle.visibility, Is.EqualTo(Visibility.Visible),
+                "the whistle did not raise the final overlay");
+
+            VisualElement sheet = root.Q("FinalSheet");
+            Button rematch = FindButton(Descendants(root), "REMATCH");
+
+            Assert.That(sheet.worldBound.yMin, Is.GreaterThanOrEqualTo(0f), "the sheet runs off the top");
+            Assert.That(
+                sheet.worldBound.yMax, Is.LessThanOrEqualTo(root.worldBound.yMax),
+                "the sheet runs off the bottom");
+            Assert.That(
+                rematch.worldBound.yMin, Is.GreaterThan(root.worldBound.height * 0.5f),
+                "REMATCH is not in the bottom half of the screen");
+            Assert.That(
+                root.Q("FinalActions").childCount, Is.EqualTo(3),
+                "the final actions are not one row of three");
+            Assert.That(
+                root.Q("Pause").parent.resolvedStyle.display, Is.EqualTo(DisplayStyle.None),
+                "the pause and speed controls outlived the game");
+
+            using (NavigationSubmitEvent submit = NavigationSubmitEvent.GetPooled())
+            {
+                submit.target = rematch;
+                rematch.SendEvent(submit);
+            }
+
+            // The same scene name, so wait on the object: the first HUD is destroyed
+            // by the load and a new one is built by it.
+            yield return new WaitUntil(
+                () => firstHud == null
+                    && Object.FindAnyObjectByType<Views.Systems_HudView>() != null);
+            yield return null;
+            yield return null;
+
+            VisualElement secondRoot = FindDocumentFor<Views.Systems_HudView>().rootVisualElement;
+
+            Assert.That(
+                secondRoot.Q("FinalScore").resolvedStyle.visibility, Is.EqualTo(Visibility.Hidden),
+                "the rematch started with the last game's result on screen");
+            Assert.That(
+                secondRoot.Q("Pause").parent.resolvedStyle.display, Is.EqualTo(DisplayStyle.Flex),
+                "the rematch has no transport");
+            Assert.That(Time.timeScale, Is.EqualTo(1f), "the rematch is not at 1x");
+        }
+
+        /// <summary>
+        /// A Show and a Hide in the same frame must end hidden. They did not: the
+        /// fade-in was deferred a frame and nothing cancelled it, so the overlay
+        /// came up after it had been taken down — which is what the result banner
+        /// did under the final overlay at every whistle.
+        /// </summary>
+        [UnityTest]
+        public IEnumerator Overlay_HiddenInTheFrameItWasShown_StaysHidden()
+        {
+            yield return LoadAndSettle("SCN_MENU");
+
+            Views.Systems_UiOverlay overlay = new Views.Systems_UiOverlay(
+                "RaceProbe", blocksInput: false, scrim: Color.clear);
+
+            FindDocumentFor<Views.Systems_MenuView>().rootVisualElement.Add(overlay.Root);
+
+            overlay.ShowFor(5f);
+            overlay.Hide();
+
+            for (int frame = 0; frame < 5; frame++)
+            {
+                yield return null;
+            }
+
+            Assert.That(overlay.IsVisible, Is.False, "the overlay reports itself visible");
+            Assert.That(
+                overlay.Root.style.opacity.value, Is.EqualTo(0f),
+                "the deferred fade-in ran after the hide");
+        }
+
+        /// <summary>
+        /// One SETTINGS sheet with a tab per subject, and exactly one pane showing.
+        /// </summary>
+        [UnityTest]
+        public IEnumerator Menu_SettingsAreOneTabbedSheet()
+        {
+            yield return LoadAndSettle("SCN_MENU");
+
+            VisualElement root = FindDocumentFor<Views.Systems_MenuView>().rootVisualElement;
+            System.Collections.Generic.List<VisualElement> all = Descendants(root);
+
+            Assert.That(HasButton(all, "SETTINGS"), Is.True, "no SETTINGS button");
+            Assert.That(root.Q("SettingsTabs").childCount, Is.EqualTo(2), "the sheet is not tabbed");
+
+            VisualElement soundPane = root.Q("SoundPane");
+            VisualElement seedPane = root.Q("SeedPane");
+
+            Assert.That(soundPane.resolvedStyle.display, Is.EqualTo(DisplayStyle.Flex), "SOUND is not the first tab");
+            Assert.That(seedPane.resolvedStyle.display, Is.EqualTo(DisplayStyle.None), "both panes are showing");
+
+            Button seedTab = FindButton(all, "GAME SEED");
+
+            using (NavigationSubmitEvent submit = NavigationSubmitEvent.GetPooled())
+            {
+                submit.target = seedTab;
+                seedTab.SendEvent(submit);
+            }
+
+            yield return null;
+
+            Assert.That(seedPane.resolvedStyle.display, Is.EqualTo(DisplayStyle.Flex), "the GAME SEED tab did nothing");
+            Assert.That(soundPane.resolvedStyle.display, Is.EqualTo(DisplayStyle.None), "both panes are showing");
         }
 
         private static IEnumerator WaitForScene(string sceneName)

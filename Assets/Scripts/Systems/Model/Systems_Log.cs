@@ -21,7 +21,11 @@ namespace PoFootball.Models
     public static class Systems_Log
     {
         [Conditional("UNITY_EDITOR")]
-        [Conditional("DEVELOPMENT_BUILD")]
+        // DEBUG, not DEVELOPMENT_BUILD: Unity 6.6 deprecates that symbol (UAC0009,
+        // raised on every compile) and names DEBUG as the managed-code-variant
+        // define to use instead. A development player is compiled with it and a
+        // release player is not, which is the same split.
+        [Conditional("DEBUG")]
         public static void Info(string message)
         {
             UnityEngine.Debug.Log(message);

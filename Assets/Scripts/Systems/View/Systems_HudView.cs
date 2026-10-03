@@ -106,6 +106,18 @@ namespace PoFootball.Views
         /// </summary>
         private const float TAP_SLOP = 22f;
 
+        /// <summary>
+        /// Flex weight of REMATCH against the two secondary actions beside it on
+        /// the final sheet: half the row, the other two a quarter each.
+        /// </summary>
+        private const float PRIMARY_DOCK_WEIGHT = 2f;
+
+        /// <summary>Side of the pause glyph inside its tap-target-sized button.</summary>
+        private const int TRANSPORT_ICON_SIZE = 36;
+
+        /// <summary>Side of the dismiss cross on the focus card.</summary>
+        private const int DISMISS_ICON_SIZE = 24;
+
         /// <summary>Longest press, in seconds, that still counts as a tap.</summary>
         private const float TAP_SECONDS = 0.4f;
 
@@ -261,8 +273,15 @@ namespace PoFootball.Views
         private float _driveYards;
 
         private Button _speedButton;
-        private Button _pauseButton;
+        private Systems_UiIcon _pauseIcon;
         private Button _autoCamButton;
+
+        /// <summary>
+        /// The pause, speed and AUTO CAM strip. Held so the final whistle can take
+        /// it away: there is no simulation left to pause, and the docked result
+        /// sheet goes where it was.
+        /// </summary>
+        private VisualElement _transport;
         private bool _lastPaused;
         private bool _lastManualView;
 
@@ -785,9 +804,19 @@ namespace PoFootball.Views
             // where it has always been. AUTO CAM takes no room until the viewer has
             // moved the shot, so the two controls that are always there do not
             // shift when it appears on a screen where it never has.
-            _pauseButton = BuildTransportButton("PAUSE", OnPauseTapped);
-            _pauseButton.style.marginRight = Systems_UiTheme.SPACE_S;
-            strip.Add(_pauseButton);
+            //
+            // PAUSE IS A GLYPH, AND SQUARE. The word needed a button one and a half
+            // tap targets wide and swapped to "PLAY" — a different width in a
+            // different colour — every time it was pressed. Two bars and a
+            // triangle are the same size, need no reading, and give 48 units of
+            // the field back.
+            Button pauseButton = BuildTransportButton(string.Empty, OnPauseTapped);
+            pauseButton.style.minWidth = Systems_UiTheme.TAP_TARGET;
+            pauseButton.style.marginRight = Systems_UiTheme.SPACE_S;
+            _pauseIcon = Systems_UiIcon.AddTo(
+                pauseButton, Systems_UiIcon.Glyph.Pause, TRANSPORT_ICON_SIZE,
+                Systems_UiTheme.TextPrimary, "Pause");
+            strip.Add(pauseButton);
 
             _speedButton = BuildTransportButton(
                 SpeedLabel(_simSpeed == null ? 1f : _simSpeed.Speed), OnSpeedTapped);
@@ -800,6 +829,7 @@ namespace PoFootball.Views
             _autoCamButton.style.display = DisplayStyle.None;
             strip.Add(_autoCamButton);
 
+            _transport = strip;
             return strip;
         }
 
@@ -847,7 +877,7 @@ namespace PoFootball.Views
         /// </summary>
         private void RefreshTransport()
         {
-            if (_pauseButton == null)
+            if (_pauseIcon == null)
             {
                 return;
             }
@@ -857,10 +887,12 @@ namespace PoFootball.Views
             if (paused != _lastPaused)
             {
                 _lastPaused = paused;
-                _pauseButton.text = paused ? "PLAY" : "PAUSE";
-                _pauseButton.style.color = paused
-                    ? Systems_UiTheme.Positive
-                    : Systems_UiTheme.TextPrimary;
+
+                // The icon shows what a press will DO, as every transport does:
+                // paused, it is the play triangle, in the colour of good news.
+                _pauseIcon.Set(
+                    paused ? Systems_UiIcon.Glyph.Play : Systems_UiIcon.Glyph.Pause,
+                    paused ? Systems_UiTheme.Positive : Systems_UiTheme.TextPrimary);
             }
 
             bool manual = _spectator != null && _spectator.IsManual && !_gameOver;
@@ -1052,6 +1084,29 @@ namespace PoFootball.Views
             return count;
         }
 
+        /// <summary>
+        /// Lets go of every finger the field is tracking, without a tap.
+        ///
+        /// FOR THE FINAL WHISTLE. Switching the surface to PickingMode.Ignore stops
+        /// NEW touches reaching it, but a pointer it has already captured keeps
+        /// being delivered to it until it lifts — so a thumb resting on the field
+        /// as the game ended went on panning the post-game shot, its release was a
+        /// tap that focused a player nobody could then release, and until it
+        /// lifted that pointer could not press REMATCH.
+        /// </summary>
+        private void ReleaseFieldPointers()
+        {
+            for (int slot = 0; slot < MAX_POINTERS; slot++)
+            {
+                if (_pointerIds[slot] != NO_POINTER)
+                {
+                    ReleasePointerSlot(slot, _pointerIds[slot]);
+                }
+            }
+
+            _tapCandidate = false;
+        }
+
         private void ReleasePointerSlot(int slot, int pointerId)
         {
             _pointerIds[slot] = NO_POINTER;
@@ -1184,9 +1239,12 @@ namespace PoFootball.Views
             Systems_UiTheme.SetRadius(_focusFatigueFill, Systems_UiTheme.SPACE_S / 2);
             track.Add(_focusFatigueFill);
 
-            Label release = Systems_UiTheme.Caption("TAP TO RELEASE");
+            // A cross, where "TAP TO RELEASE" used to be: fourteen letters of
+            // instruction on a card whose other four items are one word or less,
+            // and the widest thing on it. The whole card is still the target.
+            Systems_UiIcon release = Systems_UiIcon.Create(
+                Systems_UiIcon.Glyph.Close, DISMISS_ICON_SIZE, Systems_UiTheme.TextMuted);
             release.style.marginLeft = Systems_UiTheme.SPACE_M;
-            release.pickingMode = PickingMode.Ignore;
 
             card.Add(_focusRole);
             card.Add(_focusState);
@@ -1432,27 +1490,54 @@ namespace PoFootball.Views
             return overlay;
         }
 
+        /// <summary>
+        /// The result, the box score and every way on from it, as ONE sheet docked
+        /// to the bottom of the screen.
+        ///
+        /// IT USED TO BE A CENTRED COLUMN UNDER A 92% SCRIM: a headline, the card,
+        /// then REMATCH, REPLAY THIS GAME and MENU stacked one per row — 336 units
+        /// of buttons, the primary one in the middle of the screen where a thumb
+        /// holding a phone does not reach, and the field blacked out behind all of
+        /// it. Docked, the three actions are one row along the bottom edge, the
+        /// sheet ends where the status footer begins, and everything above it is
+        /// the final frame of the game under the scoreboard — dimmed, not hidden.
+        ///
+        /// NOTHING SCROLLS AND NOTHING NEEDS TO. The sheet measures 757 panel units
+        /// and the panel is never shorter than 1920 (it scales on width, and 9:16
+        /// is the squarest portrait handset there is), so its top edge is at 1019
+        /// at the lowest — 800 units clear of the scoreboard.
+        /// </summary>
         private Systems_UiOverlay BuildFinalOverlay()
         {
+            // SurfaceOverField, not SurfaceScrim: the sheet is opaque, so the scrim
+            // no longer has to make digits legible over players — only to say the
+            // field behind it is no longer live.
             Systems_UiOverlay overlay = new Systems_UiOverlay(
-                "FinalScore", blocksInput: true, scrim: Systems_UiTheme.SurfaceScrim)
-                .Centered()
-                .Padded(Systems_UiTheme.SPACE_XL);
+                "FinalScore", blocksInput: true, scrim: Systems_UiTheme.SurfaceOverField);
+
+            overlay.Content.style.justifyContent = Justify.FlexEnd;
+
+            // Clear of the status footer AND of the WATCH HIGHLIGHTS chip that
+            // Systems_HighlightReel docks directly above it, on its own document.
+            // The two read as one stack: sheet, highlights, footer.
+            overlay.Content.style.paddingBottom = Systems_UiTheme.STATUS_FOOTER_HEIGHT
+                + Systems_UiTheme.STATUS_CHIP_HEIGHT + (Systems_UiTheme.SPACE_S * 2);
+
+            VisualElement sheet = Systems_UiTheme.BottomSheet();
+            sheet.name = "FinalSheet";
+            Systems_UiTheme.SetPadding(sheet, Systems_UiTheme.SPACE_M, Systems_UiTheme.SPACE_L);
 
             _finalHeadline = Systems_UiTheme.Text(
                 "FINAL", Systems_UiTheme.TEXT_BANNER,
                 Systems_UiTheme.TextPrimary, FontStyle.Bold);
 
-            _finalHeadline.style.marginBottom = Systems_UiTheme.SPACE_M;
+            _finalHeadline.style.unityTextAlign = TextAnchor.MiddleCenter;
 
             // The whole box score, on the screen that announces the result. It used
             // to be two lines of totals here and the full table on the menu, a tap
             // and a scene load away — and not at all for anyone who chose REMATCH.
-            // Stretched to the overlay's width rather than centred to its content,
-            // so the three columns have room to line up.
             _finalCardHost = new VisualElement();
-            _finalCardHost.style.alignSelf = Align.Stretch;
-            _finalCardHost.style.marginBottom = Systems_UiTheme.SPACE_XL;
+            _finalCardHost.style.marginBottom = Systems_UiTheme.SPACE_M;
             _finalCardHost.pickingMode = PickingMode.Ignore;
 
             // REMATCH reloads SCN_GAME rather than resetting the models in place.
@@ -1464,7 +1549,7 @@ namespace PoFootball.Views
             // second, less-travelled way to reach the same state.
             Button rematchButton = Systems_UiTheme.Button(
                 "REMATCH", Systems_UiTheme.Action, Systems_SceneRouter.LoadGame);
-            Systems_UiTheme.ApplyPrimaryActionSize(rematchButton);
+            ApplyDockActionSize(rematchButton, PRIMARY_DOCK_WEIGHT);
 
             // The same destination as the status HUD's MENU chip above it, and now
             // the same result: the summary is offered to the router at the whistle
@@ -1472,7 +1557,8 @@ namespace PoFootball.Views
             Button menuButton = Systems_UiTheme.Button(
                 "MENU", Systems_UiTheme.SurfaceRaised, Systems_SceneRouter.LoadMenu);
             menuButton.style.color = Systems_UiTheme.TextPrimary;
-            Systems_UiTheme.ApplySecondaryActionSize(menuButton);
+            ApplyDockActionSize(menuButton, 1f);
+            menuButton.style.fontSize = Systems_UiTheme.TEXT_BODY;
 
             // THE SAME GAME AGAIN, NOT ANOTHER ONE. Everything downstream of the seed
             // is deterministic, so the seed this game was played on is the whole
@@ -1481,22 +1567,52 @@ namespace PoFootball.Views
             // into the menu's GAME SEED sheet it plays this game on their phone.
             uint seed = Systems_EpisodeSeed.Value;
 
+            // THE SEED IS THE BUTTON'S OWN SECOND LINE. It was a caption at the
+            // bottom of the column, three rows from the button it explained.
             Button replayButton = Systems_UiTheme.Button(
-                "REPLAY THIS GAME",
-                Systems_UiTheme.SurfaceRaised,
+                "SAME GAME\nSEED " + seed,
+                Systems_UiTheme.SurfaceOverField,
                 () => Systems_SceneRouter.ReplayGame(seed));
+            replayButton.name = "ReplaySeed";
             replayButton.style.color = Systems_UiTheme.TextPrimary;
-            Systems_UiTheme.ApplySecondaryActionSize(replayButton);
+            ApplyDockActionSize(replayButton, 1f);
+            replayButton.style.fontSize = Systems_UiTheme.TEXT_CAPTION;
+            replayButton.style.whiteSpace = WhiteSpace.Normal;
 
-            Label seedCaption = Systems_UiTheme.Caption("SEED " + seed);
+            // The two quieter actions sit on the field-chrome tint so they read as
+            // buttons against the sheet, which is itself SurfaceRaised.
+            menuButton.style.backgroundColor = Systems_UiTheme.SurfaceOverField;
 
-            overlay.Content.Add(_finalHeadline);
-            overlay.Content.Add(_finalCardHost);
-            overlay.Content.Add(rematchButton);
-            overlay.Content.Add(replayButton);
-            overlay.Content.Add(menuButton);
-            overlay.Content.Add(seedCaption);
+            // REMATCH FIRST AND WIDEST, MENU LAST. The primary action is under the
+            // thumb of whichever hand is holding the phone because it spans the
+            // middle; MENU is in the corner under the status HUD's MENU chip, the
+            // same side of the screen for the same destination.
+            VisualElement actions = Systems_UiTheme.Row();
+            actions.name = "FinalActions";
+            actions.Add(rematchButton);
+            actions.Add(replayButton);
+            actions.Add(menuButton);
+
+            sheet.Add(_finalHeadline);
+            sheet.Add(_finalCardHost);
+            sheet.Add(actions);
+
+            overlay.Content.Add(sheet);
             return overlay;
+        }
+
+        /// <summary>
+        /// One of the actions on the final sheet's single row: a full tap target
+        /// tall, sharing the width by weight rather than each claiming 78% of it.
+        /// Zero basis, so the split is the weights' and not the labels'.
+        /// </summary>
+        private static void ApplyDockActionSize(Button button, float weight)
+        {
+            button.style.flexGrow = weight;
+            button.style.flexBasis = 0f;
+            button.style.minHeight = Systems_UiTheme.TAP_TARGET;
+            button.style.marginLeft = Systems_UiTheme.SPACE_XS;
+            button.style.marginRight = Systems_UiTheme.SPACE_XS;
         }
 
 
@@ -1761,7 +1877,17 @@ namespace PoFootball.Views
             // goes back to the operator so the highlights are framed as intended.
             if (_fieldSurface != null)
             {
+                ReleaseFieldPointers();
                 _fieldSurface.pickingMode = PickingMode.Ignore;
+            }
+
+            // Nothing is left to pause or speed up, and the result sheet docks
+            // where these were. Removed from layout, not dimmed under the scrim:
+            // they were still in the focus order there, so a keyboard or a gamepad
+            // could pause a finished game from behind the overlay.
+            if (_transport != null)
+            {
+                _transport.style.display = DisplayStyle.None;
             }
 
             _spectatorSystem?.ReleaseFocus();
