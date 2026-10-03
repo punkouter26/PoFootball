@@ -41,7 +41,7 @@
 # 1. The QUARTERBACK gets its own batch and buffer. It collects one agent's
 #    experience per env against Offense's ten, so on the shared 10240 buffer its
 #    800k-step budget bought 78 policy updates in the entire run -- 39 on Base11's
-#    20480. At batch 256 / buffer 2048 it gets 390, in the same ratio of buffer to
+#    20480. At batch 256 / buffer 2048 it gets 341 over its 700k, in the same ratio of buffer to
 #    batch as everyone else.
 #
 # 2. A three-lesson CURRICULUM on spot_lesson (Systems_RandomSpotProvider, fed by
@@ -51,7 +51,10 @@
 #    reward threshold, because no run against this reward exists to pick a
 #    threshold from, and a guessed one either never fires or fires at once.
 #
-# WALL CLOCK: 8M Offense steps at the measured ~255 steps/s is about nine hours.
+# WALL CLOCK: sized to an eight-hour budget. The revision 10 smoke run measured
+# ~240-255 steps/s at 4 envs, so 7M Offense steps is about 7.8 hours (8M would
+# have been nine). The Quarterback keeps its one-tenth ratio at 700k, and the
+# curriculum thresholds are fractions of Offense's budget, so they scale with it.
 #
 # JUDGING IT: self-play is not running (every behavior has one team id), so there
 # is no ELO. Watch Call/Entropy with Tools/watch_entropy.py, the Pass/* and Play/*
@@ -95,7 +98,7 @@ behaviors:
 
     keep_checkpoints: 20
     checkpoint_interval: 100000
-    max_steps: 8000000
+    max_steps: 7000000
 
     # One whole play: MAX_PHYSICS_TICKS 600 / DECISION_PERIOD 5. Pinned by
     # Systems_ContractTests.
@@ -110,7 +113,7 @@ behaviors:
   Quarterback:
     <<: *football_brain
     trainer_type: ppo
-    max_steps: 800000
+    max_steps: 700000
     hyperparameters:
       batch_size: 256
       buffer_size: 2048
