@@ -41,8 +41,6 @@ namespace PoFootball.Views
     [DisallowMultipleComponent]
     public sealed class Systems_TurfScuffView : MonoBehaviour, Systems_IInjectableView
     {
-        private const string PARTICLE_MATERIAL_RESOURCE = "M_PoFootballParticle";
-
         /// <summary>Below the players and the ball — this is debris on the ground.</summary>
         private const int SORTING_ORDER = 1;
 
@@ -126,13 +124,9 @@ namespace PoFootball.Views
                 return;
             }
 
-            Material source = Resources.Load<Material>(PARTICLE_MATERIAL_RESOURCE);
-
-            if (source == null)
+            if (!Systems_ParticleMaterial.TryLoad(
+                    nameof(Systems_TurfScuffView), "Cuts are drawn flat.", out Material source))
             {
-                Debug.LogWarning(
-                    $"{nameof(Systems_TurfScuffView)}: no material at "
-                    + $"Resources/{PARTICLE_MATERIAL_RESOURCE}. Cuts are drawn flat.");
                 enabled = false;
                 return;
             }

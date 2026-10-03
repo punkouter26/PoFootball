@@ -45,8 +45,6 @@ namespace PoFootball.Views
     [DisallowMultipleComponent]
     public sealed class Systems_IntentOverlayView : MonoBehaviour, Systems_IInjectableView
     {
-        private const string PARTICLE_MATERIAL_RESOURCE = "M_PoFootballParticle";
-
         /// <summary>
         /// Whether to draw the per-player drive/steer arrows.
         ///
@@ -223,13 +221,9 @@ namespace PoFootball.Views
                 return;
             }
 
-            Material source = Resources.Load<Material>(PARTICLE_MATERIAL_RESOURCE);
-
-            if (source == null)
+            if (!Systems_ParticleMaterial.TryLoad(
+                    nameof(Systems_IntentOverlayView), "No intent is drawn.", out Material source))
             {
-                Debug.LogWarning(
-                    $"{nameof(Systems_IntentOverlayView)}: no material at "
-                    + $"Resources/{PARTICLE_MATERIAL_RESOURCE}. No intent is drawn.");
                 enabled = false;
                 return;
             }

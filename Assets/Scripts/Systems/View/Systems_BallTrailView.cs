@@ -23,8 +23,6 @@ namespace PoFootball.Views
     [DisallowMultipleComponent]
     public sealed class Systems_BallTrailView : MonoBehaviour, Systems_IInjectableView
     {
-        private const string PARTICLE_MATERIAL_RESOURCE = "M_PoFootballParticle";
-
         [SerializeField] private Color _headColor = new Color(1f, 0.945f, 0.741f, 0.95f);
         [SerializeField] private Color _tailColor = new Color(0.976f, 0.796f, 0.290f, 0f);
 
@@ -55,13 +53,9 @@ namespace PoFootball.Views
                 return;
             }
 
-            Material source = Resources.Load<Material>(PARTICLE_MATERIAL_RESOURCE);
-
-            if (source == null)
+            if (!Systems_ParticleMaterial.TryLoad(
+                    nameof(Systems_BallTrailView), "The ball flies untrailed.", out Material source))
             {
-                Debug.LogWarning(
-                    $"{nameof(Systems_BallTrailView)}: no material at "
-                    + $"Resources/{PARTICLE_MATERIAL_RESOURCE}. The ball flies untrailed.");
                 enabled = false;
                 return;
             }

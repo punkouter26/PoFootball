@@ -61,8 +61,6 @@ namespace PoFootball.Agents
 
         [SerializeField] private Entry[] _entries = new Entry[0];
 
-        public int ContractRevision => _contractRevision;
-
         public bool MatchesCurrentContract =>
             _contractRevision == Agent_ActionContract.CONTRACT_REVISION
             && CoversEveryGroupExactlyOnce;

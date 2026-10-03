@@ -49,8 +49,6 @@ namespace PoFootball.Views
     [DisallowMultipleComponent]
     public sealed class Systems_DriveTrailView : MonoBehaviour, Systems_IInjectableView
     {
-        private const string PARTICLE_MATERIAL_RESOURCE = "M_PoFootballParticle";
-
         /// <summary>
         /// With the turf scuffs: on the ground, above the field quad on 0. The
         /// offense's bodies are on 1 as well, which is what
@@ -188,13 +186,9 @@ namespace PoFootball.Views
                 return;
             }
 
-            Material source = Resources.Load<Material>(PARTICLE_MATERIAL_RESOURCE);
-
-            if (source == null)
+            if (!Systems_ParticleMaterial.TryLoad(
+                    nameof(Systems_DriveTrailView), "No drive trail is drawn.", out Material source))
             {
-                Debug.LogWarning(
-                    $"{nameof(Systems_DriveTrailView)}: no material at "
-                    + $"Resources/{PARTICLE_MATERIAL_RESOURCE}. No drive trail is drawn.");
                 enabled = false;
                 return;
             }

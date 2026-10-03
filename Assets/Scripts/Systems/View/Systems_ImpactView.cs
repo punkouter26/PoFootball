@@ -58,8 +58,6 @@ namespace PoFootball.Views
     [DisallowMultipleComponent]
     public sealed class Systems_ImpactView : MonoBehaviour, Systems_IInjectableView
     {
-        private const string PARTICLE_MATERIAL_RESOURCE = "M_PoFootballParticle";
-
         /// <summary>Above the ball on 5, because a hit should never be occluded.</summary>
         private const int SORTING_ORDER = 6;
 
@@ -193,13 +191,9 @@ namespace PoFootball.Views
                 return;
             }
 
-            Material source = Resources.Load<Material>(PARTICLE_MATERIAL_RESOURCE);
-
-            if (source == null)
+            if (!Systems_ParticleMaterial.TryLoad(
+                    nameof(Systems_ImpactView), "Hits are drawn flat.", out Material source))
             {
-                Debug.LogWarning(
-                    $"{nameof(Systems_ImpactView)}: no material at "
-                    + $"Resources/{PARTICLE_MATERIAL_RESOURCE}. Hits are drawn flat.");
                 enabled = false;
                 return;
             }
