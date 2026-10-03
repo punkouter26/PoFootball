@@ -115,6 +115,15 @@ namespace PoFootball.Views
             hint.style.unityTextAlign = TextAnchor.MiddleCenter;
             action.Add(hint);
 
+            Systems_UiOverlay soundSheet = BuildSoundSheet();
+
+            Button sound = Systems_UiTheme.Button(
+                "SOUND", Systems_UiTheme.SurfaceRaised, soundSheet.Show);
+            sound.style.color = Systems_UiTheme.TextPrimary;
+            sound.style.marginTop = Systems_UiTheme.SPACE_L;
+            Systems_UiTheme.ApplySecondaryActionSize(sound);
+            action.Add(sound);
+
             content.Add(action);
 
             // Trailing space, or the game that just finished.
@@ -154,6 +163,9 @@ namespace PoFootball.Views
 
             Root.Add(screen);
 
+            // Last child, so it paints over the whole menu when shown.
+            Root.Add(soundSheet.Root);
+
             // THE VERSION STAMP IS NOT BUILT HERE ANY MORE. It used to be added as a
             // top-left overlay by this screen and by nothing else, so the build
             // number was visible on the menu and invisible the moment a game
@@ -162,6 +174,77 @@ namespace PoFootball.Views
             // of every player-facing screen, alongside the title, the frame rate,
             // MENU and DEBUG. Systems_UiTheme.VersionStamp is kept for a screen that
             // wants its own, but nothing calls it.
+        }
+
+        /// <summary>
+        /// Master, effects and crowd, on a sheet docked to the bottom of the screen.
+        ///
+        /// WHY IT EXISTS. Systems_AudioSettings has persisted three player-owned
+        /// levels since the mix moved out of SCN_GAME's serialized fields — its own
+        /// summary says "a volume is something a player changes" — and nothing on
+        /// any screen let a player change them. The effects default is 0.18 and the
+        /// crowd 0.06, so on a quiet phone the game was close to silent with no way
+        /// to turn it up.
+        ///
+        /// A BOTTOM SHEET, NOT A SCREEN. Three sliders do not justify a scene or a
+        /// navigation stack, the bottom of a portrait phone is where the thumb
+        /// already is, and an overlay over the menu cannot move PLAY (see the zone
+        /// note in BuildUi). Each slider writes through on change; the settings
+        /// class saves immediately, so killing the app keeps the level.
+        /// </summary>
+        private static Systems_UiOverlay BuildSoundSheet()
+        {
+            Systems_UiOverlay overlay = new Systems_UiOverlay(
+                "SoundSheet", blocksInput: true, scrim: Systems_UiTheme.SurfaceScrim);
+
+            overlay.Content.style.justifyContent = Justify.FlexEnd;
+            overlay.Content.style.paddingBottom = Systems_UiTheme.STATUS_FOOTER_HEIGHT;
+
+            VisualElement sheet = Systems_UiTheme.Column();
+            sheet.style.backgroundColor = Systems_UiTheme.SurfaceRaised;
+            sheet.style.alignItems = Align.Stretch;
+            sheet.style.borderTopLeftRadius = Systems_UiTheme.RADIUS * 2;
+            sheet.style.borderTopRightRadius = Systems_UiTheme.RADIUS * 2;
+            Systems_UiTheme.SetPadding(sheet, Systems_UiTheme.SPACE_L, Systems_UiTheme.SPACE_XL);
+            Systems_UiTheme.ApplyElevation(sheet);
+
+            Label title = Systems_UiTheme.Text(
+                "SOUND", Systems_UiTheme.TEXT_TITLE, Systems_UiTheme.TextPrimary, FontStyle.Bold);
+            title.style.marginBottom = Systems_UiTheme.SPACE_M;
+            sheet.Add(title);
+
+            sheet.Add(LevelRow("MASTER", Systems_AudioSettings.Master,
+                value => Systems_AudioSettings.Master = value));
+            sheet.Add(LevelRow("EFFECTS", Systems_AudioSettings.Effects,
+                value => Systems_AudioSettings.Effects = value));
+            sheet.Add(LevelRow("CROWD", Systems_AudioSettings.Crowd,
+                value => Systems_AudioSettings.Crowd = value));
+
+            Button done = Systems_UiTheme.Button("DONE", Systems_UiTheme.Action, overlay.Hide);
+            done.style.marginTop = Systems_UiTheme.SPACE_L;
+            done.style.alignSelf = Align.Center;
+            Systems_UiTheme.ApplySecondaryActionSize(done);
+            sheet.Add(done);
+
+            overlay.Content.Add(sheet);
+            return overlay;
+        }
+
+        private static VisualElement LevelRow(string name, float level, System.Action<float> write)
+        {
+            VisualElement row = Systems_UiTheme.Row();
+            row.style.height = Systems_UiTheme.TAP_TARGET;
+
+            Label label = Systems_UiTheme.Text(name, Systems_UiTheme.TEXT_BODY, Systems_UiTheme.TextMuted);
+            label.style.width = 180;
+
+            Slider slider = new Slider(0f, 1f) { value = level };
+            slider.style.flexGrow = 1f;
+            slider.RegisterValueChangedCallback(change => write(change.newValue));
+
+            row.Add(label);
+            row.Add(slider);
+            return row;
         }
 
         /// <summary>
