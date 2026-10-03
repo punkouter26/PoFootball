@@ -1,5 +1,6 @@
 using PoFootball.Models;
 using PoFootball.Systems;
+using UnityEngine;
 
 namespace PoFootball.Views
 {
@@ -22,6 +23,14 @@ namespace PoFootball.Views
     /// The tape is allocated once, at the size of the live tape, and refilled in
     /// place whenever a better play displaces this one. Three of these are the
     /// whole of the highlight memory for a game.
+    ///
+    /// THE TEAM COLOURS TRAVEL WITH THE TAPE. The same eleven bodies play offense
+    /// for both teams and Systems_RoleShapeApplier repaints them whenever the ball
+    /// changes hands, so at the final whistle the real renderers wear the colours
+    /// of the LAST possession. A highlight from the other team's drive, replayed
+    /// with the ghosts copying those renderers, would show the wrong team scoring.
+    /// So the colours the field actually wore during this play are kept here and
+    /// the ghosts are repainted with them.
     /// </summary>
     internal sealed class Systems_ReplayHighlight
     {
@@ -36,33 +45,40 @@ namespace PoFootball.Views
 
         public float Score { get; private set; }
 
-        /// <summary>Whose drive it was — decides which colour the offense wears on the board.</summary>
-        public Systems_TeamId Offense { get; private set; }
-
         public Systems_DownResult Result { get; private set; }
 
         public Systems_PlayOutcome Outcome { get; private set; }
 
         public float YardsGained { get; private set; }
 
-        public float LineOfScrimmageY { get; private set; }
+        /// <summary>False if the colours could not be read when the play was snapped; the ghosts then keep the real renderers' look.</summary>
+        public bool HasTeamColors { get; private set; }
+
+        /// <summary>What the offense unit wore on this play.</summary>
+        public Color OffenseColor { get; private set; }
+
+        /// <summary>What the defense unit wore on this play.</summary>
+        public Color DefenseColor { get; private set; }
 
         public void Fill(
             Systems_ReplayTape source,
             int frames,
             float score,
             Systems_DownResolvedMessage message,
-            float lineOfScrimmageY)
+            bool hasTeamColors,
+            Color offenseColor,
+            Color defenseColor)
         {
             Tape.CopyNewestFrom(source, frames);
 
             IsFilled = Tape.Count > 0;
             Score = score;
-            Offense = message.Offense;
             Result = message.Result;
             Outcome = message.Outcome;
             YardsGained = message.YardsGained;
-            LineOfScrimmageY = lineOfScrimmageY;
+            HasTeamColors = hasTeamColors;
+            OffenseColor = offenseColor;
+            DefenseColor = defenseColor;
         }
     }
 }

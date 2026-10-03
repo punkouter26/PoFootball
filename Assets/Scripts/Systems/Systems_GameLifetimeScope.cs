@@ -125,6 +125,7 @@ namespace PoFootball.Systems
             builder.RegisterMessageBroker<Systems_PassCaughtMessage>(messagePipeOptions);
             builder.RegisterMessageBroker<Systems_ContactMessage>(messagePipeOptions);
             builder.RegisterMessageBroker<Systems_TurfCutMessage>(messagePipeOptions);
+            builder.RegisterMessageBroker<Systems_HighlightPlaybackMessage>(messagePipeOptions);
 
             // Registered in both modes so a view can subscribe without caring which
             // one it is in. In training nothing ever publishes them.

@@ -1,3 +1,4 @@
+using PoFootball.Models;
 using PoFootball.Systems;
 using UnityEngine;
 using UnityEngine.Rendering.Universal;
@@ -6,7 +7,8 @@ namespace PoFootball.Views
 {
     /// <summary>
     /// Twenty-two players, a ball and its shadow that only exist to be drawn: the
-    /// bodies the instant replay moves, so that the real ones never are.
+    /// bodies the instant replay and the post-game highlights move, so that the
+    /// real ones never are.
     ///
     /// WHY NOT REWIND THE REAL BODIES. They are Rigidbody2Ds with colliders, owned
     /// by the agents and by Systems_EpisodeDirector. Teleporting them back along
@@ -34,7 +36,8 @@ namespace PoFootball.Views
     /// THE REAL RENDERERS ARE HIDDEN FOR THE DURATION AND ONLY FOR THE DURATION.
     /// Their enabled state is recorded at Show and put back at Hide, which the
     /// owning view calls on every way a replay can end — its natural end, the
-    /// snap, the final whistle, OnDisable and OnDestroy. Systems_BallView forces
+    /// snap, the final whistle, the highlight reel closing, OnDisable and
+    /// OnDestroy. Systems_BallView forces
     /// its renderer on in every LateUpdate, so EnforceHidden re-asserts the hide
     /// once per frame from a later execution order rather than trusting one write.
     ///
@@ -285,6 +288,41 @@ namespace PoFootball.Views
             }
 
             PoseBall(tape, time);
+        }
+
+        /// <summary>
+        /// Overrides the colours copied at Show with the ones a recorded play
+        /// actually wore: <paramref name="offenseColor"/> on every offense body,
+        /// <paramref name="defenseColor"/> on every defense body. For the
+        /// highlights, whose play may belong to a possession the real renderers no
+        /// longer show — see Systems_ReplayHighlight. The ghost painted as the
+        /// carrier keeps its white; it takes the new base colour when it gives the
+        /// ball up. Twenty-two colour writes, called once per highlight.
+        /// </summary>
+        public void PaintSides(Color offenseColor, Color defenseColor)
+        {
+            if (!IsShowing)
+            {
+                return;
+            }
+
+            for (int player = 0; player < _count; player++)
+            {
+                Systems_IPlayerHandle handle = _handles[player];
+
+                if (handle == null || _sources[player] == null)
+                {
+                    continue;
+                }
+
+                _baseColors[player] = handle.Side == Systems_TeamSide.Offense
+                    ? offenseColor
+                    : defenseColor;
+
+                _ghosts[player].color = player == _paintedCarrier
+                    ? Color.white
+                    : _baseColors[player];
+            }
         }
 
         /// <summary>

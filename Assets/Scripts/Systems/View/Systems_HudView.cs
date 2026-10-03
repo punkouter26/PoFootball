@@ -122,10 +122,21 @@ namespace PoFootball.Views
         private ISubscriber<Systems_DownResolvedMessage> _resolvedSubscriber;
         private ISubscriber<Systems_GameOverMessage> _gameOverSubscriber;
         private ISubscriber<Systems_PlaySnappedMessage> _snappedSubscriber;
+        private ISubscriber<Systems_HighlightPlaybackMessage> _highlightSubscriber;
 
         private IDisposable _resolvedSubscription;
         private IDisposable _gameOverSubscription;
         private IDisposable _snappedSubscription;
+        private IDisposable _highlightSubscription;
+
+        /// <summary>
+        /// Set at the final whistle and never cleared. The final overlay's own
+        /// visibility used to double as "the game is over", and it no longer can:
+        /// it is taken down while a highlight plays on the field. This is what
+        /// keeps that overlay from ever being shown mid-game, and the call chip
+        /// and carrier chip from coming back while it is down.
+        /// </summary>
+        private bool _gameOver;
 
         private Label _homeScore;
         private Label _awayScore;
@@ -213,7 +224,8 @@ namespace PoFootball.Views
             Systems_BoxScore boxScore,
             ISubscriber<Systems_DownResolvedMessage> resolvedSubscriber,
             ISubscriber<Systems_GameOverMessage> gameOverSubscriber,
-            ISubscriber<Systems_PlaySnappedMessage> snappedSubscriber)
+            ISubscriber<Systems_PlaySnappedMessage> snappedSubscriber,
+            ISubscriber<Systems_HighlightPlaybackMessage> highlightSubscriber)
         {
             _game = game;
             _play = play;
@@ -224,6 +236,7 @@ namespace PoFootball.Views
             _resolvedSubscriber = resolvedSubscriber;
             _gameOverSubscriber = gameOverSubscriber;
             _snappedSubscriber = snappedSubscriber;
+            _highlightSubscriber = highlightSubscriber;
         }
 
         protected override void Start()
@@ -233,6 +246,7 @@ namespace PoFootball.Views
             _resolvedSubscription = _resolvedSubscriber?.Subscribe(OnDownResolved);
             _gameOverSubscription = _gameOverSubscriber?.Subscribe(OnGameOver);
             _snappedSubscription = _snappedSubscriber?.Subscribe(OnSnapped);
+            _highlightSubscription = _highlightSubscriber?.Subscribe(OnHighlightPlayback);
         }
 
         private void OnDestroy()
@@ -240,6 +254,7 @@ namespace PoFootball.Views
             _resolvedSubscription?.Dispose();
             _gameOverSubscription?.Dispose();
             _snappedSubscription?.Dispose();
+            _highlightSubscription?.Dispose();
         }
 
         protected override void BuildUi()
@@ -446,7 +461,7 @@ namespace PoFootball.Views
         {
             // Nothing is being called once the game is over, and the final overlay
             // has taken the chip down — see OnGameOver.
-            if (_play == null || _callChip == null || _finalOverlay.IsVisible)
+            if (_play == null || _callChip == null || _gameOver || _finalOverlay.IsVisible)
             {
                 return;
             }
@@ -675,7 +690,8 @@ namespace PoFootball.Views
                 return;
             }
 
-            Systems_IPlayerHandle carrier = _finalOverlay.IsVisible ? null : LiveCarrier();
+            Systems_IPlayerHandle carrier =
+                _gameOver || _finalOverlay.IsVisible ? null : LiveCarrier();
 
             if (carrier == null)
             {
@@ -1023,6 +1039,8 @@ namespace PoFootball.Views
 
         private void OnGameOver(Systems_GameOverMessage message)
         {
+            _gameOver = true;
+
             if (!IsBuilt)
             {
                 return;
@@ -1063,6 +1081,45 @@ namespace PoFootball.Views
             }
 
             _finalOverlay.Show();
+        }
+
+        /// <summary>
+        /// A post-game highlight is on the field, or has just left it.
+        ///
+        /// WHY THE OVERLAY GOES ALL THE WAY DOWN. Its scrim is 92% opaque — right
+        /// for a result screen, and exactly what made the highlights unwatchable
+        /// on the turf underneath it. Hidden, not dimmed: a lighter scrim would
+        /// still lay the box score over the play. The scoreboard stays up, so the
+        /// final score is on screen throughout, and closing the reel (its RESULT
+        /// button, or the last highlight ending) sends IsPlaying = false and puts
+        /// the overlay — with REMATCH and MENU — straight back.
+        ///
+        /// Both directions are refused before the final whistle, so nothing a
+        /// message can say will ever raise or drop the final overlay mid-game.
+        /// Published every frame while playing; the visibility checks make every
+        /// frame but the first a no-op.
+        /// </summary>
+        private void OnHighlightPlayback(Systems_HighlightPlaybackMessage message)
+        {
+            if (!IsBuilt || !_gameOver || _finalOverlay == null)
+            {
+                return;
+            }
+
+            if (message.IsPlaying)
+            {
+                if (_finalOverlay.IsVisible)
+                {
+                    _finalOverlay.Hide();
+                }
+
+                return;
+            }
+
+            if (!_finalOverlay.IsVisible)
+            {
+                _finalOverlay.Show();
+            }
         }
     }
 }

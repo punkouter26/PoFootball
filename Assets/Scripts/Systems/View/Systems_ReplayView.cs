@@ -57,15 +57,27 @@ namespace PoFootball.Views
     ///
     /// THE UI IS ITS OWN DOCUMENT, above Systems_HudView's and below the status
     /// HUD's, so neither of those is edited: a REPLAY tag in the bottom-left while
-    /// a replay runs, and the highlight reel docked under the final card at the
-    /// whistle (Systems_HighlightReel explains the docking).
+    /// a replay runs, and the highlight reel docked at the bottom at the whistle
+    /// (Systems_HighlightReel explains the docking).
+    ///
+    /// THE HIGHLIGHTS PLAY ON THE FIELD, WITH THE SAME GHOSTS. After the final
+    /// whistle nothing else uses them — the instant replay is stopped for good at
+    /// OnGameOver — so the reel borrows them outright: while it is open this view
+    /// shows the ghosts, poses them from the reel's cursor every frame, and
+    /// publishes Systems_HighlightPlaybackMessage with the ghost ball's position.
+    /// Systems_HudView takes the final overlay down on that, so the field can be
+    /// seen, and Systems_BroadcastCameraView frames the ghost ball rather than
+    /// the real one lying at the last play's spot. When the reel closes, or this
+    /// view is disabled or destroyed, the ghosts hand back to the real bodies and
+    /// one IsPlaying = false goes out, which brings the overlay back. Nothing here
+    /// touches the overlay or the camera itself: views do not reach into views.
     /// </summary>
     [DefaultExecutionOrder(100)]
     public sealed class Systems_ReplayView : Systems_ScreenView, Systems_IInjectableView
     {
         /// <summary>
-        /// Above Systems_HudView (0), below Systems_StatusHudView (300). The reel has to draw over the final scrim;
-        /// the five-corner chrome has to draw over the reel.
+        /// Above Systems_HudView (0), below Systems_StatusHudView (300). The reel's button has to draw over the
+        /// final scrim; the five-corner chrome has to draw over the reel.
         /// </summary>
         private const float PANEL_SORT_ORDER = 200f;
 
@@ -110,6 +122,7 @@ namespace PoFootball.Views
         private ISubscriber<Systems_DownResolvedMessage> _resolvedSubscriber;
         private ISubscriber<Systems_PlaySnappedMessage> _snappedSubscriber;
         private ISubscriber<Systems_GameOverMessage> _gameOverSubscriber;
+        private IPublisher<Systems_HighlightPlaybackMessage> _highlightPublisher;
 
         private IDisposable _tackleSubscription;
         private IDisposable _scoreSubscription;
@@ -148,6 +161,23 @@ namespace PoFootball.Views
         private int _replayTicksElapsed;
         private int _replayTicksTotal;
 
+        /// <summary>
+        /// The colours the offense and defense units wore when the current play
+        /// was snapped, handed to a highlight if the play becomes one. Read at the
+        /// snap because by the time a down is resolved Systems_RoleShapeApplier
+        /// may already have repainted the field for the next possession — it
+        /// repaints on the same message this view keeps highlights on.
+        /// </summary>
+        private bool _playHasColors;
+        private Color _playOffenseColor;
+        private Color _playDefenseColor;
+
+        /// <summary>True while the reel's highlight is drawn by the ghosts.</summary>
+        private bool _highlightOnField;
+
+        /// <summary>The highlight the ghosts were last repainted for, so a repaint happens once per highlight.</summary>
+        private Systems_ReplayHighlight _paintedHighlight;
+
         [Inject]
         public void Construct(
             Systems_PresentationBudget budget,
@@ -158,7 +188,8 @@ namespace PoFootball.Views
             ISubscriber<Systems_ScoreMessage> scoreSubscriber,
             ISubscriber<Systems_DownResolvedMessage> resolvedSubscriber,
             ISubscriber<Systems_PlaySnappedMessage> snappedSubscriber,
-            ISubscriber<Systems_GameOverMessage> gameOverSubscriber)
+            ISubscriber<Systems_GameOverMessage> gameOverSubscriber,
+            IPublisher<Systems_HighlightPlaybackMessage> highlightPublisher)
         {
             _budget = budget;
             _play = play;
@@ -169,6 +200,7 @@ namespace PoFootball.Views
             _resolvedSubscriber = resolvedSubscriber;
             _snappedSubscriber = snappedSubscriber;
             _gameOverSubscriber = gameOverSubscriber;
+            _highlightPublisher = highlightPublisher;
         }
 
         protected override void Awake()
@@ -211,6 +243,11 @@ namespace PoFootball.Views
 
             _ghosts = new Systems_ReplayGhosts(_handles, _renderers, _playerCount, _ballRenderer);
 
+            // For the opening play, in case its snap is published before this
+            // subscribes. Systems_RoleShapeApplier (order -100) has painted the
+            // kickoff colours in its own Start by now.
+            _playHasColors = ReadTeamColors(out _playOffenseColor, out _playDefenseColor);
+
             base.Start();
 
             _tackleSubscription = _tackleSubscriber?.Subscribe(OnTackle);
@@ -251,13 +288,30 @@ namespace PoFootball.Views
             }
         }
 
+        /// <summary>
+        /// The reel runs on wall-clock time, so its highlight is posed here rather
+        /// than in LateUpdate's fixed-tick interpolation — and here is also early
+        /// enough that the message reaches Systems_BroadcastCameraView before its
+        /// LateUpdate frames this same frame.
+        /// </summary>
         protected override void Update()
         {
             base.Update();
 
-            if (_reel != null)
+            if (_reel == null)
             {
-                _reel.Tick(Time.unscaledDeltaTime);
+                return;
+            }
+
+            _reel.Tick(Time.unscaledDeltaTime);
+
+            if (_reel.IsOpen)
+            {
+                ShowHighlight();
+            }
+            else
+            {
+                StopHighlight();
             }
         }
 
@@ -267,6 +321,12 @@ namespace PoFootball.Views
         /// </summary>
         private void LateUpdate()
         {
+            if (_highlightOnField)
+            {
+                _ghosts.EnforceHidden();
+                return;
+            }
+
             if (!_replaying)
             {
                 return;
@@ -287,8 +347,16 @@ namespace PoFootball.Views
 
         private void OnDisable()
         {
-            // A disabled view must not leave the real players hidden.
+            // A disabled view must not leave the real players hidden, nor the
+            // final overlay down with nothing on the field to watch.
             StopReplay();
+
+            if (_reel != null)
+            {
+                _reel.Close();
+            }
+
+            StopHighlight();
         }
 
         private void OnDestroy()
@@ -307,6 +375,9 @@ namespace PoFootball.Views
 
             _gameOverSubscription?.Dispose();
             _gameOverSubscription = null;
+
+            // Normally already done by OnDisable; idempotent if so.
+            StopHighlight();
 
             if (_ghosts != null)
             {
@@ -585,6 +656,8 @@ namespace PoFootball.Views
             _bigMoment = false;
             _playPeakClosing = 0f;
             _playFrames = 0;
+
+            _playHasColors = ReadTeamColors(out _playOffenseColor, out _playDefenseColor);
         }
 
         /// <summary>
@@ -647,7 +720,57 @@ namespace PoFootball.Views
                 return;
             }
 
-            _highlights[target].Fill(_tape, frames, score, message, _play.LineOfScrimmageY);
+            _highlights[target].Fill(
+                _tape, frames, score, message,
+                _playHasColors, _playOffenseColor, _playDefenseColor);
+        }
+
+        /// <summary>
+        /// The base colour of each unit as the field is painted right now: the
+        /// first player on each side who is not carrying, because the carrier is
+        /// under Agent_FootballPlayer's white highlight. False if either side has
+        /// no such player, in which case a highlight keeps the real renderers'
+        /// look. Twenty-two reads, no allocation.
+        /// </summary>
+        private bool ReadTeamColors(out Color offenseColor, out Color defenseColor)
+        {
+            offenseColor = Color.white;
+            defenseColor = Color.white;
+
+            bool foundOffense = false;
+            bool foundDefense = false;
+
+            for (int player = 0; player < _playerCount; player++)
+            {
+                Systems_IPlayerHandle handle = _handles[player];
+                SpriteRenderer renderer = _renderers[player];
+
+                if (handle == null || renderer == null || handle.IsCarrier)
+                {
+                    continue;
+                }
+
+                if (handle.Side == Systems_TeamSide.Offense)
+                {
+                    if (!foundOffense)
+                    {
+                        offenseColor = renderer.color;
+                        foundOffense = true;
+                    }
+                }
+                else if (!foundDefense)
+                {
+                    defenseColor = renderer.color;
+                    foundDefense = true;
+                }
+
+                if (foundOffense && foundDefense)
+                {
+                    return true;
+                }
+            }
+
+            return false;
         }
 
         /// <summary>See Systems_ReplayHighlight for what this adds up and why.</summary>
@@ -721,7 +844,7 @@ namespace PoFootball.Views
                 ordered[scan + 1] = current;
             }
 
-            _reel = new Systems_HighlightReel(ordered, count, BuildBoard());
+            _reel = new Systems_HighlightReel(ordered, count);
 
             // Under the replay tag, which is hidden by now anyway.
             _layer.Insert(0, _reel.Root);
@@ -729,56 +852,77 @@ namespace PoFootball.Views
         }
 
         /// <summary>
-        /// The board's tokens are the players' current sprites at their true size:
-        /// the sprite's own bounds times the body's scale, in metres.
+        /// One frame of the open reel on the field: take over from the real bodies
+        /// the first time, repaint for the highlight's possession when the
+        /// highlight changes, pose at the reel's cursor, and tell the HUD and the
+        /// camera where the ghost ball is. Allocates nothing per frame.
         /// </summary>
-        private Systems_ReplayBoard BuildBoard()
+        private void ShowHighlight()
         {
-            Sprite[] sprites = new Sprite[_playerCount];
-            Vector2[] sizes = new Vector2[_playerCount];
-            Systems_TeamSide[] sides = new Systems_TeamSide[_playerCount];
-
-            for (int player = 0; player < _playerCount; player++)
+            if (_ghosts == null)
             {
-                SpriteRenderer renderer = _renderers[player];
-                sides[player] = _handles[player].Side;
+                return;
+            }
 
-                if (renderer == null)
+            Systems_ReplayHighlight highlight = _reel.Current;
+
+            if (!_highlightOnField)
+            {
+                _ghosts.Show();
+                _highlightOnField = true;
+                _paintedHighlight = null;
+            }
+
+            if (highlight != _paintedHighlight)
+            {
+                _paintedHighlight = highlight;
+
+                if (highlight.HasTeamColors)
                 {
-                    sizes[player] = Vector2.one;
-                    continue;
+                    _ghosts.PaintSides(highlight.OffenseColor, highlight.DefenseColor);
                 }
-
-                sprites[player] = renderer.sprite;
-                sizes[player] = WorldSizeOf(renderer);
             }
 
-            Sprite ballSprite = null;
-            Vector2 ballSize = Vector2.one * 0.5f;
-            float ballAngle = 0f;
+            float cursor = _reel.Cursor;
+            _ghosts.Pose(highlight.Tape, cursor);
 
-            if (_ballRenderer != null)
+            // The plane position, not the drawn one: the ghost ball is lifted up
+            // the screen by its height, and the camera frames the real ball by
+            // Systems_BallModel.Position, which is not.
+            highlight.Tape.SampleBall(cursor, out Vector2 focus, out float _);
+
+            if (_highlightPublisher != null)
             {
-                ballSprite = _ballRenderer.sprite;
-                ballSize = WorldSizeOf(_ballRenderer);
-                ballAngle = _ballRenderer.transform.eulerAngles.z;
+                _highlightPublisher.Publish(new Systems_HighlightPlaybackMessage(true, focus));
             }
-
-            return new Systems_ReplayBoard(
-                sprites, sizes, sides, _playerCount, ballSprite, ballSize, ballAngle);
         }
 
-        private static Vector2 WorldSizeOf(SpriteRenderer renderer)
+        /// <summary>
+        /// Every way a highlight leaves the field comes through here: the reel
+        /// closing, OnDisable and OnDestroy. Publishes the one IsPlaying = false,
+        /// and only on the edge, so the final overlay is not re-shown every frame
+        /// the reel sits closed. Idempotent.
+        /// </summary>
+        private void StopHighlight()
         {
-            Vector3 scale = renderer.transform.lossyScale;
-
-            if (renderer.sprite == null)
+            if (!_highlightOnField)
             {
-                return new Vector2(Mathf.Abs(scale.x), Mathf.Abs(scale.y));
+                return;
             }
 
-            Vector3 bounds = renderer.sprite.bounds.size;
-            return new Vector2(Mathf.Abs(bounds.x * scale.x), Mathf.Abs(bounds.y * scale.y));
+            _highlightOnField = false;
+            _paintedHighlight = null;
+
+            if (_ghosts != null)
+            {
+                _ghosts.Hide();
+            }
+
+            if (_highlightPublisher != null)
+            {
+                _highlightPublisher.Publish(
+                    new Systems_HighlightPlaybackMessage(false, Vector2.zero));
+            }
         }
     }
 }

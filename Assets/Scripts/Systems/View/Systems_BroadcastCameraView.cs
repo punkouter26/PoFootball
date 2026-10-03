@@ -47,6 +47,14 @@ namespace PoFootball.Views
     ///
     /// All three are suppressed at the snap and after the whistle, and the ball is
     /// held inside the frame whatever they ask for (<see cref="KeepBallInFrame"/>).
+    ///
+    /// AFTER THE GAME, IT FOLLOWS THE HIGHLIGHT. The post-game reel replays a
+    /// play with stand-in renderers while the real ball lies where the last play
+    /// ended, so a shot on the real ball would show an empty patch of turf. While
+    /// Systems_HighlightPlaybackMessage says a highlight is playing, the ghost
+    /// ball it carries is framed in the real ball's place (<see cref="FrameHighlight"/>);
+    /// when it says the highlight has stopped, the live shot resumes. The reel
+    /// never touches the camera — this is still its only writer.
     /// </summary>
     [DefaultExecutionOrder(-40)]
     [RequireComponent(typeof(Camera))]
@@ -252,10 +260,30 @@ namespace PoFootball.Views
         /// </summary>
         private const float BALL_FRAME_MARGIN = 2.5f;
 
+        /// <summary>
+        /// Where between the tight and the wide shot a post-game highlight is
+        /// framed. Fixed rather than driven by Openness: that is measured from the
+        /// live line of scrimmage, which after the final whistle belongs to a down
+        /// that will never be played, not to the play being shown. Halfway holds a
+        /// formation whole at the snap and still keeps a breaking run in frame.
+        /// </summary>
+        private const float HIGHLIGHT_OPENNESS = 0.5f;
+
+        /// <summary>
+        /// A jump of the highlight focus larger than this between two frames, in
+        /// metres, is a cut — a new highlight selected, or the scrubber dragged —
+        /// and the shot goes straight there, as it does at a snap. The fastest
+        /// pass in the game covers well under a metre in a 60 Hz frame, so no
+        /// real motion of the ghost ball reaches it.
+        /// </summary>
+        private const float HIGHLIGHT_CUT_DISTANCE = 10f;
+
         private ISubscriber<Systems_PlaySnappedMessage> _snappedSubscriber;
         private ISubscriber<Systems_PassThrownMessage> _thrownSubscriber;
+        private ISubscriber<Systems_HighlightPlaybackMessage> _highlightSubscriber;
         private IDisposable _snappedSubscription;
         private IDisposable _thrownSubscription;
+        private IDisposable _highlightSubscription;
 
         private Systems_BallModel _ball;
         private Systems_PlayModel _play;
@@ -279,6 +307,12 @@ namespace PoFootball.Views
         private Vector2 _nearestThreat;
         private bool _hasNearestThreat;
 
+        // The post-game highlight, as last published. While _highlightPlaying the
+        // shot frames _highlightFocus — the ghost ball — instead of the real one.
+        private bool _highlightPlaying;
+        private bool _highlightCut;
+        private Vector2 _highlightFocus;
+
         [Inject]
         public void Construct(
             Systems_BallModel ball,
@@ -286,7 +320,8 @@ namespace PoFootball.Views
             Systems_PlayerRegistry registry,
             Systems_PresentationBudget budget,
             ISubscriber<Systems_PlaySnappedMessage> snappedSubscriber,
-            ISubscriber<Systems_PassThrownMessage> thrownSubscriber)
+            ISubscriber<Systems_PassThrownMessage> thrownSubscriber,
+            ISubscriber<Systems_HighlightPlaybackMessage> highlightSubscriber)
         {
             _ball = ball;
             _play = play;
@@ -294,6 +329,7 @@ namespace PoFootball.Views
             _budget = budget;
             _snappedSubscriber = snappedSubscriber;
             _thrownSubscriber = thrownSubscriber;
+            _highlightSubscriber = highlightSubscriber;
         }
 
         private void Awake()
@@ -313,12 +349,14 @@ namespace PoFootball.Views
 
             _snappedSubscription = _snappedSubscriber?.Subscribe(OnSnapped);
             _thrownSubscription = _thrownSubscriber?.Subscribe(OnPassThrown);
+            _highlightSubscription = _highlightSubscriber?.Subscribe(OnHighlightPlayback);
         }
 
         private void OnDestroy()
         {
             _snappedSubscription?.Dispose();
             _thrownSubscription?.Dispose();
+            _highlightSubscription?.Dispose();
         }
 
         /// <summary>
@@ -327,7 +365,11 @@ namespace PoFootball.Views
         /// </summary>
         private void LateUpdate()
         {
-            float deltaTime = Time.deltaTime;
+            if (_highlightPlaying)
+            {
+                FrameHighlight(Time.deltaTime);
+                return;
+            }
 
             Systems_IPlayerHandle carrier = LiveCarrier();
             float openness = Openness();
@@ -337,6 +379,17 @@ namespace PoFootball.Views
             Vector2 target = FramingTarget(carrier, openness);
             float targetSize = FramingSize(target, openness);
 
+            MoveShot(target, targetSize, Time.deltaTime);
+        }
+
+        /// <summary>
+        /// Eases the shot toward a target and a size, and holds it on the field.
+        /// The one place the camera's transform and size are written outside a
+        /// cut, shared by the live shot and the highlight shot so the two cannot
+        /// drift into different damping.
+        /// </summary>
+        private void MoveShot(Vector2 target, float targetSize, float deltaTime)
+        {
             // Exponential smoothing rather than Lerp with a raw t. Lerp against
             // deltaTime is frame-rate dependent, and this game runs at 60 in the
             // editor and whatever the build gets.
@@ -352,6 +405,48 @@ namespace PoFootball.Views
             eased = ClampToField(eased, _camera.orthographicSize);
 
             _transform.position = new Vector3(eased.x, eased.y, _homeZ);
+        }
+
+        /// <summary>
+        /// The shot while a post-game highlight is on the field: plain ball-follow
+        /// on the ghost ball — the live shot with no carrier, no threats and no
+        /// pass target, because those are all read off the real bodies, which are
+        /// standing where the last play left them — at a fixed mid zoom (see
+        /// HIGHLIGHT_OPENNESS). Same lead, same lateral tracking, same
+        /// KeepBallInFrame and ClampToField as the live shot.
+        ///
+        /// A CUT ON THE FIRST FRAME, AND ON ANY JUMP. The ghost ball can be sixty
+        /// yards from where the camera is resting, and easing across that would
+        /// spend the opening second of the highlight — the snap — on a pan. The
+        /// shot jumps instead, exactly as OnSnapped does between plays, and eases
+        /// from there; the same happens when the next highlight starts or the
+        /// scrubber is dragged a long way (HIGHLIGHT_CUT_DISTANCE).
+        /// </summary>
+        private void FrameHighlight(float deltaTime)
+        {
+            float targetSize = Mathf.Lerp(TightSize(), WideSize(), HIGHLIGHT_OPENNESS);
+            Vector2 focus = _highlightFocus;
+
+            if (_highlightCut)
+            {
+                _highlightCut = false;
+                _camera.orthographicSize = targetSize;
+
+                Vector2 spot = ClampToField(HighlightTarget(focus, targetSize), targetSize);
+                _transform.position = new Vector3(spot.x, spot.y, _homeZ);
+                return;
+            }
+
+            MoveShot(HighlightTarget(focus, _camera.orthographicSize), targetSize, deltaTime);
+        }
+
+        /// <summary>The live shot's no-carrier framing, fed the ghost ball.</summary>
+        private Vector2 HighlightTarget(Vector2 focus, float size)
+        {
+            Vector2 target = new Vector2(
+                focus.x * _lateralTracking, focus.y + (size * DOWNFIELD_LEAD));
+
+            return KeepBallInFrame(target, focus, size);
         }
 
         /// <summary>
@@ -633,6 +728,32 @@ namespace PoFootball.Views
             position.x = limitX <= 0f ? 0f : Mathf.Clamp(position.x, -limitX, limitX);
 
             return position;
+        }
+
+        /// <summary>
+        /// Only records what the reel said; the shot is moved in LateUpdate. The
+        /// reel publishes from its Update, so this frame's focus is in hand before
+        /// this frame's LateUpdate frames it.
+        /// </summary>
+        private void OnHighlightPlayback(Systems_HighlightPlaybackMessage message)
+        {
+            if (!message.IsPlaying)
+            {
+                _highlightPlaying = false;
+                _highlightCut = false;
+                return;
+            }
+
+            bool jumped = (message.Focus - _highlightFocus).sqrMagnitude
+                > HIGHLIGHT_CUT_DISTANCE * HIGHLIGHT_CUT_DISTANCE;
+
+            if (!_highlightPlaying || jumped)
+            {
+                _highlightCut = true;
+            }
+
+            _highlightPlaying = true;
+            _highlightFocus = message.Focus;
         }
 
         private void OnPassThrown(Systems_PassThrownMessage message)

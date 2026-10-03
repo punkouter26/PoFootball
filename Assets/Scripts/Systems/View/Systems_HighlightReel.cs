@@ -5,29 +5,41 @@ using UnityEngine.UIElements;
 namespace PoFootball.Views
 {
     /// <summary>
-    /// The post-game highlight player: which highlight, a board to watch it on,
-    /// a scrubber over its ticks, and play, pause and single-tick steps.
+    /// The post-game highlight player's controls: which highlight, a scrubber over
+    /// its ticks, play, pause and single-tick steps, and a way back to the result.
+    /// The highlight itself is drawn ON THE FIELD by Systems_ReplayView's ghosts;
+    /// this class only decides what is showing and where the cursor is, and the
+    /// owner reads <see cref="IsOpen"/>, <see cref="Current"/> and
+    /// <see cref="Cursor"/> every frame to pose them.
     ///
-    /// DOCKED UNDER THE FINAL CARD, NOT INSIDE IT. Systems_HudView owns the final
-    /// overlay and centres its content — headline, box score, REMATCH, MENU — in
-    /// the full height of the screen. This reel is a separate layer in a separate
-    /// document drawn above it, so it has to stay out of that column by
-    /// arithmetic rather than by layout: it fills the space from
-    /// <see cref="FINAL_OVERLAY_HALF_HEIGHT"/> below the screen's centre down to
-    /// the status footer, and the board gives up height first when that space is
-    /// short. On a 1080x1920 panel that is about five hundred units, which the
-    /// whole reel fits at full size; a taller handset only adds slack above it.
+    /// WHY THE FIELD AND NOT A BOARD IN THE CARD. This used to draw the play on a
+    /// telestrator board inside its own card (Systems_ReplayBoard), because the
+    /// final overlay's 92% scrim hid the turf and the broadcast camera was framing
+    /// the real ball, parked where the last play ended. Both of those are now
+    /// answered by Systems_HighlightPlaybackMessage: the HUD drops the overlay
+    /// while a highlight is open and the camera frames the ghost ball. The field
+    /// is the better screen by a distance — the real shapes at the real scale,
+    /// lit and shadowed — and a board the size of a card was always a compromise
+    /// forced by the scrim, not a choice.
     ///
-    /// FINAL_OVERLAY_HALF_HEIGHT IS A COUPLING, STATED HERE SO IT IS FOUND. It is
-    /// half the height of the final overlay's centred column, measured off
-    /// Systems_HudView and Systems_BoxScoreCard as they stand: the 58-unit
-    /// headline, a nine-row card at caption size, two 96-unit buttons and their
-    /// margins come to about 720, so the MENU button ends ~345 below centre and
-    /// 380 leaves a gap. Add a row to the box score and this must grow with it,
-    /// or the reel's top edge slides under MENU.
+    /// TWO STATES, AND THE RESULT SCREEN IS HOME. At the final whistle the reel
+    /// shows only a WATCH HIGHLIGHTS button under the final card; the result, the
+    /// box score, REMATCH and MENU are what a viewer sees first. Opening it swaps
+    /// the button for the control card and the field takes the screen. RESULT
+    /// closes it, and so does the last highlight finishing — each highlight plays
+    /// through, holds its whistle frame for <see cref="END_HOLD_SECONDS"/>, and
+    /// hands on to the next. Closing is what brings the final overlay back, so
+    /// REMATCH and MENU are always one tap away.
     ///
-    /// NOTHING HERE STEALS A TAP. The overlay, its content and the dock that holds
-    /// the card are all PickingMode.Ignore; only the card itself is pickable. The
+    /// DOCKED AT THE BOTTOM, AND COMPACT, so the field above it is the picture.
+    /// The card is a header, a scrubber and one row of transport, about 230 panel
+    /// units — an eighth of a 1080x1920 panel and less of a 20:9 one. It needs no
+    /// knowledge of the final card's height any more: when the card is open the
+    /// final overlay is down, and the closed state is a single 56-unit button,
+    /// which sits about 470 units under MENU on the shortest portrait panel.
+    ///
+    /// NOTHING HERE STEALS A TAP. The overlay, its content and the dock are all
+    /// PickingMode.Ignore; only the button and the card are pickable. The
     /// document sits above Systems_HudView's, so a pickable full-screen container
     /// here would silently kill REMATCH and MENU — the exact failure
     /// Systems_ScreenView's picking note describes.
@@ -39,13 +51,6 @@ namespace PoFootball.Views
     /// </summary>
     internal sealed class Systems_HighlightReel
     {
-        /// <summary>See the class note. Half the final overlay's centred column, plus a gap.</summary>
-        private const int FINAL_OVERLAY_HALF_HEIGHT = 380;
-
-        /// <summary>The board's height when there is room for it, and the least it gives up to.</summary>
-        private const float BOARD_MAX_HEIGHT = 300f;
-        private const float BOARD_MIN_HEIGHT = 120f;
-
         /// <summary>
         /// Width every transport control is held to, so PLAY and PAUSE do not
         /// resize the row when they swap. Sized for "PAUSE" at TEXT_BODY in the
@@ -56,11 +61,20 @@ namespace PoFootball.Views
         /// <summary>Recorded ticks per second of playback: real time.</summary>
         private const float TICKS_PER_SECOND = 1f / Systems_GameRules.SECONDS_PER_TICK;
 
+        /// <summary>
+        /// Wall-clock seconds a finished highlight rests on its last frame before
+        /// the next one starts. The last frame is the whistle — the tackle, the
+        /// ball over the line — and cutting away on it shows the play without its
+        /// ending.
+        /// </summary>
+        private const float END_HOLD_SECONDS = 1f;
+
         private readonly Systems_ReplayHighlight[] _highlights;
         private readonly int _count;
-        private readonly Systems_ReplayBoard _board;
         private readonly Systems_UiOverlay _overlay;
 
+        private VisualElement _openRow;
+        private VisualElement _card;
         private Label _indexLabel;
         private Label _detailLabel;
         private Slider _slider;
@@ -68,25 +82,36 @@ namespace PoFootball.Views
 
         private int _index;
         private float _cursor;
+        private float _held;
         private bool _playing;
 
         /// <param name="highlights">Filled highlights, best first.</param>
-        public Systems_HighlightReel(
-            Systems_ReplayHighlight[] highlights, int count, Systems_ReplayBoard board)
+        public Systems_HighlightReel(Systems_ReplayHighlight[] highlights, int count)
         {
             _highlights = highlights;
             _count = count;
-            _board = board;
 
             _overlay = new Systems_UiOverlay(
                 "HighlightReel", blocksInput: false, scrim: Color.clear);
 
             _overlay.Content.pickingMode = PickingMode.Ignore;
             _overlay.Content.Add(BuildDock());
+
+            SetOpen(false);
         }
 
         public VisualElement Root => _overlay.Root;
 
+        /// <summary>True while the control card is up and a highlight belongs on the field — playing, paused or scrubbed.</summary>
+        public bool IsOpen { get; private set; }
+
+        /// <summary>The highlight on the field. Only meaningful while <see cref="IsOpen"/>.</summary>
+        public Systems_ReplayHighlight Current => _highlights[_index];
+
+        /// <summary>Where in <see cref="Current"/> the field should be drawn, in recorded ticks.</summary>
+        public float Cursor => _cursor;
+
+        /// <summary>Puts the WATCH HIGHLIGHTS button up. Nothing plays until it is pressed.</summary>
         public void Show()
         {
             if (_count == 0)
@@ -94,81 +119,120 @@ namespace PoFootball.Views
                 return;
             }
 
-            Select(0);
             _overlay.Show();
+        }
+
+        /// <summary>
+        /// Back to the result screen. Called by RESULT, by the last highlight
+        /// finishing, and by the owner when it is disabled. Idempotent.
+        /// </summary>
+        public void Close()
+        {
+            if (!IsOpen)
+            {
+                return;
+            }
+
+            SetOpen(false);
         }
 
         /// <summary>Advances playback. Called from the owning view's Update with unscaled time.</summary>
         public void Tick(float unscaledDeltaTime)
         {
-            if (!_playing || _count == 0)
+            if (!IsOpen || !_playing || _count == 0)
             {
                 return;
             }
 
             float last = LastFrame();
-            _cursor += unscaledDeltaTime * TICKS_PER_SECOND;
 
-            if (_cursor >= last)
+            if (_cursor < last)
             {
-                _cursor = last;
-                SetPlaying(false);
+                _cursor = Mathf.Min(_cursor + (unscaledDeltaTime * TICKS_PER_SECOND), last);
+                _slider.SetValueWithoutNotify(_cursor);
+                return;
             }
 
-            _slider.SetValueWithoutNotify(_cursor);
-            _board.Pose(_cursor);
+            _held += unscaledDeltaTime;
+
+            if (_held < END_HOLD_SECONDS)
+            {
+                return;
+            }
+
+            if (_index + 1 < _count)
+            {
+                Select(_index + 1);
+            }
+            else
+            {
+                Close();
+            }
         }
 
         // --- Layout -------------------------------------------------------------
 
         private VisualElement BuildDock()
         {
-            // Spans the free strip under the final card. Its top is the screen's
-            // centre plus the card's half height — a percentage and a padding,
-            // because UI Toolkit has no calc() to add them.
             VisualElement dock = Systems_UiTheme.Column();
             dock.style.position = Position.Absolute;
-            dock.style.top = Length.Percent(50f);
             dock.style.bottom = Systems_UiTheme.STATUS_FOOTER_HEIGHT + Systems_UiTheme.SPACE_S;
             dock.style.left = Systems_UiTheme.SPACE_M;
             dock.style.right = Systems_UiTheme.SPACE_M;
-            dock.style.paddingTop = FINAL_OVERLAY_HALF_HEIGHT;
-            dock.style.justifyContent = Justify.FlexEnd;
             dock.pickingMode = PickingMode.Ignore;
 
+            dock.Add(BuildOpenRow());
             dock.Add(BuildCard());
             return dock;
         }
 
-        private VisualElement BuildCard()
+        /// <summary>
+        /// The closed state: one button, centred, at chip height. Quieter than the
+        /// final card's REMATCH and MENU on purpose — the result is the headline of
+        /// that screen and this is an extra.
+        /// </summary>
+        private VisualElement BuildOpenRow()
         {
-            VisualElement card = Systems_UiTheme.Column();
-            card.style.backgroundColor = Systems_UiTheme.SurfaceRaised;
-            card.style.flexShrink = 1f;
-            card.style.minHeight = 0f;
-            Systems_UiTheme.SetPadding(card, Systems_UiTheme.SPACE_M);
-            Systems_UiTheme.SetRadius(card, Systems_UiTheme.RADIUS);
-            Systems_UiTheme.ApplyElevation(card);
+            _openRow = Systems_UiTheme.Row();
+            _openRow.style.justifyContent = Justify.Center;
+            _openRow.pickingMode = PickingMode.Ignore;
 
-            card.Add(BuildHeader());
-
-            VisualElement board = _board.Root;
-            board.style.height = BOARD_MAX_HEIGHT;
-            board.style.minHeight = BOARD_MIN_HEIGHT;
-            board.style.flexShrink = 1f;
-            board.style.marginTop = Systems_UiTheme.SPACE_S;
-            card.Add(board);
-
-            card.Add(BuildScrubber());
-            card.Add(BuildTransport());
-            return card;
+            Button open = Control("WATCH HIGHLIGHTS", Systems_UiTheme.SurfaceRaised, OnOpenPressed);
+            Systems_UiTheme.ApplyElevation(open);
+            _openRow.Add(open);
+            return _openRow;
         }
 
+        private VisualElement BuildCard()
+        {
+            _card = Systems_UiTheme.Column();
+            _card.style.backgroundColor = Systems_UiTheme.SurfaceRaised;
+            Systems_UiTheme.SetPadding(_card, Systems_UiTheme.SPACE_M);
+            Systems_UiTheme.SetRadius(_card, Systems_UiTheme.RADIUS);
+            Systems_UiTheme.ApplyElevation(_card);
+
+            _card.Add(BuildHeader());
+            _card.Add(BuildScrubber());
+            _card.Add(BuildTransport());
+            return _card;
+        }
+
+        /// <summary>
+        /// What the old board's frame used to say, as a caption: which highlight
+        /// of how many, and what happened on it. RESULT on the right, where a
+        /// thumb leaving the transport row finds it without crossing it.
+        /// </summary>
         private VisualElement BuildHeader()
         {
             VisualElement header = Systems_UiTheme.Row();
             header.style.justifyContent = Justify.SpaceBetween;
             header.style.flexShrink = 0f;
+
+            VisualElement caption = Systems_UiTheme.Column();
+            caption.style.flexGrow = 1f;
+            caption.style.flexShrink = 1f;
+            caption.style.minWidth = 0f;
+            caption.pickingMode = PickingMode.Ignore;
 
             _indexLabel = Systems_UiTheme.Caption(string.Empty);
 
@@ -176,8 +240,11 @@ namespace PoFootball.Views
                 string.Empty, Systems_UiTheme.TEXT_BODY,
                 Systems_UiTheme.TextPrimary, FontStyle.Bold);
 
-            header.Add(_indexLabel);
-            header.Add(_detailLabel);
+            caption.Add(_indexLabel);
+            caption.Add(_detailLabel);
+
+            header.Add(caption);
+            header.Add(Control("RESULT", Systems_UiTheme.SurfaceScrim, OnResultPressed));
             return header;
         }
 
@@ -251,8 +318,9 @@ namespace PoFootball.Views
 
         /// <summary>
         /// A transport button at chip height rather than TAP_TARGET: this is a
-        /// row of five under a card on an already-full screen, and the status
-        /// HUD's chips make the same trade at the same height for the same reason.
+        /// row of five on a card that has to leave the field visible, and the
+        /// status HUD's chips make the same trade at the same height for the same
+        /// reason.
         /// </summary>
         private static Button Control(string label, Color tint, System.Action onClick)
         {
@@ -270,7 +338,24 @@ namespace PoFootball.Views
 
         // --- Control --------------------------------------------------------------
 
-        /// <summary>Puts a highlight on the board from its first tick and plays it.</summary>
+        /// <summary>
+        /// Swaps the button for the card or back. Display rather than the
+        /// overlay's fade: the two never share the screen, and a cross-fade
+        /// between them would put both under the thumb for a fifth of a second.
+        /// </summary>
+        private void SetOpen(bool open)
+        {
+            IsOpen = open;
+            _openRow.style.display = open ? DisplayStyle.None : DisplayStyle.Flex;
+            _card.style.display = open ? DisplayStyle.Flex : DisplayStyle.None;
+
+            if (!open)
+            {
+                SetPlaying(false);
+            }
+        }
+
+        /// <summary>Puts a highlight on the field from its first tick and plays it.</summary>
         private void Select(int index)
         {
             _index = index;
@@ -280,6 +365,7 @@ namespace PoFootball.Views
             _slider.highValue = Mathf.Max(1f, highlight.Tape.Count - 1);
 
             _cursor = 0f;
+            _held = 0f;
             _slider.SetValueWithoutNotify(0f);
 
             // Text built only on selection, never per frame.
@@ -288,7 +374,6 @@ namespace PoFootball.Views
                     CaptionResult(highlight), highlight.Outcome)
                 + "   " + Systems_DisplayText.YardageDetail(highlight.YardsGained);
 
-            _board.Show(highlight);
             SetPlaying(true);
         }
 
@@ -316,6 +401,22 @@ namespace PoFootball.Views
             }
         }
 
+        private void OnOpenPressed()
+        {
+            if (_count == 0)
+            {
+                return;
+            }
+
+            SetOpen(true);
+            Select(0);
+        }
+
+        private void OnResultPressed()
+        {
+            Close();
+        }
+
         private void OnPrevious()
         {
             Select((_index + _count - 1) % _count);
@@ -333,9 +434,9 @@ namespace PoFootball.Views
                 // Pressing play on the last frame means "again", not "nothing".
                 _cursor = 0f;
                 _slider.SetValueWithoutNotify(0f);
-                _board.Pose(0f);
             }
 
+            _held = 0f;
             SetPlaying(!_playing);
         }
 
@@ -354,9 +455,9 @@ namespace PoFootball.Views
         {
             SetPlaying(false);
 
+            _held = 0f;
             _cursor = Mathf.Clamp(Mathf.Round(_cursor) + ticks, 0f, LastFrame());
             _slider.SetValueWithoutNotify(_cursor);
-            _board.Pose(_cursor);
         }
 
         /// <summary>A drag on the scrubber takes over from playback.</summary>
@@ -364,8 +465,8 @@ namespace PoFootball.Views
         {
             SetPlaying(false);
 
+            _held = 0f;
             _cursor = Mathf.Clamp(evt.newValue, 0f, LastFrame());
-            _board.Pose(_cursor);
         }
 
         private void SetPlaying(bool playing)
