@@ -421,6 +421,37 @@ namespace PoFootball.Tests
             Assert.That(maxSeparation, Is.LessThan(ceiling));
         }
 
+        /// <summary>
+        /// No shaped term may pay more per tick than the offense's time cost, or
+        /// the player earning it is paid to make the play last. The block term did
+        /// exactly that at 0.00025 against a 0.0002 time cost.
+        /// </summary>
+        [Test]
+        public void NoShapedOffensiveTerm_OutpaysTheTimeCost()
+        {
+            float timeCostPerTick =
+                -Systems_SimConstants.TIME_COST_PER_DECISION / Systems_SimConstants.DECISION_PERIOD;
+
+            Assert.That(
+                Systems_SimConstants.BLOCK_REWARD_PER_TICK,
+                Is.LessThanOrEqualTo(timeCostPerTick + 1e-9f));
+            Assert.That(
+                Systems_SimConstants.SEPARATION_REWARD_PER_TICK,
+                Is.LessThanOrEqualTo(timeCostPerTick + 1e-9f));
+        }
+
+        /// <summary>
+        /// The ball's flight is not progress. Paying on it made an incomplete
+        /// forty-yard heave worth +0.30 to the offense — more than any run that
+        /// ended in a tackle short of forty yards.
+        /// </summary>
+        [Test]
+        public void APassInTheAir_IsNotPaidAsProgress()
+        {
+            Assert.That(Reward_Progress.CountsAsProgress(Systems_BallState.InFlight), Is.False);
+            Assert.That(Reward_Progress.CountsAsProgress(Systems_BallState.Held), Is.True);
+        }
+
         [Test]
         public void Block_PaysOnlyWhenTheBlockerIsBetweenTheRusherAndTheBall()
         {

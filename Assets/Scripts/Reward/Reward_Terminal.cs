@@ -58,9 +58,9 @@ namespace PoFootball.Rewards
                 case Systems_PlayOutcome.Incompletion:
                     return -Systems_SimConstants.INCOMPLETION_PENALTY;
 
-                // The largest swing in the game. It has to outweigh the dense
-                // yardage a long throw earns on its way to being picked off, or
-                // the offense learns that heaving it downfield is free.
+                // The largest swing in the game short of a score. A throw no longer
+                // earns dense yardage in the air (Reward_Progress.CountsAsProgress),
+                // so a pick costs exactly this and nothing offsets it.
                 case Systems_PlayOutcome.Interception:
                     return -Systems_SimConstants.INTERCEPTION_REWARD;
 

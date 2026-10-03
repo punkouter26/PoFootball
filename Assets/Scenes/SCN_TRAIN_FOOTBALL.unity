@@ -239,7 +239,7 @@ GameObject:
   - component: {fileID: 209590695}
   - component: {fileID: 209590694}
   - component: {fileID: 209590697}
-  m_Layer: 0
+  m_Layer: 8
   m_Name: WR_Z
   m_TagString: Offense
   m_Icon: {fileID: 0}
@@ -485,7 +485,7 @@ GameObject:
   m_Component:
   - component: {fileID: 209661577}
   - component: {fileID: 209661579}
-  m_Layer: 0
+  m_Layer: 9
   m_Name: Wall_West
   m_TagString: Untagged
   m_Icon: {fileID: 0}
@@ -569,7 +569,7 @@ GameObject:
   - component: {fileID: 211979834}
   - component: {fileID: 211979833}
   - component: {fileID: 211979836}
-  m_Layer: 0
+  m_Layer: 8
   m_Name: TE_Y
   m_TagString: Offense
   m_Icon: {fileID: 0}
@@ -821,7 +821,7 @@ GameObject:
   - component: {fileID: 250943504}
   - component: {fileID: 250943503}
   - component: {fileID: 250943506}
-  m_Layer: 0
+  m_Layer: 8
   m_Name: DL_LE
   m_TagString: Defense
   m_Icon: {fileID: 0}
@@ -1073,7 +1073,7 @@ GameObject:
   - component: {fileID: 255429567}
   - component: {fileID: 255429566}
   - component: {fileID: 255429569}
-  m_Layer: 0
+  m_Layer: 8
   m_Name: QB
   m_TagString: Offense
   m_Icon: {fileID: 0}
@@ -1434,7 +1434,7 @@ GameObject:
   - component: {fileID: 373461440}
   - component: {fileID: 373461439}
   - component: {fileID: 373461442}
-  m_Layer: 0
+  m_Layer: 8
   m_Name: S_FS
   m_TagString: Defense
   m_Icon: {fileID: 0}
@@ -1686,7 +1686,7 @@ GameObject:
   - component: {fileID: 385819417}
   - component: {fileID: 385819416}
   - component: {fileID: 385819419}
-  m_Layer: 0
+  m_Layer: 8
   m_Name: CB_L
   m_TagString: Defense
   m_Icon: {fileID: 0}
@@ -1938,7 +1938,7 @@ GameObject:
   - component: {fileID: 403710106}
   - component: {fileID: 403710105}
   - component: {fileID: 403710108}
-  m_Layer: 0
+  m_Layer: 8
   m_Name: OL_RG
   m_TagString: Offense
   m_Icon: {fileID: 0}
@@ -2190,7 +2190,7 @@ GameObject:
   - component: {fileID: 424981334}
   - component: {fileID: 424981333}
   - component: {fileID: 424981336}
-  m_Layer: 0
+  m_Layer: 8
   m_Name: OL_LG
   m_TagString: Offense
   m_Icon: {fileID: 0}
@@ -2720,7 +2720,7 @@ GameObject:
   - component: {fileID: 583981123}
   - component: {fileID: 583981122}
   - component: {fileID: 583981125}
-  m_Layer: 0
+  m_Layer: 8
   m_Name: LB_W
   m_TagString: Defense
   m_Icon: {fileID: 0}
@@ -2972,7 +2972,7 @@ GameObject:
   - component: {fileID: 587571608}
   - component: {fileID: 587571607}
   - component: {fileID: 587571610}
-  m_Layer: 0
+  m_Layer: 8
   m_Name: DL_RT
   m_TagString: Defense
   m_Icon: {fileID: 0}
@@ -3622,7 +3622,7 @@ GameObject:
   m_Component:
   - component: {fileID: 862461043}
   - component: {fileID: 862461045}
-  m_Layer: 0
+  m_Layer: 9
   m_Name: Wall_South
   m_TagString: Untagged
   m_Icon: {fileID: 0}
@@ -4074,7 +4074,7 @@ GameObject:
   - component: {fileID: 1033005610}
   - component: {fileID: 1033005609}
   - component: {fileID: 1033005612}
-  m_Layer: 0
+  m_Layer: 8
   m_Name: LB_S
   m_TagString: Defense
   m_Icon: {fileID: 0}
@@ -4443,7 +4443,7 @@ GameObject:
   - component: {fileID: 1287706352}
   - component: {fileID: 1287706351}
   - component: {fileID: 1287706354}
-  m_Layer: 0
+  m_Layer: 8
   m_Name: WR_X
   m_TagString: Offense
   m_Icon: {fileID: 0}
@@ -4695,7 +4695,7 @@ GameObject:
   - component: {fileID: 1310113878}
   - component: {fileID: 1310113877}
   - component: {fileID: 1310113880}
-  m_Layer: 0
+  m_Layer: 8
   m_Name: DL_LT
   m_TagString: Defense
   m_Icon: {fileID: 0}
@@ -4947,7 +4947,7 @@ GameObject:
   - component: {fileID: 1331384577}
   - component: {fileID: 1331384576}
   - component: {fileID: 1331384579}
-  m_Layer: 0
+  m_Layer: 8
   m_Name: RB
   m_TagString: Offense
   m_Icon: {fileID: 0}
@@ -5199,7 +5199,7 @@ GameObject:
   - component: {fileID: 1335870109}
   - component: {fileID: 1335870108}
   - component: {fileID: 1335870111}
-  m_Layer: 0
+  m_Layer: 8
   m_Name: FB
   m_TagString: Offense
   m_Icon: {fileID: 0}
@@ -5451,7 +5451,7 @@ GameObject:
   - component: {fileID: 1373653274}
   - component: {fileID: 1373653273}
   - component: {fileID: 1373653276}
-  m_Layer: 0
+  m_Layer: 8
   m_Name: S_SS
   m_TagString: Defense
   m_Icon: {fileID: 0}
@@ -5703,7 +5703,7 @@ GameObject:
   - component: {fileID: 1444739691}
   - component: {fileID: 1444739690}
   - component: {fileID: 1444739693}
-  m_Layer: 0
+  m_Layer: 8
   m_Name: CB_R
   m_TagString: Defense
   m_Icon: {fileID: 0}
@@ -5955,7 +5955,7 @@ GameObject:
   - component: {fileID: 1481509221}
   - component: {fileID: 1481509220}
   - component: {fileID: 1481509223}
-  m_Layer: 0
+  m_Layer: 8
   m_Name: OL_RT
   m_TagString: Offense
   m_Icon: {fileID: 0}
@@ -6207,7 +6207,7 @@ GameObject:
   - component: {fileID: 1492318408}
   - component: {fileID: 1492318407}
   - component: {fileID: 1492318410}
-  m_Layer: 0
+  m_Layer: 8
   m_Name: OL_C
   m_TagString: Offense
   m_Icon: {fileID: 0}
@@ -6459,7 +6459,7 @@ GameObject:
   - component: {fileID: 1496386704}
   - component: {fileID: 1496386703}
   - component: {fileID: 1496386706}
-  m_Layer: 0
+  m_Layer: 8
   m_Name: OL_LT
   m_TagString: Offense
   m_Icon: {fileID: 0}
@@ -6705,7 +6705,7 @@ GameObject:
   m_Component:
   - component: {fileID: 1505534081}
   - component: {fileID: 1505534083}
-  m_Layer: 0
+  m_Layer: 9
   m_Name: Wall_East
   m_TagString: Untagged
   m_Icon: {fileID: 0}
@@ -7341,7 +7341,7 @@ GameObject:
   - component: {fileID: 1651290265}
   - component: {fileID: 1651290264}
   - component: {fileID: 1651290267}
-  m_Layer: 0
+  m_Layer: 8
   m_Name: LB_M
   m_TagString: Defense
   m_Icon: {fileID: 0}
@@ -7593,7 +7593,7 @@ GameObject:
   - component: {fileID: 1655138818}
   - component: {fileID: 1655138817}
   - component: {fileID: 1655138820}
-  m_Layer: 0
+  m_Layer: 8
   m_Name: DL_RE
   m_TagString: Defense
   m_Icon: {fileID: 0}
@@ -7839,7 +7839,7 @@ GameObject:
   m_Component:
   - component: {fileID: 1678018808}
   - component: {fileID: 1678018810}
-  m_Layer: 0
+  m_Layer: 9
   m_Name: Wall_North
   m_TagString: Untagged
   m_Icon: {fileID: 0}
@@ -8732,6 +8732,7 @@ GameObject:
   - component: {fileID: 1998844775}
   - component: {fileID: 1998844776}
   - component: {fileID: 1998844777}
+  - component: {fileID: 1998844778}
   m_Layer: 0
   m_Name: Systems
   m_TagString: Untagged
@@ -8798,6 +8799,18 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 1cdd065382aa22949878f488677c4e37, type: 3}
   m_Name: 
   m_EditorClassIdentifier: PoFootball.Agents::PoFootball.Agents.Agent_TeamGroups
+--- !u!114 &1998844778
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1998844773}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: e754d1719a45f3549b9f5d5d1547a8ad, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: PoFootball.Agents::PoFootball.Agents.Agent_Curriculum
 --- !u!1660057539 &9223372036854775807
 SceneRoots:
   m_ObjectHideFlags: 0

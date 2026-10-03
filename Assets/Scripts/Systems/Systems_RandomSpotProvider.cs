@@ -15,14 +15,45 @@ namespace PoFootball.Systems
     ///
     /// If this ever needs to change, that is a new curriculum and it belongs in a
     /// new config with a new run-id — not an edit here.
+    ///
+    /// AND IT IS NOW STAGED, WHICH IS EXACTLY THAT. Config/FootballBase12.yaml
+    /// carries a three-lesson curriculum over the spot_lesson environment
+    /// parameter. The lessons narrow the RANGES the three draws land in; they never
+    /// change how many draws an episode makes, so a given seed still produces one
+    /// fixed sequence of underlying numbers and LESSON_FULL reproduces the
+    /// pre-curriculum distribution call for call. With no lesson source installed —
+    /// any config without the parameter, or a scene without Agent_Curriculum — it
+    /// is LESSON_FULL.
     /// </summary>
     public sealed class Systems_RandomSpotProvider : Systems_ISpotProvider
     {
+        /// <summary>
+        /// Inside the opponent's twenty, first to third down. Short fields end in
+        /// touchdowns, so the terminal reward a policy has to discover is reachable
+        /// from the first thousand plays instead of being a hundred-yard drive away.
+        /// </summary>
+        public const int LESSON_RED_ZONE = 0;
+
+        /// <summary>Anywhere on the field, still no fourth down.</summary>
+        public const int LESSON_OPEN_FIELD = 1;
+
+        /// <summary>Anywhere, any down — the distribution every run before had.</summary>
+        public const int LESSON_FULL = 2;
+
+        private const float RED_ZONE_YARDS = 20f;
+
         private Random _rng;
+
+        private Systems_ISpotLessonSource _lessonSource;
 
         public Systems_RandomSpotProvider()
         {
             _rng = new Random(Systems_EpisodeSeed.Value);
+        }
+
+        public void SetLessonSource(Systems_ISpotLessonSource lessonSource)
+        {
+            _lessonSource = lessonSource;
         }
 
         /// <summary>
@@ -60,10 +91,20 @@ namespace PoFootball.Systems
         /// </summary>
         public Systems_PlaySituation NextSituation()
         {
-            float lineOfScrimmageY =
-                _rng.NextFloat(Systems_FieldModel.LOS_MIN_Y, Systems_FieldModel.LOS_MAX_Y);
+            int lesson = _lessonSource == null ? LESSON_FULL : _lessonSource.CurrentLesson;
 
-            int down = _rng.NextInt(1, Systems_GameRules.DOWNS_PER_SERIES + 1);
+            float minimumY = lesson == LESSON_RED_ZONE
+                ? Systems_FieldModel.ATTACKING_GOAL_LINE_Y - (RED_ZONE_YARDS * Systems_FieldModel.YARD)
+                : Systems_FieldModel.LOS_MIN_Y;
+
+            int lastDown = lesson == LESSON_RED_ZONE || lesson == LESSON_OPEN_FIELD
+                ? Systems_GameRules.DOWNS_PER_SERIES - 1
+                : Systems_GameRules.DOWNS_PER_SERIES;
+
+            // Three draws, always, in this order — see the class note.
+            float lineOfScrimmageY = _rng.NextFloat(minimumY, Systems_FieldModel.LOS_MAX_Y);
+
+            int down = _rng.NextInt(1, lastDown + 1);
             float yardsToGo = _rng.NextFloat(1f, 15f);
 
             return new Systems_PlaySituation(lineOfScrimmageY, down, yardsToGo);

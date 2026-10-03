@@ -683,6 +683,15 @@ namespace PoFootball.Models
         /// of what it was, so a forty-yard heave earns 0.4 rather than 2.0 and 0.6
         /// still comfortably outweighs it. Left at 1.0 it would simply have been
         /// the new reason never to throw.
+        ///
+        /// THE HEAVE NO LONGER EARNS ANYTHING IN THE AIR. Agent_FootballPlayer used
+        /// to pay yardage on the ball's Y every tick of its flight, so an
+        /// INCOMPLETE forty-yard throw netted +0.30 (0.40 - INCOMPLETION_PENALTY)
+        /// while an eight-yard run that ended in a tackle netted -0.42. That was
+        /// unreachable until revision 9 let a pass miss, and then it was the best
+        /// play in the book. Flight is now paid on the catch, so this number no
+        /// longer has anything to outweigh; it stays at 0.6 because it is still the
+        /// right price of a turnover against TOUCHDOWN_REWARD.
         /// </summary>
         public const float INTERCEPTION_REWARD = 0.6f;
 
@@ -780,8 +789,15 @@ namespace PoFootball.Models
         /// a touchdown is smeared evenly over everyone on the field. These terms
         /// are small relative to the terminal rewards on purpose: they shape which
         /// behaviour is explored, they do not decide who wins the play.
+        ///
+        /// WAS 0.00025, WHICH PAID A LINEMAN TO STALL. The offense's time cost is
+        /// TIME_COST_PER_DECISION / DECISION_PERIOD = 0.0002 a tick, so a perfectly
+        /// aligned block netted +0.00005 a tick and a guard was better off the
+        /// longer the play went on — the one shaped term that rewarded the clock
+        /// rather than the ball. At 0.0002 a perfect block exactly cancels the time
+        /// cost and a beaten one still pays it. Reward_Tests pins this ceiling.
         /// </summary>
-        public const float BLOCK_REWARD_PER_TICK = 0.00025f;
+        public const float BLOCK_REWARD_PER_TICK = 0.0002f;
 
         /// <summary>Metres inside which a lineman counts as engaged with a rusher.</summary>
         public const float BLOCK_ENGAGE_RANGE = 2.5f;
@@ -806,8 +822,7 @@ namespace PoFootball.Models
         /// <summary>Minimum centre-to-centre separation at spawn (criterion #12).</summary>
         public const float MIN_SPAWN_SEPARATION = 1.2f;
 
-        // --- Observations ----------------------------------------------------
-        /// <summary>Metres used to normalize relative position observations to [-1, 1].</summary>
+        // --- Passing ---------------------------------------------------------
         /// <summary>
         /// How much of the quarterback's RAW aim survives into the flight
         /// direction, against the perfectly-led direction ResolveThrowTarget
@@ -836,7 +851,7 @@ namespace PoFootball.Models
         /// beyond WHICH receiver they selected: precision was discarded, so there
         /// was nothing to learn about throwing.
         ///
-        /// 0.35 keeps revision 5's premise — the aim answers "which of my
+        /// A small slack keeps revision 5's premise — the aim answers "which of my
         /// receivers", not "solve a continuous control problem" — while making the
         /// answer cost something when it is sloppy. A quarterback pointing squarely
         /// at its man still throws nearly perfectly; one pointing vaguely between
@@ -845,6 +860,8 @@ namespace PoFootball.Models
         /// </summary>
         public const float PASS_AIM_SLACK = 0.15f;
 
+        // --- Observations ----------------------------------------------------
+        /// <summary>Metres used to normalize relative position observations to [-1, 1].</summary>
         public const float OBSERVATION_RANGE = 40f;
 
         /// <summary>Agent decisions per second is 50 / this (criterion #15).</summary>

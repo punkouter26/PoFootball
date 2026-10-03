@@ -28,16 +28,35 @@ script cannot itself drift from the contract it is guarding:
     OBSERVATION_SIZE, PLAY_CALL_BRANCH_SIZE   Assets/Scripts/Sensor/Sensor_FootballState.cs
     continuous action counts, THROW_BRANCH_SIZE  Assets/Scripts/Agent/Agent_ActionContract.cs
     behavior names, which one carries the QB actions  Assets/Scripts/Systems/Model/Systems_RoleTable.cs
-    ray sensor observation width               Assets/Scenes/SCN_TRAIN_FOOTBALL.unity
+    ray sensor observation width               Assets/Scripts/Sensor/Sensor_RayContract.cs
+                                               (the scene until revision 10)
+
+TWO GATES ON THE RUN ITSELF, NOT JUST ITS SHAPES
+------------------------------------------------
+A brain can fit the contract and still have learned the wrong game:
+
+    Control/SpeedClampRate   read from the run's TensorBoard events. The
+                             pileup-explosion guard should essentially never fire;
+                             a policy that trips it has learned to exploit a solver
+                             blow-up, and is refused above SPEED_CLAMP_CEILING.
+    REALISM                  --check-realism, AFTER promotion: three games played
+                             with the promoted brains by Unity's
+                             Tools > PoFootball > Evaluate Realism (3 games), judged
+                             against the real-football bands CLAUDE.md gives, and
+                             recorded in the version's MANIFEST.md.
 
 Usage
 -----
-    .venv/Scripts/python.exe Tools/promote_brain.py --run football_base04 \
-        --version 02 --num-envs 4
+    .venv/Scripts/python.exe Tools/promote_brain.py --run football_base12 \
+        --version 01 --num-envs 4
 
     # check without writing anything
-    .venv/Scripts/python.exe Tools/promote_brain.py --run football_base04 \
-        --version 02 --num-envs 4 --dry-run
+    .venv/Scripts/python.exe Tools/promote_brain.py --run football_base12 \
+        --version 01 --num-envs 4 --dry-run
+
+    # after Build Brain Table and Evaluate Realism in Unity
+    .venv/Scripts/python.exe Tools/promote_brain.py --version 01 \
+        --check-realism results/realism/realism-<stamp>.json
 
 The .onnx is overwritten IN PLACE so the .meta GUID survives and every scene
 reference keeps pointing at it (UNITY_RULES §4).
@@ -65,11 +84,28 @@ except ImportError:  # pragma: no cover - environment problem, not a logic path
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
 SENSOR_CS = REPO_ROOT / "Assets/Scripts/Sensor/Sensor_FootballState.cs"
+RAY_CS = REPO_ROOT / "Assets/Scripts/Sensor/Sensor_RayContract.cs"
 ACTION_CS = REPO_ROOT / "Assets/Scripts/Agent/Agent_ActionContract.cs"
 ROLE_TABLE_CS = REPO_ROOT / "Assets/Scripts/Systems/Model/Systems_RoleTable.cs"
-TRAIN_SCENE = REPO_ROOT / "Assets/Scenes/SCN_TRAIN_FOOTBALL.unity"
 RESULTS_DIR = REPO_ROOT / "results"
 AGENTS_DIR = REPO_ROOT / "Assets/Agents"
+
+# Fraction of physics ticks on which Agent_FootballPlayer.ClampSpeed may fire,
+# averaged over the last SPEED_CLAMP_WINDOW summaries of every behavior. The guard
+# sits above the fastest role's terminal velocity, so an honest policy reads ~0.
+SPEED_CLAMP_TAG = "Control/SpeedClampRate"
+SPEED_CLAMP_CEILING = 0.001
+SPEED_CLAMP_WINDOW = 5
+
+# Three-game means against CLAUDE.md's references. Yards per play is 5.5 +/- 1.0:
+# single games on one config were measured from 4.48 to 7.37, so a three-game
+# mean wanders by roughly half a yard on its own. Touchdowns per drive is the
+# 0.20-0.35 reference widened by 0.05 each side for the same reason.
+REALISM_BANDS = {
+    "yards_per_play": (4.5, 6.5),
+    "touchdowns_per_drive": (0.15, 0.40),
+}
+REALISM_MIN_GAMES = 3
 
 
 class ContractError(RuntimeError):
@@ -126,23 +162,16 @@ def read_quarterback_behavior() -> str:
 
 def read_ray_observation_size() -> int:
     """
-    Width of the RayPerceptionSensor2D observation, computed from the scene.
+    Width of the RayPerceptionSensor2D observation, from Sensor_RayContract.
 
     ML-Agents emits (2 * raysPerDirection + 1) rays, each contributing one float
-    per detectable tag plus a nothing-hit flag and a hit fraction. It is authored
-    in the scene rather than in code, so a component tweak silently resizes every
-    policy's input — the same class of bug this whole script exists for.
+    per detectable tag plus a nothing-hit flag and a hit fraction. Until revision
+    10 this was read out of SCN_TRAIN_FOOTBALL's YAML, because the scene authored
+    it; Agent_FootballPlayer now applies the contract over whatever the scene says,
+    so the code is the authority and the scene values are dead.
     """
-    text = TRAIN_SCENE.read_text(encoding="utf-8", errors="replace")
-
-    block = re.search(
-        r"m_DetectableTags:(.*?)m_RaysPerDirection:\s*(\d+)", text, re.DOTALL
-    )
-    if not block:
-        raise ContractError("no RayPerceptionSensor2D found in the training scene")
-
-    tag_count = len(re.findall(r"^\s*-\s+\S+", block.group(1), re.MULTILINE))
-    rays_per_direction = int(block.group(2))
+    rays_per_direction = _read_int_const(RAY_CS, "RAYS_PER_DIRECTION")
+    tag_count = _read_int_const(RAY_CS, "DETECTABLE_TAG_COUNT")
 
     return (2 * rays_per_direction + 1) * (tag_count + 2)
 
@@ -312,6 +341,118 @@ def latest_checkpoint(run_dir: Path, behavior: str) -> Path:
     return checkpoints[-1]
 
 
+def speed_clamp_rate(run_dir: Path, behavior: str) -> float:
+    """
+    Mean Control/SpeedClampRate over the behavior's last SPEED_CLAMP_WINDOW summaries.
+
+    Raises ContractError when the series cannot be read, rather than passing:
+    a gate that waves through whatever it cannot see is not a gate.
+    """
+    try:
+        from tensorboard.backend.event_processing.event_accumulator import (
+            EventAccumulator,
+        )
+    except ImportError as error:
+        raise ContractError(
+            "tensorboard is not importable in this interpreter; it is in "
+            "requirements.txt"
+        ) from error
+
+    behavior_dir = run_dir / behavior
+    if not any(behavior_dir.glob("events.out.tfevents.*")):
+        raise ContractError(f"no TensorBoard events in {behavior_dir}")
+
+    accumulator = EventAccumulator(str(behavior_dir), size_guidance={"scalars": 0})
+    accumulator.Reload()
+
+    if SPEED_CLAMP_TAG not in accumulator.Tags().get("scalars", []):
+        raise ContractError(
+            f"{SPEED_CLAMP_TAG} was never written for {behavior}; the run predates "
+            "the control-effort KPIs or ran without Agent_FootballPlayer"
+        )
+
+    values = [event.value for event in accumulator.Scalars(SPEED_CLAMP_TAG)]
+    window = values[-SPEED_CLAMP_WINDOW:]
+    return sum(window) / len(window)
+
+
+def check_realism(report_path: Path, target_dir: Path | None) -> int:
+    """
+    Judges a results/realism/*.json written by Unity's Evaluate Realism tool.
+
+    Only the mean of at least REALISM_MIN_GAMES games is judged: CLAUDE.md records
+    single games on one config ranging from 4.48 to 7.37 yards a play, so a single
+    game says nothing. When --version is given the verdict is appended to that
+    version's MANIFEST.md, so the record of whether a promoted brain plays football
+    travels with the brain.
+    """
+    import json
+
+    report = json.loads(report_path.read_text(encoding="utf-8"))
+    games = report.get("games", [])
+
+    if len(games) < REALISM_MIN_GAMES:
+        print(f"FAILED: {len(games)} games in {report_path.name}; need {REALISM_MIN_GAMES}")
+        return 2
+
+    means = {
+        key: sum(game[key] for game in games) / len(games)
+        for key in ("yards_per_play", "touchdowns_per_drive", "fourth_downs")
+    }
+
+    verdict_lines = []
+    failed = False
+
+    for key, (low, high) in REALISM_BANDS.items():
+        value = means[key]
+        inside = low <= value <= high
+        failed |= not inside
+        verdict_lines.append(
+            f"- {key.replace('_', ' ')}: **{value:.2f}** "
+            f"(band {low:.2f}-{high:.2f}) {'ok' if inside else 'OUT OF BAND'}"
+        )
+
+    verdict_lines.append(f"- fourth downs per game: **{means['fourth_downs']:.1f}** (reported, not judged)")
+
+    print(f"Realism over {len(games)} games "
+          f"(contract revision {report.get('contract_revision', '?')}):")
+
+    if not report.get("brains_loaded", False):
+        print("  NOTE: no brain table matched the contract when these games were "
+              "played, so this judged the HEURISTIC, not a trained brain.")
+    for line in verdict_lines:
+        print("  " + line[2:].replace("**", ""))
+
+    if target_dir is not None:
+        manifest = target_dir / "MANIFEST.md"
+        if not manifest.exists():
+            print(f"FAILED: no MANIFEST.md in {target_dir}")
+            return 2
+
+        section = [
+            "",
+            "## Realism",
+            "",
+            f"Judged {datetime.date.today().isoformat()} from "
+            f"`{report_path.relative_to(REPO_ROOT).as_posix() if report_path.is_relative_to(REPO_ROOT) else report_path.name}`, "
+            f"{len(games)} games: **{'FAILED' if failed else 'PASSED'}**",
+            "",
+            *verdict_lines,
+            "",
+        ]
+        with manifest.open("a", encoding="utf-8") as handle:
+            handle.write("\n".join(section))
+        print(f"  appended to {manifest.relative_to(REPO_ROOT).as_posix()}")
+
+    if failed:
+        print("REALISM FAILED: the game these players produced is not football. "
+              "Do not ship a brain that fails this.")
+        return 1
+
+    print("REALISM PASSED.")
+    return 0
+
+
 def git_commit() -> str:
     try:
         return subprocess.check_output(
@@ -355,9 +496,11 @@ def write_manifest(
         f"- Run id: `{run}`",
         f"- `--num-envs`: **{num_envs}** — changes how experience is batched; runs "
         "with different values are not comparable",
-        "- Judge on `Self-play/ELO`, `Call/Entropy` and the `Play/*` and `Pass/*` "
-        "rates. Mean reward is zero-sum here and stays near 0 however strong the "
-        "policies get (UNITY_RULES §4).",
+        "- Judge on `Call/Entropy` and the `Play/*` and `Pass/*` rates — self-play "
+        "is not running, so there is no `Self-play/ELO` — then on the REALISM "
+        "section below (`--check-realism`). Mean reward is zero-sum and stays near 0 "
+        "however strong the policies get (UNITY_RULES §4).",
+        f"- `{SPEED_CLAMP_TAG}` was at most {SPEED_CLAMP_CEILING} for every brain.",
         "",
         "## Files",
         "",
@@ -450,7 +593,16 @@ def main() -> int:
         "--verify", action="store_true",
         help="audit the brains already in Assets/Agents/ against the current contract",
     )
+    parser.add_argument(
+        "--check-realism", type=Path, metavar="REPORT",
+        help="judge a results/realism/*.json from Unity's Evaluate Realism tool; "
+             "with --version, record the verdict in that version's MANIFEST.md",
+    )
     args = parser.parse_args()
+
+    if args.check_realism is not None:
+        target = AGENTS_DIR / f"{args.name}_v{args.version}" if args.version else None
+        return check_realism(args.check_realism.resolve(), target)
 
     try:
         contract = expected_contract()
@@ -496,6 +648,17 @@ def main() -> int:
 
         problems = validate(behavior, source, contract)
         sources[behavior] = source
+
+        try:
+            clamp_rate = speed_clamp_rate(run_dir, behavior)
+            if clamp_rate > SPEED_CLAMP_CEILING:
+                problems.append(
+                    f"{SPEED_CLAMP_TAG} {clamp_rate:.4f} > {SPEED_CLAMP_CEILING} over the "
+                    f"last {SPEED_CLAMP_WINDOW} summaries: the policy is blowing contacts "
+                    "apart, so it was fitted against dynamics the game does not have"
+                )
+        except ContractError as error:
+            problems.append(str(error))
 
         if problems:
             failures[behavior] = problems

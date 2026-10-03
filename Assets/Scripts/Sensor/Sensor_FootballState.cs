@@ -6,8 +6,9 @@ namespace PoFootball.Sensors
 {
     /// <summary>
     /// The hand-built half of an agent's observation. The other half is the
-    /// RayPerceptionSensor2D component, which covers nearby bodies; this covers
-    /// self, ball and field geometry.
+    /// RayPerceptionSensor2D component, which covers nearby bodies and whose
+    /// geometry is fixed by Sensor_RayContract; this covers self, ball and field
+    /// geometry.
     ///
     /// Every value written here is already in [-1, 1]. That is load-bearing rather
     /// than cosmetic: the trainer config sets network_settings.normalize: false,
@@ -30,15 +31,16 @@ namespace PoFootball.Sensors
         /// <summary>
         /// Number of real play calls, excluding None. Width of the call one-hot.
         ///
-        /// Went 4 -> 6 when Punt and FieldGoal were added, which is why
-        /// OBSERVATION_SIZE went 32 -> 34: the one-hot is written straight into the
+        /// Went 4 -> 6 when Punt and FieldGoal were added in revision 6, which is
+        /// two of the four floats OBSERVATION_SIZE grew by (32 -> 36; down and
+        /// distance are the other two): the one-hot is written straight into the
         /// observation vector, so every extra call is another float every agent
         /// reads. Both numbers are checked by Tools/promote_brain.py.
         /// </summary>
         public const int PLAY_CALL_SLOTS = 6;
 
         /// <summary>
-        /// Size of the quarterback's play-call discrete branch: the four real calls
+        /// Size of the quarterback's play-call discrete branch: the six real calls
         /// plus index 0, which means "I have not called anything yet".
         ///
         /// That extra slot is the whole point. The branch used to be four wide and
@@ -102,15 +104,29 @@ namespace PoFootball.Sensors
             buffer[cursor++] = field.NormalizeX(position.x);
             buffer[cursor++] = field.NormalizeY(position.y);
 
-            // Own velocity relative to this role's top speed: 2
-            float topSpeed = Systems_RoleTable.TopSpeedOf(role);
-            buffer[cursor++] = Mathf.Clamp(velocity.x / topSpeed, -1f, 1f);
-            buffer[cursor++] = Mathf.Clamp(velocity.y / topSpeed, -1f, 1f);
-
-            // Facing as cos/sin so it is continuous across the 0/360 wrap: 2
+            // Facing, needed both for the velocity frame below and as cos/sin so it
+            // is continuous across the 0/360 wrap.
             float rotationRadians = rotationDegrees * Mathf.Deg2Rad;
-            buffer[cursor++] = Mathf.Cos(rotationRadians);
-            buffer[cursor++] = Mathf.Sin(rotationRadians);
+            float cos = Mathf.Cos(rotationRadians);
+            float sin = Mathf.Sin(rotationRadians);
+
+            // Own velocity relative to this role's top speed, IN THE BODY'S OWN
+            // FRAME: sideways, then forward along transform.up. 2
+            //
+            // World frame through revision 9. The rays are body-frame and the
+            // actions are body-frame (drive along up, steer about z), so a world-frame
+            // velocity was the one input the network had to rotate through the facing
+            // before it meant anything about its own controls — "am I sliding
+            // sideways" was a function of four inputs rather than one.
+            float topSpeed = Systems_RoleTable.TopSpeedOf(role);
+            float sideways = (velocity.x * cos) + (velocity.y * sin);
+            float forward = (-velocity.x * sin) + (velocity.y * cos);
+            buffer[cursor++] = Mathf.Clamp(sideways / topSpeed, -1f, 1f);
+            buffer[cursor++] = Mathf.Clamp(forward / topSpeed, -1f, 1f);
+
+            // Facing: 2
+            buffer[cursor++] = cos;
+            buffer[cursor++] = sin;
 
             // Fatigue and possession: 2
             buffer[cursor++] = Mathf.Clamp01(fatigue);

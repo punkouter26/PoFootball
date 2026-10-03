@@ -17,8 +17,8 @@ namespace PoFootball.Models
     public sealed class Systems_PlayModel
     {
         /// <summary>
-        /// Physics ticks a play may run before it is declared TimeExpired — 330
-        /// ticks = 6.6 s at the pinned 50 Hz.
+        /// Physics ticks a play may run before it is declared TimeExpired — 600
+        /// ticks = 12 s at the pinned 50 Hz.
         ///
         /// CUT FROM 750 (15 s), BUT NOT AS FAR AS 330. A fifteen-second down is not
         /// football — real snaps live four to seven seconds — and the cap was doing
@@ -42,7 +42,7 @@ namespace PoFootball.Models
         ///
         /// 600 ticks is 12 s: a real trim from 750 that still lets an honest play
         /// finish. Getting plays to actually END is tackling's job.
-        /// </summary>
+        ///
         /// IT IS NO LONGER THE THING THAT ENDS ORDINARY DOWNS. Systems_Referee now
         /// whistles a play dead when the CARRIER STOPS — under STALL_SPEED for
         /// STALL_TICKS — instead of when a timer runs out, so a runner nobody has
@@ -73,10 +73,16 @@ namespace PoFootball.Models
         /// that no longer prefers scoring, in a project whose whole purpose is to
         /// learn football. Anyone raising it must move time_horizon in every config
         /// and re-balance Reward_Role in the same commit.
+        /// </summary>
         public const int MAX_PHYSICS_TICKS = 600;
 
-        /// <summary>Agent decisions per play at DecisionPeriod = 5 (750 / 5).</summary>
-        public const int MAX_DECISIONS = MAX_PHYSICS_TICKS / 5;
+        /// <summary>
+        /// Agent decisions per play: 120 at DECISION_PERIOD 5. Derived rather than
+        /// typed, so a change to the decision period moves it and
+        /// Systems_ContractTests then flags every config whose time_horizon no
+        /// longer spans a play.
+        /// </summary>
+        public const int MAX_DECISIONS = MAX_PHYSICS_TICKS / Systems_SimConstants.DECISION_PERIOD;
 
         public Systems_PlayPhase Phase { get; private set; } = Systems_PlayPhase.PreSnap;
 

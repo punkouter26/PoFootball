@@ -34,5 +34,21 @@ namespace PoFootball.Rewards
 
             return -progress;
         }
+
+        /// <summary>
+        /// Whether ball movement on this tick counts as progress at all.
+        ///
+        /// NOT WHILE A PASS IS IN THE AIR. The ball's Y is mirrored every tick of
+        /// its flight, so paying on it handed the offense up to half a touchdown
+        /// for a throw that then fell incomplete: a forty-yard miss netted +0.30
+        /// against -0.42 for an eight-yard run that ended in a tackle. The caller
+        /// holds its baseline at the release point instead, so a catch is paid
+        /// the whole air distance on the tick it is made, and a miss or a pick —
+        /// both of which end the play on the spot — is paid nothing.
+        /// </summary>
+        public static bool CountsAsProgress(Systems_BallState ballState)
+        {
+            return ballState != Systems_BallState.InFlight;
+        }
     }
 }

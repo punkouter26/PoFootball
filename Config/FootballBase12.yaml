@@ -1,0 +1,164 @@
+# PoFootball -- the first config against CONTRACT_REVISION 10.
+#
+# Pairs 1:1 with run-id `football_base12` (UNITY_RULES section 1).
+#
+# Launch (CUDA_VISIBLE_DEVICES=-1 is MANDATORY on this machine -- see CLAUDE.md):
+#   $env:CUDA_VISIBLE_DEVICES = "-1"
+#   mlagents-learn Config/FootballBase12.yaml --run-id=football_base12 `
+#     --env=Builds/FootballEnv/PoFootball.exe --no-graphics `
+#     --base-port=5400 --num-envs=4
+#
+# REBUILD Builds/FootballEnv FIRST (Tools > PoFootball > Build Training Env).
+# Revision 10 changed the ray observation's shape, so a stale env IS refused by
+# the handshake this time -- but revisions 8 and 9 were not, so make it a habit.
+#
+# WHY THIS IS A NEW RUN-ID AND NOT football_long01 CONTINUED
+# ---------------------------------------------------------------------------
+# long01 is fitted against revision 8 and must never load. Revision 9 gave the
+# quarterback's aim precision an effect (passes can now miss) and no run was ever
+# made against it. Revision 10 batches four contract changes with it, all listed
+# in Agent_ActionContract: rear-facing rays (52 -> 84 ray floats), body-frame own
+# velocity, and masks that pin every play-call decision which cannot latch and
+# every throw that HandleQuarterback would refuse.
+#
+# THE REWARD MOVED IN THE SAME COMMIT, which on its own would force a new run-id:
+#   - Flight yardage is paid on the catch, not in the air. An incomplete forty-yard
+#     heave used to net the offense +0.30 against -0.42 for an eight-yard run that
+#     ended in a tackle -- unreachable until revision 9 let a pass miss.
+#   - BLOCK_REWARD_PER_TICK 0.00025 -> 0.0002, so a block no longer outpays the
+#     offense's time cost and no lineman is paid to make a play last.
+#   - No pursuit reward while the ball is in the air.
+#
+# WHAT IS CARRIED OVER FROM FootballLong01.yaml, WHICH MEASURED IT
+# ---------------------------------------------------------------------------
+# batch 512 / buffer 10240 for Offense and Defense (four times the updates per
+# sample; rl_optimization_log.md E3), summary_freq 50000 (~40 plays a window;
+# E4), and --num-envs=4 (257.7 / 255.1 / 236.3 steps/s at 2 / 4 / 12 envs -- the
+# trainer is the bottleneck). Everything else is FootballBase11 unchanged.
+#
+# WHAT IS NEW
+# ---------------------------------------------------------------------------
+# 1. The QUARTERBACK gets its own batch and buffer. It collects one agent's
+#    experience per env against Offense's ten, so on the shared 10240 buffer its
+#    800k-step budget bought 78 policy updates in the entire run -- 39 on Base11's
+#    20480. At batch 256 / buffer 2048 it gets 390, in the same ratio of buffer to
+#    batch as everyone else.
+#
+# 2. A three-lesson CURRICULUM on spot_lesson (Systems_RandomSpotProvider, fed by
+#    Agent_Curriculum): red zone and downs 1-3 for the first 10% of Offense's
+#    steps, the whole field without fourth down until 30%, then the full
+#    distribution every earlier run used. Advanced on PROGRESS rather than on a
+#    reward threshold, because no run against this reward exists to pick a
+#    threshold from, and a guessed one either never fires or fires at once.
+#
+# WALL CLOCK: 8M Offense steps at the measured ~255 steps/s is about nine hours.
+#
+# JUDGING IT: self-play is not running (every behavior has one team id), so there
+# is no ELO. Watch Call/Entropy with Tools/watch_entropy.py, the Pass/* and Play/*
+# rates, Control/SpeedClampRate (should be ~0; promote_brain.py refuses otherwise),
+# and finally the REALISM line over three games (Tools/promote_brain.py --realism).
+#
+# AFTER IT FINISHES:
+#   .venv\Scripts\python.exe Tools\promote_brain.py --run football_base12 `
+#     --version 01 --num-envs 4
+#   then Unity: Tools > PoFootball > Build Brain Table
+
+behaviors:
+  # MA-POCA for the two ten- and eleven-man groups; see FootballBase11.yaml for
+  # why, and Systems_BrainGroup for why there are three behaviours, not six.
+  Offense: &football_brain
+    trainer_type: poca
+
+    hyperparameters:
+      batch_size: 512
+      buffer_size: 10240
+      learning_rate: 3.0e-4
+      beta: 5.0e-3
+      epsilon: 0.2
+      lambd: 0.95
+      num_epoch: 3
+      learning_rate_schedule: constant
+      beta_schedule: constant
+      epsilon_schedule: constant
+
+    network_settings:
+      normalize: false            # Sensor_FootballState emits [-1, 1] already;
+                                  # Systems_ContractTests asserts this stays off.
+      hidden_units: 256
+      num_layers: 2
+      vis_encode_type: simple
+
+    reward_signals:
+      extrinsic:
+        gamma: 0.99
+        strength: 1.0
+
+    keep_checkpoints: 20
+    checkpoint_interval: 100000
+    max_steps: 8000000
+
+    # One whole play: MAX_PHYSICS_TICKS 600 / DECISION_PERIOD 5. Pinned by
+    # Systems_ContractTests.
+    time_horizon: 120
+
+    summary_freq: 50000
+    threaded: false               # deterministic ordering (UNITY_RULES section 2)
+
+  Defense:
+    <<: *football_brain
+
+  Quarterback:
+    <<: *football_brain
+    trainer_type: ppo
+    max_steps: 800000
+    hyperparameters:
+      batch_size: 256
+      buffer_size: 2048
+      learning_rate: 3.0e-4
+      beta: 5.0e-2                # ten times the movement brains; see Base11
+      epsilon: 0.2
+      lambd: 0.95
+      num_epoch: 3
+      learning_rate_schedule: constant
+      beta_schedule: constant
+      epsilon_schedule: constant
+
+environment_parameters:
+  spot_lesson:
+    curriculum:
+      - name: RedZone
+        completion_criteria:
+          measure: progress
+          behavior: Offense
+          signal_smoothing: false
+          min_lesson_length: 0
+          threshold: 0.1
+        value: 0.0
+      - name: OpenFieldEarlyDowns
+        completion_criteria:
+          measure: progress
+          behavior: Offense
+          signal_smoothing: false
+          min_lesson_length: 0
+          threshold: 0.3
+        value: 1.0
+      - name: FullGame
+        value: 2.0
+
+env_settings:
+  # --env, --num-envs and --base-port go on the command line (see the header).
+  # Record --num-envs in the run's MANIFEST.md; promote_brain.py does it for you.
+  seed: 1
+
+engine_settings:
+  time_scale: 20                  # physics stays at dt=0.02; this only speeds the clock
+  quality_level: 0
+  target_frame_rate: -1
+  capture_frame_rate: 60
+
+torch_settings:
+  device: cpu                     # Not sufficient alone: launch with
+                                  # CUDA_VISIBLE_DEVICES=-1 (see CLAUDE.md).
+
+checkpoint_settings:
+  results_dir: results

@@ -80,6 +80,82 @@ namespace PoFootball.Tests
             }
         }
 
+        private sealed class FixedLesson : Systems_ISpotLessonSource
+        {
+            public FixedLesson(int lesson)
+            {
+                CurrentLesson = lesson;
+            }
+
+            public int CurrentLesson { get; }
+        }
+
+        /// <summary>
+        /// The full lesson is the pre-curriculum distribution exactly. An installed
+        /// source that says LESSON_FULL must change nothing, value for value.
+        /// </summary>
+        [Test]
+        public void TheFullLesson_ReproducesTheUnstagedDraw()
+        {
+            Systems_EpisodeSeed.Set(20260810u);
+            Systems_RandomSpotProvider staged = new Systems_RandomSpotProvider();
+            staged.SetLessonSource(new FixedLesson(Systems_RandomSpotProvider.LESSON_FULL));
+
+            Systems_EpisodeSeed.Set(20260810u);
+            Systems_RandomSpotProvider unstaged = new Systems_RandomSpotProvider();
+
+            for (int episode = 0; episode < 250; episode++)
+            {
+                Systems_PlaySituation expected = unstaged.NextSituation();
+                Systems_PlaySituation actual = staged.NextSituation();
+
+                Assert.That(actual.LineOfScrimmageY, Is.EqualTo(expected.LineOfScrimmageY));
+                Assert.That(actual.Down, Is.EqualTo(expected.Down));
+                Assert.That(actual.YardsToGo, Is.EqualTo(expected.YardsToGo));
+            }
+        }
+
+        [Test]
+        public void TheRedZoneLesson_SnapsInsideTheTwentyOnEarlyDowns()
+        {
+            Systems_EpisodeSeed.Set(7u);
+            Systems_RandomSpotProvider provider = new Systems_RandomSpotProvider();
+            provider.SetLessonSource(new FixedLesson(Systems_RandomSpotProvider.LESSON_RED_ZONE));
+
+            float twenty = Systems_FieldModel.ATTACKING_GOAL_LINE_Y - (20f * Systems_FieldModel.YARD);
+
+            for (int episode = 0; episode < 500; episode++)
+            {
+                Systems_PlaySituation situation = provider.NextSituation();
+
+                Assert.That(situation.LineOfScrimmageY, Is.GreaterThanOrEqualTo(twenty));
+                Assert.That(situation.LineOfScrimmageY, Is.LessThanOrEqualTo(Systems_FieldModel.LOS_MAX_Y));
+                Assert.That(situation.Down, Is.InRange(1, Systems_GameRules.DOWNS_PER_SERIES - 1));
+            }
+        }
+
+        [Test]
+        public void TheOpenFieldLesson_UsesTheWholeFieldButNoFourthDown()
+        {
+            Systems_EpisodeSeed.Set(7u);
+            Systems_RandomSpotProvider provider = new Systems_RandomSpotProvider();
+            provider.SetLessonSource(new FixedLesson(Systems_RandomSpotProvider.LESSON_OPEN_FIELD));
+
+            float lowest = float.MaxValue;
+
+            for (int episode = 0; episode < 500; episode++)
+            {
+                Systems_PlaySituation situation = provider.NextSituation();
+                lowest = UnityEngine.Mathf.Min(lowest, situation.LineOfScrimmageY);
+
+                Assert.That(situation.Down, Is.InRange(1, Systems_GameRules.DOWNS_PER_SERIES - 1));
+            }
+
+            Assert.That(
+                lowest, Is.LessThan(0f),
+                "500 open-field snaps never reached the offense's own half");
+        }
+
         [Test]
         public void EpisodeSeed_RejectsZeroBecauseTheGeneratorDoes()
         {

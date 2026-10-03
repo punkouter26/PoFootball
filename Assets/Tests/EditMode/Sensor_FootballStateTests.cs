@@ -40,6 +40,54 @@ namespace PoFootball.Tests
         }
 
         /// <summary>
+        /// Revision 10: own velocity is in the body's frame, sideways then forward.
+        /// A player facing +X (rotation -90, so transform.up is +X) running along +X
+        /// is moving straight forward, whatever the world axes say.
+        /// </summary>
+        [TestCase(0f, 0f, 1f, 0f, 1f)]
+        [TestCase(-90f, 1f, 0f, 0f, 1f)]
+        [TestCase(0f, 1f, 0f, 1f, 0f)]
+        [TestCase(180f, 0f, 1f, 0f, -1f)]
+        public void OwnVelocity_IsReadInTheBodysFrame(
+            float rotationDegrees, float worldX, float worldY,
+            float expectedSideways, float expectedForward)
+        {
+            Systems_PlayerRole role = Systems_PlayerRole.WideReceiver;
+            float topSpeed = Systems_RoleTable.TopSpeedOf(role);
+
+            float[] observation = Collect(
+                role, Vector2.zero, new Vector2(worldX, worldY) * topSpeed, rotationDegrees,
+                0f, false, Vector2.zero, Vector2.zero, 0f);
+
+            int velocityStart = Systems_RoleTable.ROLE_COUNT + 2;
+
+            Assert.That(observation[velocityStart], Is.EqualTo(expectedSideways).Within(1e-4f), "sideways");
+            Assert.That(observation[velocityStart + 1], Is.EqualTo(expectedForward).Within(1e-4f), "forward");
+        }
+
+        /// <summary>
+        /// The ray contract the promotion gate reads: 2N + 1 rays of (tags + 2).
+        /// And the two layers it masks to have to exist, or Sensor_RayContract.Apply
+        /// silently keeps the scene's old mask.
+        /// </summary>
+        [Test]
+        public void TheRayContract_IsConsistentAndItsLayersExist()
+        {
+            Assert.That(
+                Sensor_RayContract.RAY_OBSERVATION_SIZE,
+                Is.EqualTo(((2 * Sensor_RayContract.RAYS_PER_DIRECTION) + 1)
+                    * (Sensor_RayContract.DETECTABLE_TAG_COUNT + 2)));
+
+            Assert.That(Sensor_RayContract.MAX_RAY_DEGREES, Is.LessThan(180f),
+                "a ray at 180 duplicates its mirror image directly behind the body");
+
+            Assert.That(LayerMask.NameToLayer(Sensor_RayContract.PLAYER_LAYER), Is.GreaterThanOrEqualTo(0),
+                "no Player layer in Project Settings > Tags and Layers");
+            Assert.That(LayerMask.NameToLayer(Sensor_RayContract.BOUNDARY_LAYER), Is.GreaterThanOrEqualTo(0),
+                "no Boundary layer in Project Settings > Tags and Layers");
+        }
+
+        /// <summary>
         /// The quarterback commits to a call and every team-mate is told. Leaking
         /// it to the defense would let coverage cheat, and the whole point of a
         /// pre-snap read is that the other side has to guess.

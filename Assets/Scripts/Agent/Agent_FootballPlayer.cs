@@ -17,7 +17,7 @@ namespace PoFootball.Agents
     /// slot index, so the scene carries one number per player instead of five
     /// fields that can disagree with each other.
     ///
-    /// There are no per-position subclasses. The six brain groups differ only by
+    /// There are no per-position subclasses. The three brain groups differ only by
     /// which policy they are bound to and which action space they carry, both of
     /// which are data. If a position ever needs genuinely different code, that is
     /// the point to introduce one.
@@ -93,6 +93,9 @@ namespace PoFootball.Agents
 
         /// <summary>The other branch: hold the ball, or release it.</summary>
         private const int THROW_BRANCH = 1;
+
+        /// <summary>Index on the throw branch that means "release".</summary>
+        private const int THROW_RELEASE = 1;
 
         // --- Heuristic play-call thresholds ----------------------------------
         //
@@ -462,6 +465,28 @@ namespace PoFootball.Agents
             // Heuristic instead, which is a playable game. See Agent_BrainTable.
             behaviorParameters.Model = Agent_BrainRegistry.ModelFor(group);
 
+            // The rays, for the same reason as everything above: the scene used to
+            // author them and the promotion gate used to read them back out of the
+            // scene file. See Sensor_RayContract. Called from Awake, so before the
+            // Agent builds its sensors in OnEnable — RaysPerDirection is fixed then.
+            RayPerceptionSensorComponent2D[] rays =
+                GetComponentsInChildren<RayPerceptionSensorComponent2D>(true);
+
+            for (int rayIndex = 0; rayIndex < rays.Length; rayIndex++)
+            {
+                Sensor_RayContract.Apply(rays[rayIndex]);
+            }
+
+            // On its own layer, so the rays and the collision matrix can name the
+            // players rather than "everything". Set here rather than trusted from
+            // the scene for the same reason as the rays.
+            int playerLayer = LayerMask.NameToLayer(Sensor_RayContract.PLAYER_LAYER);
+
+            if (playerLayer >= 0)
+            {
+                gameObject.layer = playerLayer;
+            }
+
             DecisionRequester decisionRequester = GetComponent<DecisionRequester>();
             decisionRequester.DecisionPeriod = Systems_SimConstants.DECISION_PERIOD;
             decisionRequester.TakeActionsBetweenDecisions = true;
@@ -515,6 +540,21 @@ namespace PoFootball.Agents
         ///
         /// Only the quarterback has this branch; every other brain is continuous-only
         /// and never reaches here.
+        ///
+        /// REVISION 10 MASKS EVERY DECISION THAT CANNOT MATTER, NOT ONLY THE KICKS.
+        ///
+        /// The call branch is read on exactly one decision per play — the one whose
+        /// actions reach DROPBACK_TICKS — and ignored on every other. Leaving it free
+        /// everywhere meant ~119 of a play's 120 call samples were noise that PPO
+        /// still credited with the play's advantage. Outside the latch window it is
+        /// now pinned to None, so those samples have probability 1 and carry no
+        /// gradient; inside it None is masked, so the call cannot be deferred past
+        /// the dropback by choosing "nothing yet". None stays the decode of a zeroed
+        /// buffer either way — a mask changes what is sampled, not what is stored.
+        ///
+        /// The throw trigger is enabled only when HandleQuarterback would honour it,
+        /// through the same predicate (CanReleasePass), so a policy no longer spends
+        /// exploration on throws that are silently refused.
         /// </summary>
         public override void WriteDiscreteActionMask(IDiscreteActionMask actionMask)
         {
@@ -523,15 +563,65 @@ namespace PoFootball.Agents
                 return;
             }
 
-            bool isFourthDown = _play.Down >= Systems_GameRules.DOWNS_PER_SERIES;
+            if (!IsInCallLatchWindow())
+            {
+                for (int callIndex = 1; callIndex < Sensor_FootballState.PLAY_CALL_BRANCH_SIZE; callIndex++)
+                {
+                    actionMask.SetActionEnabled(PLAY_CALL_BRANCH, callIndex, false);
+                }
+            }
+            else
+            {
+                bool isFourthDown = _play.Down >= Systems_GameRules.DOWNS_PER_SERIES;
 
-            actionMask.SetActionEnabled(
-                PLAY_CALL_BRANCH, (int)Systems_PlayCall.Punt, isFourthDown);
+                actionMask.SetActionEnabled(
+                    PLAY_CALL_BRANCH, (int)Systems_PlayCall.None, false);
 
-            actionMask.SetActionEnabled(
-                PLAY_CALL_BRANCH,
-                (int)Systems_PlayCall.FieldGoal,
-                isFourthDown && IsInFieldGoalRange());
+                actionMask.SetActionEnabled(
+                    PLAY_CALL_BRANCH, (int)Systems_PlayCall.Punt, isFourthDown);
+
+                actionMask.SetActionEnabled(
+                    PLAY_CALL_BRANCH,
+                    (int)Systems_PlayCall.FieldGoal,
+                    isFourthDown && IsInFieldGoalRange());
+            }
+
+            actionMask.SetActionEnabled(THROW_BRANCH, THROW_RELEASE, CanReleasePass());
+        }
+
+        /// <summary>
+        /// Whether a decision taken now can be the one that latches the call: no call
+        /// yet, and its actions will still be applied on or after DROPBACK_TICKS.
+        ///
+        /// Two decision periods of margin rather than one, because the referee's
+        /// tick counter and the Academy's step are not guaranteed to advance in a
+        /// fixed order within a FixedUpdate. Erring early costs one extra unpinned
+        /// sample; erring late would pin the latching decision to None and push the
+        /// call a whole decision past the dropback.
+        /// </summary>
+        private bool IsInCallLatchWindow()
+        {
+            return !_play.CallIsLatched
+                && _play.PhysicsTick + (2 * Systems_SimConstants.DECISION_PERIOD)
+                    > Systems_SimConstants.DROPBACK_TICKS;
+        }
+
+        /// <summary>
+        /// Every condition under which a pass may leave the quarterback's hand. The
+        /// one authority for both the throw mask and HandleQuarterback, so the two
+        /// cannot disagree about what is legal.
+        /// </summary>
+        private bool CanReleasePass()
+        {
+            return _play.Call == Systems_PlayCall.Pass
+                && _isCarrier
+                && _ball != null
+                && _ball.IsHeld
+                && _play.PhysicsTick <= Systems_SimConstants.THROW_WINDOW_TICKS
+                // A FORWARD PASS MUST BE THROWN FROM BEHIND THE LINE OF SCRIMMAGE.
+                // Past it the quarterback has tucked it and is a runner, which is
+                // what a real one does; there is no penalty system to flag it.
+                && Position.y <= _play.LineOfScrimmageY;
         }
 
         /// <summary>
@@ -590,12 +680,12 @@ namespace PoFootball.Agents
         /// policy's unclamped 3.4 would be three times longer than the force it
         /// produced.
         ///
-        /// The throw flag is the policy's REQUEST, not the throw. HandleQuarterback
-        /// refuses a release that is out of window, past the line of scrimmage or
-        /// from a quarterback that is not holding the ball, and every one of those
-        /// is worth being able to see — a quarterback repeatedly asking to throw
-        /// from ten yards downfield is a policy telling you something, and an
-        /// overlay that only lit up on legal throws would hide it.
+        /// The throw flag is the policy's REQUEST, not the throw. Since revision 10
+        /// the mask (CanReleasePass) stops a trained brain asking for an illegal
+        /// one at decision time, so a lit flag that produced no throw now means the
+        /// situation changed between decisions — the ball came loose or the
+        /// quarterback crossed the line on a repeated action — which is still worth
+        /// being able to see. Under Heuristic the mask does not apply at all.
         ///
         /// Costs one struct copy per player per decision. The array store behind
         /// the interface is the whole implementation in a game and an empty method
@@ -615,7 +705,7 @@ namespace PoFootball.Agents
             {
                 ActionSegment<float> continuous = actions.ContinuousActions;
                 aim = new Vector2(continuous[2], continuous[3]);
-                throwArmed = actions.DiscreteActions[THROW_BRANCH] == 1;
+                throwArmed = actions.DiscreteActions[THROW_BRANCH] == THROW_RELEASE;
             }
 
             _intentSink.Write(
@@ -670,33 +760,21 @@ namespace PoFootball.Agents
                 }
             }
 
-            if (_play.Call != Systems_PlayCall.Pass || !_isCarrier || !_ball.IsHeld)
-            {
-                return;
-            }
-
-            if (_play.PhysicsTick > Systems_SimConstants.THROW_WINDOW_TICKS)
-            {
-                return;
-            }
-
-            // A FORWARD PASS MUST BE THROWN FROM BEHIND THE LINE OF SCRIMMAGE.
-            // Nothing here used to check that, so a quarterback was free to scramble
-            // ten yards downfield and still throw — an illegal forward pass, and one
-            // of the few outright rule violations left in the simulation. It went
-            // unnoticed because the scripted quarterback holds the pocket
-            // (IsHoldingThePocket) and never crosses the line while the throw window
-            // is open; a trained policy is under no such habit and would find it.
+            // Still checked here although the mask already enforces it: the mask is
+            // written once per decision and the action is repeated for the ticks in
+            // between, so the ball can change hands or the quarterback cross the line
+            // after the mask was computed.
             //
-            // There is no penalty system here, so the honest model is that the throw
-            // simply is not available: past the line the quarterback has tucked it
-            // and is a runner, which is what a real one does.
-            if (Position.y > _play.LineOfScrimmageY)
+            // The line-of-scrimmage clause went unnoticed for a long time because the
+            // scripted quarterback holds the pocket (IsHoldingThePocket) and never
+            // crosses the line while the throw window is open; a trained policy is
+            // under no such habit and would find it.
+            if (!CanReleasePass())
             {
                 return;
             }
 
-            if (discrete[1] != 1)
+            if (discrete[THROW_BRANCH] != THROW_RELEASE)
             {
                 return;
             }
@@ -848,11 +926,22 @@ namespace PoFootball.Agents
                 return;
             }
 
-            float yardsDelta = (ballY - _previousBallY) / Systems_FieldModel.YARD;
-            _previousBallY = ballY;
+            // A pass in flight is not progress yet: the baseline stays at the
+            // release point and the catch pays the whole distance at once (see
+            // Reward_Progress.CountsAsProgress). The time cost still runs.
+            bool countsAsProgress = Reward_Progress.CountsAsProgress(
+                _ball == null ? Systems_BallState.Held : _ball.State);
+
+            float yardsDelta = 0f;
+
+            if (countsAsProgress)
+            {
+                yardsDelta = (ballY - _previousBallY) / Systems_FieldModel.YARD;
+                _previousBallY = ballY;
+            }
 
             AddReward(Reward_Progress.PerTick(_side, yardsDelta));
-            AddReward(RoleReward(ballPosition, ballDistance));
+            AddReward(RoleReward(ballPosition, ballDistance, countsAsProgress));
 
             _previousBallDistance = ballDistance;
         }
@@ -863,11 +952,18 @@ namespace PoFootball.Agents
         /// guard who held his block and a guard who wandered off are the same
         /// gradient (see Reward_Role).
         /// </summary>
-        private float RoleReward(Vector2 ballPosition, float ballDistance)
+        private float RoleReward(Vector2 ballPosition, float ballDistance, bool ballIsGrounded)
         {
             if (_side == Systems_TeamSide.Defense)
             {
-                return Reward_Role.Pursuit(_previousBallDistance - ballDistance);
+                // Not while the ball is in the air. A 25 m/s pass moves away from
+                // most of the defense and toward a few of them whatever any of them
+                // does, so pursuit measured against it was noise the size of a
+                // whole play's honest pursuit, uncorrelated with the action. The
+                // caller still moves the baseline, so the catch is not paid either.
+                return ballIsGrounded
+                    ? Reward_Role.Pursuit(_previousBallDistance - ballDistance)
+                    : 0f;
             }
 
             if (_isBlocker)

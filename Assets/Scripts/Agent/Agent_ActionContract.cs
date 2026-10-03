@@ -158,7 +158,7 @@ namespace PoFootball.Agents
         /// three-behavior config and promoted with Tools/promote_brain.py. Any
         /// `.onnx` trained before this stamp is fitted against different dynamics and
         /// Agent_BrainTable will refuse it, which is the point.
-        /// </summary>
+        ///
         /// Revision 9 changes what the quarterback's aim DOES, and like 2, 5 and 8
         /// it leaves every shape identical — 36 observations, 4 continuous,
         /// branches [7, 2] — so nothing about an observation or an action vector
@@ -185,7 +185,29 @@ namespace PoFootball.Agents
         /// steering an aim whose precision it was never fitted to care about, which
         /// is exactly the silent behavioural mismatch this stamp exists for.
         /// results/football_long01 is fitted against revision 8 and must not load.
-        public const int CONTRACT_REVISION = 9;
+        ///
+        /// Revision 10 changes the SHAPE of the ray observation and the MEANING of
+        /// two vector observations, and masks the quarterback's discrete branches
+        /// differently. No run was ever made against revision 9, so it costs
+        /// nothing to batch them:
+        ///
+        ///     Rays          6 per side over 90 degrees -> 10 per side over 165
+        ///                   (52 -> 84 floats); now fixed in Sensor_RayContract
+        ///                   instead of the scenes, so the gate reads code
+        ///     Velocity      world frame -> the body's own frame (sideways, forward)
+        ///     Call branch   pinned to None on every decision that cannot latch,
+        ///                   and None masked on the ones that can
+        ///     Throw branch  release masked whenever HandleQuarterback would refuse
+        ///
+        /// The reward changed in the same commit — flight yardage paid on the catch,
+        /// not in the air; a block no longer outpays the time cost; no pursuit while
+        /// the ball is in the air — but rewards are not part of the contract: they
+        /// change what a run learns, not what a trained brain expects to be fed.
+        ///
+        /// Nothing is promoted against any revision, so every player still runs
+        /// Heuristic. Config/FootballBase12.yaml is the first config for this one.
+        /// </summary>
+        public const int CONTRACT_REVISION = 10;
 
         /// <summary>Continuous outputs every brain has: drive and steer.</summary>
         public const int BASE_CONTINUOUS_ACTIONS = 2;
