@@ -274,6 +274,27 @@ namespace PoFootball.Views
             _lastSafeArea = safeArea;
             _lastScreenSize = screenSize;
 
+            // A SAFE AREA THAT DOES NOT FIT ON THE SCREEN BELONGS TO ANOTHER SCREEN.
+            //
+            // With the Device Simulator open beside the Game view, the Editor reports
+            // the Game view's size but the SIMULATED device's safe area and cutouts.
+            // Measured: Screen 1080x2520 with a safe area 960 wide and 2566 tall —
+            // taller than the screen it is supposed to be inside. Applied as given,
+            // that inset every screen by 120 px down the right edge, and the status
+            // bar, the scoreboard and the menu all stopped 11% short on a capture
+            // that was otherwise a faithful 20:9 phone. No real device reports a safe
+            // area larger than its own display, so this changes nothing on one; it
+            // only refuses to inset by a rectangle measured on different hardware.
+            if (safeArea.xMax > screenSize.x + 0.5f || safeArea.yMax > screenSize.y + 0.5f
+                || safeArea.xMin < -0.5f || safeArea.yMin < -0.5f)
+            {
+                _safeArea.style.paddingLeft = 0f;
+                _safeArea.style.paddingRight = 0f;
+                _safeArea.style.paddingTop = 0f;
+                _safeArea.style.paddingBottom = 0f;
+                return;
+            }
+
             float leftPixels = safeArea.xMin;
             float rightPixels = screenSize.x - safeArea.xMax;
 
