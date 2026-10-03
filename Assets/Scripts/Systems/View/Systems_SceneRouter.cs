@@ -1,5 +1,6 @@
 using Cysharp.Threading.Tasks;
 using PoFootball.Models;
+using PoFootball.Systems;
 using UnityEngine;
 using UnityEngine.SceneManagement;
 
@@ -69,7 +70,26 @@ namespace PoFootball.Views
             return summary;
         }
 
+        /// <summary>
+        /// A new game: on the viewer's fixed seed if they have set one in the
+        /// menu's GAME SEED sheet, otherwise on a fresh one.
+        /// </summary>
         public static void LoadGame()
+        {
+            LoadGameOn(Systems_GameSettings.SeedForNextGame);
+        }
+
+        /// <summary>
+        /// The game that was just played, again, from the kickoff. One-shot: it
+        /// does not touch the saved setting, so the game after it is whatever PLAY
+        /// would have given.
+        /// </summary>
+        public static void ReplayGame(uint seed)
+        {
+            LoadGameOn(seed);
+        }
+
+        private static void LoadGameOn(uint seed)
         {
             if (_isLoading)
             {
@@ -81,6 +101,11 @@ namespace PoFootball.Views
             // swallowed by an in-flight load to the MENU cannot throw away the
             // card that load is carrying.
             _pendingSummary = null;
+
+            // Zero withdraws any earlier request, so the scope draws its own.
+            // After the guard for the same reason as the line above: a swallowed
+            // tap must not change the seed of a load already under way.
+            Systems_EpisodeSeed.RequestGameSeed(seed);
             Load(GAME_SCENE);
         }
 

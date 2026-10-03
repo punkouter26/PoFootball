@@ -77,7 +77,7 @@ namespace PoFootball.Tests
             // Systems_RefereeTests for the same reasoning.
             _flow = new Systems_GameFlowSystem(
                 _game, _play, new Systems_DeterministicKickModel(),
-                _ended, _resolved, _gameOver);
+                new Systems_SimHealthModel(), _ended, _resolved, _gameOver);
             _flow.Start();
         }
 
@@ -704,6 +704,253 @@ namespace PoFootball.Tests
             Assert.That(
                 YardLineOf(_game.LineOfScrimmageY),
                 Is.EqualTo(100f - (60f - Systems_GameRules.FIELD_GOAL_SNAP_YARDS)).Within(0.5f));
+        }
+
+        // --- Timeouts ----------------------------------------------------------
+
+        /// <summary>A kick model whose two-point try does what the test says.</summary>
+        private sealed class ScriptedKickModel : Systems_IKickModel
+        {
+            public bool TwoPointGood { get; set; }
+
+            public bool IsFieldGoalGood(float attemptYards) => true;
+
+            public float PuntNetYards() => Systems_GameRules.PUNT_NET_YARDS;
+
+            public float KickoffReturnYardLine() => Systems_GameRules.KICKOFF_TOUCHBACK_YARD_LINE;
+
+            public bool IsOnsideRecovered() => false;
+
+            public bool IsTwoPointGood() => TwoPointGood;
+        }
+
+        /// <summary>
+        /// Runs the clock down with the ball live and stops short of 0:00, so the
+        /// next whistle lands inside the last minute rather than on the expiry.
+        /// </summary>
+        private void BurnClockDownTo(float seconds)
+        {
+            Systems_PlaySituation situation = _flow.NextSituation();
+            _play.BeginEpisode(
+                situation.LineOfScrimmageY, situation.LineOfScrimmageY,
+                situation.Down, situation.YardsToGo);
+            _play.Snap();
+
+            int guard = 0;
+            int maximumTicks = Mathf.CeilToInt(_game.SecondsRemaining / 0.02f) + 10;
+
+            while (_game.SecondsRemaining > seconds && guard < maximumTicks)
+            {
+                _flow.FixedTick();
+                guard++;
+            }
+        }
+
+        /// <summary>A tackle eleven yards downfield: a first down, clock running.</summary>
+        private void GainAFirstDown()
+        {
+            EndPlayAt(_game.LineOfScrimmageY + (11f * Systems_FieldModel.YARD));
+        }
+
+        private void AdvanceToQuarter(int quarter)
+        {
+            while (_game.Quarter < quarter)
+            {
+                BurnQuarterToZero();
+                EndPlayAt(OwnYard(28f));
+            }
+        }
+
+        [Test]
+        public void EveryTeamStartsWithThreeTimeouts()
+        {
+            Assert.That(_game.HomeTimeouts, Is.EqualTo(Systems_GameRules.TIMEOUTS_PER_HALF));
+            Assert.That(_game.AwayTimeouts, Is.EqualTo(Systems_GameRules.TIMEOUTS_PER_HALF));
+        }
+
+        [Test]
+        public void NoTimeoutIsCalled_OutsideTheLastMinuteOfAHalf()
+        {
+            AdvanceToQuarter(2);
+
+            GainAFirstDown();
+
+            Assert.That(_resolved.Last.TimeoutCalled, Is.False);
+            Assert.That(_game.HomeTimeouts + _game.AwayTimeouts, Is.EqualTo(6));
+        }
+
+        [Test]
+        public void BeforeTheHalf_TheOffenseStopsTheClockAndIsNotChargedTheHuddle()
+        {
+            AdvanceToQuarter(2);
+            BurnClockDownTo(50f);
+
+            Systems_TeamId offense = _game.Possession;
+            float before = _game.SecondsRemaining;
+
+            GainAFirstDown();
+
+            Assert.That(_resolved.Last.TimeoutCalled, Is.True);
+            Assert.That(_resolved.Last.TimeoutTeam, Is.EqualTo(offense));
+            Assert.That(_game.TimeoutsOf(offense), Is.EqualTo(2));
+            Assert.That(_game.TimeoutsOf(offense.Opponent()), Is.EqualTo(3));
+            Assert.That(_game.SecondsRemaining, Is.EqualTo(before).Within(0.001f));
+            Assert.That(_game.IsClockRunning, Is.False);
+        }
+
+        [Test]
+        public void ATeamWithNoTimeoutsLeft_IsChargedTheHuddleLikeAnyOtherPlay()
+        {
+            AdvanceToQuarter(2);
+            BurnClockDownTo(50f);
+
+            Systems_TeamId offense = _game.Possession;
+
+            for (int play = 0; play < Systems_GameRules.TIMEOUTS_PER_HALF; play++)
+            {
+                GainAFirstDown();
+            }
+
+            Assert.That(_game.TimeoutsOf(offense), Is.Zero, "test premise");
+
+            float before = _game.SecondsRemaining;
+
+            GainAFirstDown();
+
+            Assert.That(_resolved.Last.TimeoutCalled, Is.False);
+            Assert.That(
+                _game.SecondsRemaining,
+                Is.EqualTo(before - Systems_GameRules.HUDDLE_SECONDS).Within(0.01f));
+        }
+
+        /// <summary>
+        /// The case timeouts were added for: late in the game it is the team that
+        /// is BEHIND that stops the clock, whichever side of the ball it is on.
+        /// </summary>
+        [Test]
+        public void LateInTheGame_TheTrailingTeamCallsItEvenOnDefense()
+        {
+            // Home scores first, so Away trails for the rest of the test.
+            EndPlayAt(Systems_FieldModel.ATTACKING_GOAL_LINE_Y, Systems_PlayOutcome.Touchdown);
+
+            AdvanceToQuarter(Systems_GameRules.QUARTER_COUNT);
+            BurnClockDownTo(50f);
+
+            // Put the LEADING team on offense, running the clock out.
+            if (_game.Possession != Systems_TeamId.Home)
+            {
+                EndPlayAt(OwnYard(50f), Systems_PlayOutcome.Interception, Systems_PlayCall.Pass);
+            }
+
+            Assert.That(_game.Possession, Is.EqualTo(Systems_TeamId.Home), "test premise");
+
+            float before = _game.SecondsRemaining;
+
+            GainAFirstDown();
+
+            Assert.That(_resolved.Last.TimeoutCalled, Is.True);
+            Assert.That(_resolved.Last.TimeoutTeam, Is.EqualTo(Systems_TeamId.Away));
+            Assert.That(_game.AwayTimeouts, Is.EqualTo(2));
+            Assert.That(_game.HomeTimeouts, Is.EqualTo(3));
+            Assert.That(_game.SecondsRemaining, Is.EqualTo(before).Within(0.001f));
+        }
+
+        [Test]
+        public void Halftime_GivesBothTeamsTheirTimeoutsBack()
+        {
+            AdvanceToQuarter(2);
+            BurnClockDownTo(50f);
+            GainAFirstDown();
+
+            Assert.That(_game.HomeTimeouts + _game.AwayTimeouts, Is.EqualTo(5), "test premise");
+
+            AdvanceToQuarter(3);
+
+            Assert.That(_game.HomeTimeouts, Is.EqualTo(Systems_GameRules.TIMEOUTS_PER_HALF));
+            Assert.That(_game.AwayTimeouts, Is.EqualTo(Systems_GameRules.TIMEOUTS_PER_HALF));
+        }
+
+        // --- The try after a touchdown -----------------------------------------
+
+        /// <summary>
+        /// Rebuilds the flow on a kick model the test controls, then leaves Away one
+        /// point behind a fourth-quarter touchdown: Home 5 (a field goal and a
+        /// safety), Away 0, Away's ball. A touchdown there makes it 6-5, which is
+        /// the "up one" row of the chart — go for two to make it a field goal game.
+        /// </summary>
+        private ScriptedKickModel SetUpAwayTouchdownToLeadByOne()
+        {
+            _flow.Dispose();
+
+            ScriptedKickModel kick = new ScriptedKickModel();
+
+            _game = new Systems_GameModel();
+            _play = new Systems_PlayModel();
+            _ended = new StubSubscriber<Systems_PlayEndedMessage>();
+            _resolved = new StubPublisher<Systems_DownResolvedMessage>();
+            _gameOver = new StubPublisher<Systems_GameOverMessage>();
+
+            _flow = new Systems_GameFlowSystem(
+                _game, _play, kick, new Systems_SimHealthModel(), _ended, _resolved, _gameOver);
+            _flow.Start();
+
+            // Home kicks a field goal, then tackles Away in its own end zone.
+            EndPlayAt(
+                _game.LineOfScrimmageY, Systems_PlayOutcome.FieldGoalGood, Systems_PlayCall.FieldGoal);
+            EndPlayAt(Systems_FieldModel.OWN_GOAL_LINE_Y - 1f);
+
+            Assert.That(_game.HomeScore, Is.EqualTo(5), "test premise");
+            Assert.That(_game.AwayScore, Is.Zero, "test premise");
+
+            AdvanceToQuarter(Systems_GameRules.QUARTER_COUNT);
+
+            if (_game.Possession != Systems_TeamId.Away)
+            {
+                EndPlayAt(OwnYard(50f), Systems_PlayOutcome.Interception, Systems_PlayCall.Pass);
+            }
+
+            Assert.That(_game.Possession, Is.EqualTo(Systems_TeamId.Away), "test premise");
+            return kick;
+        }
+
+        [Test]
+        public void ALateTouchdownToLeadByOne_GoesForTwoAndScoresEightWhenItConverts()
+        {
+            ScriptedKickModel kick = SetUpAwayTouchdownToLeadByOne();
+            kick.TwoPointGood = true;
+
+            EndPlayAt(Systems_FieldModel.ATTACKING_GOAL_LINE_Y, Systems_PlayOutcome.Touchdown);
+
+            Assert.That(_resolved.Last.TwoPointAttempted, Is.True);
+            Assert.That(_resolved.Last.TwoPointGood, Is.True);
+            Assert.That(_resolved.Last.PointsScored, Is.EqualTo(8));
+            Assert.That(_game.AwayScore, Is.EqualTo(8));
+        }
+
+        [Test]
+        public void AFailedTwoPointTry_LeavesTheTouchdownAtSix()
+        {
+            ScriptedKickModel kick = SetUpAwayTouchdownToLeadByOne();
+            kick.TwoPointGood = false;
+
+            EndPlayAt(Systems_FieldModel.ATTACKING_GOAL_LINE_Y, Systems_PlayOutcome.Touchdown);
+
+            Assert.That(_resolved.Last.TwoPointAttempted, Is.True);
+            Assert.That(_resolved.Last.TwoPointGood, Is.False);
+            Assert.That(_game.AwayScore, Is.EqualTo(6));
+        }
+
+        /// <summary>
+        /// The kick is still awarded everywhere the chart says to take it — which
+        /// is every touchdown before the fourth quarter.
+        /// </summary>
+        [Test]
+        public void AnEarlyTouchdown_TakesTheKickWhateverTheMargin()
+        {
+            EndPlayAt(Systems_FieldModel.ATTACKING_GOAL_LINE_Y, Systems_PlayOutcome.Touchdown);
+
+            Assert.That(_resolved.Last.TwoPointAttempted, Is.False);
+            Assert.That(_resolved.Last.PointsScored, Is.EqualTo(7));
         }
 
     }

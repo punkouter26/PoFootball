@@ -78,6 +78,22 @@ namespace PoFootball.Models
         /// </summary>
         public const int DEAD_BALL_TICKS = 140;
 
+        // --- Timeouts --------------------------------------------------------
+        /// <summary>Timeouts each team has per half, as in the real game.</summary>
+        public const int TIMEOUTS_PER_HALF = 3;
+
+        /// <summary>Timeouts each team carries into overtime.</summary>
+        public const int TIMEOUTS_IN_OVERTIME = 2;
+
+        /// <summary>
+        /// Seconds left in a half under which a team that needs the clock starts
+        /// spending timeouts. A timeout is worth exactly HUDDLE_SECONDS here — it
+        /// is the huddle that does not get charged — so three of them inside this
+        /// window buy back most of it. Matches ONSIDE_SECONDS_REMAINING: the two
+        /// are the same judgement, that the game has reached its last minute.
+        /// </summary>
+        public const float TIMEOUT_WINDOW_SECONDS = 60f;
+
         // --- Downs -----------------------------------------------------------
         public const int DOWNS_PER_SERIES = 4;
 
@@ -99,6 +115,20 @@ namespace PoFootball.Models
         public const int EXTRA_POINT_POINTS = 1;
 
         public const int SAFETY_POINTS = 2;
+
+        /// <summary>
+        /// Points for a two-point try that converts. The try is still resolved at
+        /// the rules layer rather than snapped — see <see cref="EXTRA_POINT_POINTS"/>
+        /// — but WHICH try a team takes is a decision the score and the clock
+        /// make, and until this existed a team down eight late could not level it.
+        /// </summary>
+        public const int TWO_POINT_POINTS = 2;
+
+        /// <summary>
+        /// Share of two-point tries that convert. The NFL's long-run rate sits just
+        /// under one in two.
+        /// </summary>
+        public const float TWO_POINT_SUCCESS_CHANCE = 0.48f;
 
         public const int FIELD_GOAL_POINTS = 3;
 

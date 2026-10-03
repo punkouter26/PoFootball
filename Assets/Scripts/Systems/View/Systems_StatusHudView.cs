@@ -2,10 +2,13 @@ using System;
 using System.Globalization;
 using System.IO;
 using System.Text;
+using PoFootball.Models;
+using PoFootball.Systems;
 using Unity.Profiling;
 using UnityEngine;
 using UnityEngine.Rendering;
 using UnityEngine.UIElements;
+using VContainer;
 
 namespace PoFootball.Views
 {
@@ -202,6 +205,48 @@ namespace PoFootball.Views
         /// the class this replaced gives: Unity 6.6 deprecates the symbol.
         /// </summary>
         private static bool DiagnosticsAllowed => Debug.isDebugBuild;
+
+        /// <summary>
+        /// Scrimmage plays before the sheet will judge the football. Single games
+        /// are noisy enough at the final whistle (CLAUDE.md); a verdict off a
+        /// dozen plays would be a finding about one long pass.
+        /// </summary>
+        private const int MIN_PLAYS_FOR_REALISM = 30;
+
+        /// <summary>Drives before touchdowns-per-drive means anything.</summary>
+        private const int MIN_DRIVES_FOR_REALISM = 8;
+
+        // The bands Tools/promote_brain.py --check-realism accepts, so the sheet
+        // and the promotion gate cannot disagree about what football is.
+        private const float YARDS_PER_PLAY_MIN = 4.5f;
+        private const float YARDS_PER_PLAY_MAX = 6.5f;
+        private const float TOUCHDOWNS_PER_DRIVE_MIN = 0.15f;
+        private const float TOUCHDOWNS_PER_DRIVE_MAX = 0.40f;
+
+        /// <summary>
+        /// Speed-clamp hits per player per live tick above which the solver is
+        /// blowing contacts apart. The promotion gate's own threshold.
+        /// </summary>
+        private const float SPEED_CLAMP_RATE_LIMIT = 0.001f;
+
+        /// <summary>Live ticks before the clamp rate is a rate rather than one pileup.</summary>
+        private const int MIN_TICKS_FOR_CLAMP_RATE = 500;
+
+        /// <summary>
+        /// What the simulation reports about itself. Null on the menu, which has no
+        /// simulation: the sheet then carries the frame and device findings alone.
+        /// </summary>
+        private Systems_SimHealthModel _health;
+
+        /// <summary>
+        /// Called by <see cref="Systems_StatusHudBootstrap"/> in a scene with a game
+        /// scope, and not at all otherwise — every use of the model is null-checked.
+        /// </summary>
+        [Inject]
+        public void Construct(Systems_SimHealthModel health)
+        {
+            _health = health;
+        }
 
         protected override void Awake()
         {
@@ -425,6 +470,20 @@ namespace PoFootball.Views
             Systems_SceneRouter.LoadMenu();
         }
 
+        /// <summary>
+        /// The DEBUG chip, from the keyboard — Systems_InputView calls this on TAB.
+        /// Does nothing in a build that has no chip to press.
+        /// </summary>
+        internal void ToggleDebugSheet()
+        {
+            if (!DiagnosticsAllowed || !IsBuilt)
+            {
+                return;
+            }
+
+            OnDebugPressed();
+        }
+
         private void OnDebugPressed()
         {
             _sheetOpen = !_sheetOpen;
@@ -582,6 +641,11 @@ namespace PoFootball.Views
                     + "symptoms. Full text is in `adb logcat -s Unity`.");
             }
 
+            // Straight after the errors and ahead of everything about the frame:
+            // Add stops at MAX_FINDINGS, and whether this is a trained game playing
+            // football is not the finding to lose to a warning count.
+            DiagnoseSimulation(ref count);
+
             if (p99 > 33f)
             {
                 Add(ref count, 90,
@@ -719,6 +783,120 @@ namespace PoFootball.Views
             return count;
         }
 
+        /// <summary>
+        /// What the simulation says about itself: who is playing, whether the
+        /// physics is holding together, and whether the result is football.
+        ///
+        /// These are the findings a frame counter cannot make. A build can hold 60
+        /// with nothing logged and still be twenty-two heuristics, or a policy
+        /// winning by blowing the solver apart, or a game at nine yards a play.
+        /// </summary>
+        private void DiagnoseSimulation(ref int count)
+        {
+            if (_health == null || _health.PlayersReported == 0)
+            {
+                return;
+            }
+
+            int withBrain = _health.PlayersWithBrain;
+            int reported = _health.PlayersReported;
+
+            if (withBrain > 0 && withBrain < reported)
+            {
+                Add(ref count, 95,
+                    "Only " + withBrain + " of " + reported + " players have a trained "
+                    + "brain; the rest are running the heuristic. The two were never "
+                    + "meant to share a field, so nothing this game shows is a fair "
+                    + "account of either. Rebuild the table with Tools > PoFootball > "
+                    + "Build Brain Table.");
+            }
+            else if (withBrain == 0)
+            {
+                Add(ref count, 30,
+                    "Nothing on this field is a trained policy: all " + reported
+                    + " players are running the built-in heuristic, because "
+                    + (_health.BrainStatus.Length == 0
+                        ? "no model was assigned"
+                        : _health.BrainStatus)
+                    + ". It is a playable game, not a learned one. Promote a run "
+                    + "trained on the current contract with Tools/promote_brain.py, "
+                    + "then Tools > PoFootball > Build Brain Table.");
+            }
+
+            if (_health.LiveTicks >= MIN_TICKS_FOR_CLAMP_RATE
+                && _health.SpeedClampRate > SPEED_CLAMP_RATE_LIMIT)
+            {
+                Add(ref count, 78,
+                    "Bodies are being thrown out of collisions faster than anyone can "
+                    + "run: the speed clamp has fired " + _health.SpeedClampHits
+                    + " times, " + Fixed(_health.SpeedClampRate * 1000f, 2)
+                    + " per thousand player-ticks against a limit of "
+                    + Fixed(SPEED_CLAMP_RATE_LIMIT * 1000f, 0) + ". The physics "
+                    + "solver is blowing contacts apart, so these are not the "
+                    + "dynamics any brain was trained on — and a brain that causes "
+                    + "it is exploiting it. The promotion gate refuses a run at "
+                    + "this rate.");
+            }
+
+            bool yardsJudged = _health.ScrimmagePlays >= MIN_PLAYS_FOR_REALISM;
+            bool drivesJudged = _health.Drives >= MIN_DRIVES_FOR_REALISM;
+
+            bool yardsOff = yardsJudged
+                && (_health.YardsPerPlay < YARDS_PER_PLAY_MIN
+                    || _health.YardsPerPlay > YARDS_PER_PLAY_MAX);
+
+            bool drivesOff = drivesJudged
+                && (_health.TouchdownsPerDrive < TOUCHDOWNS_PER_DRIVE_MIN
+                    || _health.TouchdownsPerDrive > TOUCHDOWNS_PER_DRIVE_MAX);
+
+            if (yardsOff || drivesOff)
+            {
+                Add(ref count, 40,
+                    "This game is not playing like football so far: "
+                    + Fixed(_health.YardsPerPlay, 1) + " yards a play over "
+                    + _health.ScrimmagePlays + " plays (real football is about 5.5; "
+                    + "4.5 to 6.5 passes) and " + Fixed(_health.TouchdownsPerDrive, 2)
+                    + " touchdowns a drive over " + _health.Drives + " drives (0.15 "
+                    + "to 0.40 passes). One game is noisy — judge a rules change on "
+                    + "Tools > PoFootball > Evaluate Realism, not on this line.");
+            }
+        }
+
+        /// <summary>
+        /// The simulation's own numbers, under the findings. Includes the seed,
+        /// which is what makes a game someone is looking at reproducible: type it
+        /// into the menu's GAME SEED sheet and the same game plays again.
+        /// </summary>
+        private void AppendSimulationReadings(StringBuilder builder)
+        {
+            if (_health == null || _health.PlayersReported == 0)
+            {
+                return;
+            }
+
+            builder.Append("brains ");
+            builder.Append(_health.PlayersWithBrain);
+            builder.Append('/');
+            builder.Append(_health.PlayersReported);
+            builder.Append("   |   ");
+            AppendFixed(builder, _health.YardsPerPlay, 1);
+            builder.Append(" yd/play over ");
+            builder.Append(_health.ScrimmagePlays);
+            builder.Append("   |   ");
+            AppendFixed(builder, _health.TouchdownsPerDrive, 2);
+            builder.Append(" TD/drive over ");
+            builder.Append(_health.Drives);
+            builder.Append('\n');
+
+            builder.Append("4th downs ");
+            builder.Append(_health.FourthDowns);
+            builder.Append("   |   speed clamp ");
+            builder.Append(_health.SpeedClampHits);
+            builder.Append("   |   seed ");
+            builder.Append(Systems_EpisodeSeed.Value);
+            builder.Append('\n');
+        }
+
         private void Add(ref int count, int severity, string text)
         {
             if (count >= MAX_FINDINGS)
@@ -788,6 +966,7 @@ namespace PoFootball.Views
             _builder.Append(_warningCount);
             _builder.Append(" warnings\n");
 
+            AppendSimulationReadings(_builder);
             AppendRenderReadings(_builder);
             _builder.Append('\n');
             AppendStepReadings(_builder);

@@ -65,6 +65,13 @@ namespace PoFootball.Systems
         /// is always the case in the only situation this simulation calls one.
         /// </summary>
         bool IsOnsideRecovered();
+
+        /// <summary>
+        /// Whether a two-point try converts. Like the kickoff, the try is not a
+        /// snap anybody plays; the rules layer decides to go for it and asks here
+        /// whether it came off.
+        /// </summary>
+        bool IsTwoPointGood();
     }
 
     /// <summary>
@@ -96,6 +103,16 @@ namespace PoFootball.Systems
         /// deterministic models exist to keep out.
         /// </summary>
         public bool IsOnsideRecovered()
+        {
+            return false;
+        }
+
+        /// <summary>
+        /// Never, for the reason an onside kick is never recovered here: training
+        /// has no score, so nothing ever asks, and a coin flip on the scoreboard is
+        /// the noise the deterministic models exist to keep out.
+        /// </summary>
+        public bool IsTwoPointGood()
         {
             return false;
         }
@@ -191,6 +208,11 @@ namespace PoFootball.Systems
         public bool IsOnsideRecovered()
         {
             return _rng.NextFloat() < Systems_GameRules.ONSIDE_RECOVERY_CHANCE;
+        }
+
+        public bool IsTwoPointGood()
+        {
+            return _rng.NextFloat() < Systems_GameRules.TWO_POINT_SUCCESS_CHANCE;
         }
 
         /// <summary>

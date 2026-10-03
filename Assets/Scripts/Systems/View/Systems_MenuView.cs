@@ -124,6 +124,14 @@ namespace PoFootball.Views
             Systems_UiTheme.ApplySecondaryActionSize(sound);
             action.Add(sound);
 
+            Systems_UiOverlay seedSheet = BuildSeedSheet();
+
+            Button seed = Systems_UiTheme.Button(
+                "GAME SEED", Systems_UiTheme.SurfaceRaised, seedSheet.Show);
+            seed.style.color = Systems_UiTheme.TextPrimary;
+            Systems_UiTheme.ApplySecondaryActionSize(seed);
+            action.Add(seed);
+
             content.Add(action);
 
             // Trailing space, or the game that just finished.
@@ -163,8 +171,9 @@ namespace PoFootball.Views
 
             Root.Add(screen);
 
-            // Last child, so it paints over the whole menu when shown.
+            // Last children, so each paints over the whole menu when shown.
             Root.Add(soundSheet.Root);
+            Root.Add(seedSheet.Root);
 
             // THE VERSION STAMP IS NOT BUILT HERE ANY MORE. It used to be added as a
             // top-left overlay by this screen and by nothing else, so the build
@@ -228,6 +237,94 @@ namespace PoFootball.Views
 
             overlay.Content.Add(sheet);
             return overlay;
+        }
+
+        /// <summary>
+        /// A new game every time, or the same one — and which one.
+        ///
+        /// WHY IT IS ON THE MENU. A seed is a whole game (Systems_GameSettings), and
+        /// the final overlay shows the one just played. Without somewhere to type
+        /// it, that number could be read and never used: this is where a seed
+        /// someone wrote down, or was sent, becomes a game on this phone.
+        ///
+        /// The same docked sheet as SOUND, for the same reasons. Each control
+        /// writes through on change, so DONE only closes it.
+        /// </summary>
+        private static Systems_UiOverlay BuildSeedSheet()
+        {
+            Systems_UiOverlay overlay = new Systems_UiOverlay(
+                "SeedSheet", blocksInput: true, scrim: Systems_UiTheme.SurfaceScrim);
+
+            overlay.Content.style.justifyContent = Justify.FlexEnd;
+            overlay.Content.style.paddingBottom = Systems_UiTheme.STATUS_FOOTER_HEIGHT;
+
+            VisualElement sheet = Systems_UiTheme.Column();
+            sheet.style.backgroundColor = Systems_UiTheme.SurfaceRaised;
+            sheet.style.alignItems = Align.Stretch;
+            sheet.style.borderTopLeftRadius = Systems_UiTheme.RADIUS * 2;
+            sheet.style.borderTopRightRadius = Systems_UiTheme.RADIUS * 2;
+            Systems_UiTheme.SetPadding(sheet, Systems_UiTheme.SPACE_L, Systems_UiTheme.SPACE_XL);
+            Systems_UiTheme.ApplyElevation(sheet);
+
+            Label title = Systems_UiTheme.Text(
+                "GAME SEED", Systems_UiTheme.TEXT_TITLE, Systems_UiTheme.TextPrimary, FontStyle.Bold);
+            title.style.marginBottom = Systems_UiTheme.SPACE_S;
+            sheet.Add(title);
+
+            Label explanation = Systems_UiTheme.Text(
+                "A seed decides the whole game. The same seed plays the same game, "
+                + "on any phone, every time.",
+                Systems_UiTheme.TEXT_CAPTION,
+                Systems_UiTheme.TextMuted);
+            explanation.style.whiteSpace = WhiteSpace.Normal;
+            explanation.style.marginBottom = Systems_UiTheme.SPACE_M;
+            sheet.Add(explanation);
+
+            UnsignedIntegerField seedField = new UnsignedIntegerField("SEED")
+            {
+                value = Systems_GameSettings.Seed
+            };
+            seedField.style.fontSize = Systems_UiTheme.TEXT_BODY;
+            seedField.style.color = Systems_UiTheme.TextPrimary;
+            seedField.style.minHeight = Systems_UiTheme.TAP_TARGET;
+            seedField.style.marginBottom = Systems_UiTheme.SPACE_M;
+            seedField.labelElement.style.color = Systems_UiTheme.TextMuted;
+            seedField.labelElement.style.minWidth = 180;
+            seedField.SetEnabled(Systems_GameSettings.SeedFixed);
+            seedField.RegisterValueChangedCallback(
+                change => Systems_GameSettings.Seed = change.newValue);
+
+            Button mode = null;
+
+            mode = Systems_UiTheme.Button(
+                SeedModeLabel(Systems_GameSettings.SeedFixed),
+                Systems_UiTheme.SurfaceOverField,
+                () =>
+                {
+                    Systems_GameSettings.SeedFixed = !Systems_GameSettings.SeedFixed;
+                    mode.text = SeedModeLabel(Systems_GameSettings.SeedFixed);
+                    seedField.SetEnabled(Systems_GameSettings.SeedFixed);
+                });
+            mode.style.color = Systems_UiTheme.TextPrimary;
+            mode.style.fontSize = Systems_UiTheme.TEXT_BODY;
+            mode.style.marginBottom = Systems_UiTheme.SPACE_M;
+
+            sheet.Add(mode);
+            sheet.Add(seedField);
+
+            Button done = Systems_UiTheme.Button("DONE", Systems_UiTheme.Action, overlay.Hide);
+            done.style.marginTop = Systems_UiTheme.SPACE_L;
+            done.style.alignSelf = Align.Center;
+            Systems_UiTheme.ApplySecondaryActionSize(done);
+            sheet.Add(done);
+
+            overlay.Content.Add(sheet);
+            return overlay;
+        }
+
+        private static string SeedModeLabel(bool isFixed)
+        {
+            return isFixed ? "SAME GAME EVERY TIME" : "NEW GAME EVERY TIME";
         }
 
         private static VisualElement LevelRow(string name, float level, System.Action<float> write)

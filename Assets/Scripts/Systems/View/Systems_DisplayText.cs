@@ -219,5 +219,26 @@ namespace PoFootball.Views
 
             return rounded > 0 ? $"+{rounded} yd" : $"{rounded} yd";
         }
+
+        /// <summary>
+        /// The try after a touchdown, appended to the banner's detail line — and
+        /// only when it was a two-point try. The kick is awarded every time, so
+        /// saying so after every touchdown would be noise.
+        /// </summary>
+        public static string TryDetail(bool twoPointAttempted, bool twoPointGood)
+        {
+            if (!twoPointAttempted)
+            {
+                return string.Empty;
+            }
+
+            return twoPointGood ? "   2-PT GOOD" : "   2-PT NO GOOD";
+        }
+
+        /// <summary>"   TIMEOUT HOM", appended to the banner's detail line, or nothing.</summary>
+        public static string TimeoutDetail(bool timeoutCalled, Systems_TeamId team)
+        {
+            return timeoutCalled ? "   TIMEOUT " + TeamTag(team) : string.Empty;
+        }
     }
 }

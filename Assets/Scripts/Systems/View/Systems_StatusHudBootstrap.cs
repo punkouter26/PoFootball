@@ -1,4 +1,5 @@
 using System;
+using PoFootball.Systems;
 using UnityEngine;
 using UnityEngine.SceneManagement;
 
@@ -98,12 +99,18 @@ namespace PoFootball.Views
             // with two. Cheap: this runs once per scene load, never per frame, and
             // the alternative is trusting that no code path ever loads a scene twice.
             GameObject[] roots = scene.GetRootGameObjects();
+            Systems_GameLifetimeScope gameScope = null;
 
             for (int index = 0; index < roots.Length; index++)
             {
                 if (roots[index].GetComponent<Systems_StatusHudView>() != null)
                 {
                     return;
+                }
+
+                if (gameScope == null)
+                {
+                    gameScope = roots[index].GetComponentInChildren<Systems_GameLifetimeScope>();
                 }
             }
 
@@ -116,7 +123,20 @@ namespace PoFootball.Views
 
             // UIDocument comes with it — Systems_ScreenView requires the component,
             // and AddComponent honours [RequireComponent].
-            host.AddComponent<Systems_StatusHudView>();
+            Systems_StatusHudView statusHud = host.AddComponent<Systems_StatusHudView>();
+
+            // INJECTED HERE, BECAUSE THE SCOPE HAS ALREADY BEEN AND GONE. The game
+            // scope injects every scene behaviour from its own Awake, and this HUD
+            // does not exist until after the scene has loaded — so the object that
+            // creates it is the only one in a position to hand it to the container.
+            // Only in a scene that has a game scope: the menu has no simulation to
+            // report on, and its HUD simply runs without the sim findings.
+            if (gameScope != null && gameScope.Container != null)
+            {
+                gameScope.Container.Inject(statusHud);
+            }
+
+            host.AddComponent<Systems_InputView>().Bind(statusHud);
         }
     }
 }

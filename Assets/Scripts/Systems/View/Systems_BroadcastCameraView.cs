@@ -55,6 +55,13 @@ namespace PoFootball.Views
     /// ball it carries is framed in the real ball's place (<see cref="FrameHighlight"/>);
     /// when it says the highlight has stopped, the live shot resumes. The reel
     /// never touches the camera — this is still its only writer.
+    ///
+    /// THE VIEWER CAN TAKE THE SHOT, AND THE OPERATOR STILL MOVES IT. A tap on a
+    /// player, a drag and a pinch are recorded in Systems_SpectatorModel by
+    /// Systems_SpectatorSystem; this class reads that model after it has composed
+    /// its own shot and bends the result (<see cref="ApplySpectator"/>). So the
+    /// damping, the field clamp and the one-writer rule are all unchanged, and
+    /// handing the shot back is just the model going back to its defaults.
     /// </summary>
     [DefaultExecutionOrder(-40)]
     [RequireComponent(typeof(Camera))]
@@ -278,6 +285,13 @@ namespace PoFootball.Views
         /// </summary>
         private const float HIGHLIGHT_CUT_DISTANCE = 10f;
 
+        /// <summary>
+        /// Smallest half-height a pinch may reach, in metres. About nine yards of
+        /// field top to bottom: close enough to watch one block, and still wide
+        /// enough that a player at full speed stays on screen between frames.
+        /// </summary>
+        private const float MIN_MANUAL_SIZE = 4f;
+
         private ISubscriber<Systems_PlaySnappedMessage> _snappedSubscriber;
         private ISubscriber<Systems_PassThrownMessage> _thrownSubscriber;
         private ISubscriber<Systems_HighlightPlaybackMessage> _highlightSubscriber;
@@ -289,6 +303,7 @@ namespace PoFootball.Views
         private Systems_PlayModel _play;
         private Systems_PlayerRegistry _registry;
         private Systems_PresentationBudget _budget;
+        private Systems_SpectatorModel _spectator;
 
         private Camera _camera;
         private Transform _transform;
@@ -319,6 +334,7 @@ namespace PoFootball.Views
             Systems_PlayModel play,
             Systems_PlayerRegistry registry,
             Systems_PresentationBudget budget,
+            Systems_SpectatorModel spectator,
             ISubscriber<Systems_PlaySnappedMessage> snappedSubscriber,
             ISubscriber<Systems_PassThrownMessage> thrownSubscriber,
             ISubscriber<Systems_HighlightPlaybackMessage> highlightSubscriber)
@@ -327,6 +343,7 @@ namespace PoFootball.Views
             _play = play;
             _registry = registry;
             _budget = budget;
+            _spectator = spectator;
             _snappedSubscriber = snappedSubscriber;
             _thrownSubscriber = thrownSubscriber;
             _highlightSubscriber = highlightSubscriber;
@@ -365,9 +382,11 @@ namespace PoFootball.Views
         /// </summary>
         private void LateUpdate()
         {
+            float deltaTime = ShotDeltaTime();
+
             if (_highlightPlaying)
             {
-                FrameHighlight(Time.deltaTime);
+                FrameHighlight(deltaTime);
                 return;
             }
 
@@ -379,7 +398,66 @@ namespace PoFootball.Views
             Vector2 target = FramingTarget(carrier, openness);
             float targetSize = FramingSize(target, openness);
 
-            MoveShot(target, targetSize, Time.deltaTime);
+            ApplySpectator(ref target, ref targetSize);
+
+            MoveShot(target, targetSize, deltaTime);
+        }
+
+        /// <summary>
+        /// Game time while the game is running, real time while it is paused.
+        ///
+        /// Scaled time is right at every speed the viewer can pick: at 4x the ball
+        /// moves four times as far per frame and the shot has to keep up with it,
+        /// and at half speed it should ease half as fast. A pause is the exception.
+        /// Scaled delta time is zero there, the blend in MoveShot would be zero,
+        /// and a paused play could not be dragged or zoomed — which is the whole
+        /// reason to pause one.
+        /// </summary>
+        private static float ShotDeltaTime()
+        {
+            return Time.timeScale > 0f ? Time.deltaTime : Time.unscaledDeltaTime;
+        }
+
+        /// <summary>
+        /// Bends the operator's shot to what the viewer asked for.
+        ///
+        /// A FOCUSED PLAYER REPLACES THE TARGET; HE DOES NOT JOIN IT. Blending him
+        /// with the ball would follow neither. The shot centres on him and opens up
+        /// as far as the wide shot to keep the ball in as well — and past that it
+        /// lets the ball go. That breaks the rule KeepBallInFrame exists for, on
+        /// purpose: the viewer has said, by tapping a cornerback forty yards from
+        /// the play, that the cornerback is what they want to watch.
+        ///
+        /// The drag and the pinch are applied last and to whichever shot that
+        /// produced, so they mean the same thing with a focus as without one.
+        /// MoveShot still clamps the result to the field.
+        /// </summary>
+        private void ApplySpectator(ref Vector2 target, ref float targetSize)
+        {
+            if (_spectator == null)
+            {
+                return;
+            }
+
+            Systems_IPlayerHandle focus = _spectator.HasFocus
+                ? _registry.FindById(_spectator.FocusedPlayerId)
+                : null;
+
+            if (focus != null)
+            {
+                target = focus.Position;
+
+                targetSize = Mathf.Min(
+                    Mathf.Max(targetSize, SizeToHold(_ball.Position, target)), WideSize());
+            }
+
+            if (!_spectator.IsManual)
+            {
+                return;
+            }
+
+            target += _spectator.PanOffset;
+            targetSize = Mathf.Max(MIN_MANUAL_SIZE, targetSize * _spectator.ZoomScale);
         }
 
         /// <summary>

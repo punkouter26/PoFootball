@@ -116,6 +116,18 @@ namespace PoFootball.Systems
             // scrimmage stays the only thing that differs between them.
             builder.Register<Systems_FormationSelection>(Lifetime.Singleton);
 
+            // What the viewer has asked the broadcast to do, and the system that
+            // records it. Both modes, because the camera view is injected in both
+            // and switches itself off on the presentation budget; in training
+            // nothing ever writes to either.
+            builder.Register<Systems_SpectatorModel>(Lifetime.Singleton);
+            builder.Register<Systems_SpectatorSystem>(Lifetime.Singleton);
+
+            // What the DEBUG sheet reads to say whether anything on the field is a
+            // trained policy and whether the game being played is football. Both
+            // modes for the same reason: the agents report into it either way.
+            builder.Register<Systems_SimHealthModel>(Lifetime.Singleton);
+
             MessagePipeOptions messagePipeOptions = builder.RegisterMessagePipe();
             builder.RegisterMessageBroker<Systems_PlaySnappedMessage>(messagePipeOptions);
             builder.RegisterMessageBroker<Systems_PlayEndedMessage>(messagePipeOptions);
@@ -200,7 +212,7 @@ namespace PoFootball.Systems
 
             builder.RegisterEntryPoint<Systems_StatsSystem>();
 
-            // The viewer's 1x/2x/4x. Game only: a trainer's speed is time_scale in
+            // The viewer's playback speed and pause. Game only: a trainer's speed is time_scale in
             // the config, and nothing in training may touch Time.timeScale. The
             // container disposes it on unload, which is what resets the scale.
             builder.Register<Systems_SimSpeedSystem>(Lifetime.Singleton);
@@ -229,9 +241,22 @@ namespace PoFootball.Systems
         ///
         /// Time-derived rather than System.Random so there is no second RNG to seed;
         /// zero is folded away because Systems_EpisodeSeed rejects it.
+        ///
+        /// A VIEWER'S REQUEST OUTRANKS BOTH, IN A PLAYED GAME ONLY. The menu's fixed
+        /// seed and the final overlay's REPLAY THIS GAME leave one with
+        /// Systems_EpisodeSeed on the way here. It is taken in either mode so it
+        /// cannot be left lying around, and ignored in Training, where the
+        /// serialized value is the run's identity.
         /// </summary>
         private uint ResolveSeed()
         {
+            uint requested = Systems_EpisodeSeed.TakeRequestedGameSeed();
+
+            if (_simMode == Systems_SimMode.Game && requested != 0u)
+            {
+                return requested;
+            }
+
             if (_simMode != Systems_SimMode.Game || !_varySeedPerGame)
             {
                 return _episodeSeed;

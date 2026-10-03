@@ -97,7 +97,55 @@ namespace PoFootball.Views
         /// Distance from the bottom of the status bar to the top of the result
         /// banner: the scoreboard's own height plus a gap.
         /// </summary>
-        private const int BANNER_CLEARANCE = 156;
+        private const int BANNER_CLEARANCE = 164;
+
+        /// <summary>
+        /// How far a pointer may travel, in panel units, and still be a tap. The
+        /// panel is 1080 wide on every device, so this is about a fiftieth of the
+        /// screen — more than a thumb wobbles, less than anyone drags on purpose.
+        /// </summary>
+        private const float TAP_SLOP = 22f;
+
+        /// <summary>Longest press, in seconds, that still counts as a tap.</summary>
+        private const float TAP_SECONDS = 0.4f;
+
+        /// <summary>Fraction the shot opens or closes per notch of a mouse wheel.</summary>
+        private const float WHEEL_ZOOM_STEP = 0.1f;
+
+        /// <summary>Fingers the field surface tracks: one drags, two pinch.</summary>
+        private const int MAX_POINTERS = 2;
+
+        private const int NO_POINTER = -1;
+
+        /// <summary>Metres per second at and above which the focus badge reads SPRINT.</summary>
+        private const float SPRINT_SPEED = 6.5f;
+
+        /// <summary>Below this a player is standing, whatever his rigidbody is doing.</summary>
+        private const float MOVING_SPEED = 1.5f;
+
+        /// <summary>Drive command at or below which a moving player is pulling up.</summary>
+        private const float BRAKE_DRIVE = -0.25f;
+
+        /// <summary>
+        /// What the focused player is doing, as one word. Ordered by what a viewer
+        /// would say first: he has the ball beats he is running.
+        /// </summary>
+        private enum FocusState
+        {
+            None = 0,
+            Ball = 1,
+            Throw = 2,
+            Sprint = 3,
+            Brake = 4,
+            Run = 5,
+            Set = 6
+        }
+
+        /// <summary>Indexed by <see cref="FocusState"/>. Literals, so the badge never allocates.</summary>
+        private static readonly string[] FocusStateLabels =
+        {
+            string.Empty, "BALL", "THROW", "SPRINT", "BRAKE", "RUN", "SET"
+        };
 
         /// <summary>How long a result banner stays up before fading itself out.</summary>
         private const float BANNER_SECONDS = 2.2f;
@@ -213,6 +261,46 @@ namespace PoFootball.Views
         private float _driveYards;
 
         private Button _speedButton;
+        private Button _pauseButton;
+        private Button _autoCamButton;
+        private bool _lastPaused;
+        private bool _lastManualView;
+
+        // Timeouts left, three pips under each team's name. Guarded on the count.
+        private VisualElement[] _homeTimeoutPips;
+        private VisualElement[] _awayTimeoutPips;
+        private int _lastHomeTimeouts = -1;
+        private int _lastAwayTimeouts = -1;
+
+        // The viewer's hand on the broadcast. The system records what was asked
+        // for; the model is read back for the card and the AUTO CAM chip.
+        private Systems_SpectatorModel _spectator;
+        private Systems_SpectatorSystem _spectatorSystem;
+        private Systems_IIntentSource _intents;
+
+        /// <summary>
+        /// The camera a tap is converted through. Cached once in Start; only ever
+        /// read, never written — Systems_BroadcastCameraView stays its one writer.
+        /// </summary>
+        private Camera _fieldCamera;
+
+        private VisualElement _fieldSurface;
+        private readonly int[] _pointerIds = { NO_POINTER, NO_POINTER };
+        private readonly Vector2[] _pointerPositions = new Vector2[MAX_POINTERS];
+        private Vector2 _tapStart;
+        private float _tapStartTime;
+        private bool _tapCandidate;
+
+        // The focus card: the tapped player's role, state, speed and fatigue.
+        private VisualElement _focusCard;
+        private Label _focusRole;
+        private Label _focusState;
+        private Label _focusSpeed;
+        private VisualElement _focusFatigueFill;
+        private int _lastFocusId = Systems_SpectatorModel.NO_FOCUS;
+        private int _lastFocusMph = -1;
+        private int _lastFocusFatiguePercent = -1;
+        private FocusState _lastFocusState = FocusState.None;
 
         [Inject]
         public void Construct(
@@ -221,6 +309,9 @@ namespace PoFootball.Views
             Systems_BallModel ball,
             Systems_PlayerRegistry registry,
             Systems_SimSpeedSystem simSpeed,
+            Systems_SpectatorModel spectator,
+            Systems_SpectatorSystem spectatorSystem,
+            Systems_IIntentSource intents,
             Systems_BoxScore boxScore,
             ISubscriber<Systems_DownResolvedMessage> resolvedSubscriber,
             ISubscriber<Systems_GameOverMessage> gameOverSubscriber,
@@ -232,6 +323,9 @@ namespace PoFootball.Views
             _ball = ball;
             _registry = registry;
             _simSpeed = simSpeed;
+            _spectator = spectator;
+            _spectatorSystem = spectatorSystem;
+            _intents = intents;
             _boxScore = boxScore;
             _resolvedSubscriber = resolvedSubscriber;
             _gameOverSubscriber = gameOverSubscriber;
@@ -241,6 +335,10 @@ namespace PoFootball.Views
 
         protected override void Start()
         {
+            // Before base.Start, which builds the UI: once, here, and never per
+            // frame (.claude/rules/performance.md).
+            _fieldCamera = Camera.main;
+
             base.Start();
 
             _resolvedSubscription = _resolvedSubscriber?.Subscribe(OnDownResolved);
@@ -272,6 +370,11 @@ namespace PoFootball.Views
             VisualElement layer = Systems_UiTheme.Layer();
             Root.Add(layer);
 
+            // FIRST, SO IT IS UNDER EVERYTHING. The field surface is the one element
+            // in this tree that takes taps aimed at the game, and it must lose to
+            // every button drawn after it.
+            layer.Add(BuildFieldSurface());
+
             layer.Add(BuildScoreboard());
 
             // ORDER IS Z-ORDER. The carrier chip and the speed control sit over the
@@ -279,6 +382,7 @@ namespace PoFootball.Views
             // The way out of a live game is the status HUD's MENU chip, on its own
             // panel above all of this.
             layer.Add(BuildCarrierChip());
+            layer.Add(BuildFocusCard());
             layer.Add(BuildSpeedControl());
 
             _bannerOverlay = BuildBanner();
@@ -330,9 +434,11 @@ namespace PoFootball.Views
             Systems_UiTheme.SetPadding(
                 bar, Systems_UiTheme.SPACE_S, Systems_UiTheme.SPACE_M);
 
-            bar.Add(BuildTeamBlock(Systems_TeamId.Home, out _homeScore, out _homePossession));
+            bar.Add(BuildTeamBlock(
+                Systems_TeamId.Home, out _homeScore, out _homePossession, out _homeTimeoutPips));
             bar.Add(BuildSituation());
-            bar.Add(BuildTeamBlock(Systems_TeamId.Away, out _awayScore, out _awayPossession));
+            bar.Add(BuildTeamBlock(
+                Systems_TeamId.Away, out _awayScore, out _awayPossession, out _awayTimeoutPips));
             return bar;
         }
 
@@ -486,7 +592,10 @@ namespace PoFootball.Views
         }
 
         private static VisualElement BuildTeamBlock(
-            Systems_TeamId team, out Label scoreLabel, out VisualElement possessionDot)
+            Systems_TeamId team,
+            out Label scoreLabel,
+            out VisualElement possessionDot,
+            out VisualElement[] timeoutPips)
         {
             VisualElement block = Systems_UiTheme.Column();
             block.style.alignItems = Align.Center;
@@ -529,7 +638,53 @@ namespace PoFootball.Views
 
             block.Add(nameRow);
             block.Add(scoreLabel);
+            block.Add(BuildTimeoutPips(team, out timeoutPips));
             return block;
+        }
+
+        /// <summary>
+        /// Timeouts left, as the three bars every broadcast scoreboard draws under
+        /// a team's name. A spent one dims rather than disappears, so the row keeps
+        /// its width and a viewer can count what is gone as well as what is left.
+        /// </summary>
+        private static VisualElement BuildTimeoutPips(Systems_TeamId team, out VisualElement[] pips)
+        {
+            const int PIP_WIDTH = 20;
+            const int PIP_HEIGHT = 4;
+
+            VisualElement row = Systems_UiTheme.Row();
+            row.style.justifyContent = Justify.Center;
+            row.style.marginTop = Systems_UiTheme.SPACE_XS;
+            row.pickingMode = PickingMode.Ignore;
+
+            pips = new VisualElement[Systems_GameRules.TIMEOUTS_PER_HALF];
+
+            for (int pipIndex = 0; pipIndex < pips.Length; pipIndex++)
+            {
+                VisualElement pip = new VisualElement();
+                pip.style.width = PIP_WIDTH;
+                pip.style.height = PIP_HEIGHT;
+                pip.style.marginLeft = Systems_UiTheme.SPACE_XS / 2;
+                pip.style.marginRight = Systems_UiTheme.SPACE_XS / 2;
+                pip.style.backgroundColor = Systems_UiTheme.ColorOf(team);
+                pip.pickingMode = PickingMode.Ignore;
+                Systems_UiTheme.SetRadius(pip, PIP_HEIGHT / 2);
+
+                pips[pipIndex] = pip;
+                row.Add(pip);
+            }
+
+            return row;
+        }
+
+        private static void RefreshTimeoutPips(VisualElement[] pips, int remaining)
+        {
+            const float SPENT_OPACITY = 0.18f;
+
+            for (int pipIndex = 0; pipIndex < pips.Length; pipIndex++)
+            {
+                pips[pipIndex].style.opacity = pipIndex < remaining ? 1f : SPENT_OPACITY;
+            }
         }
 
         // --- Carrier chip and speed control ------------------------------------
@@ -607,7 +762,9 @@ namespace PoFootball.Views
         }
 
         /// <summary>
-        /// The viewer's playback speed, 1x / 2x / 4x, one tap to cycle.
+        /// The transport: pause, and the viewer's playback speed — 1x / 2x / 4x /
+        /// 0.5x, one tap to cycle — with AUTO CAM beside them once the shot has
+        /// been moved by hand.
         ///
         /// Bottom centre, above the status footer: the thumb's natural reach on a
         /// portrait phone, and the one edge of the screen the status HUD leaves
@@ -624,19 +781,37 @@ namespace PoFootball.Views
             strip.style.justifyContent = Justify.Center;
             strip.pickingMode = PickingMode.Ignore;
 
-            _speedButton = Systems_UiTheme.Button(
-                SpeedLabel(_simSpeed == null ? 1f : _simSpeed.Speed),
-                Systems_UiTheme.SurfaceRaised,
-                OnSpeedTapped);
+            // PAUSE, SPEED, AUTO CAM — in that order, with the speed in the middle
+            // where it has always been. AUTO CAM takes no room until the viewer has
+            // moved the shot, so the two controls that are always there do not
+            // shift when it appears on a screen where it never has.
+            _pauseButton = BuildTransportButton("PAUSE", OnPauseTapped);
+            _pauseButton.style.marginRight = Systems_UiTheme.SPACE_S;
+            strip.Add(_pauseButton);
 
-            _speedButton.style.color = Systems_UiTheme.TextPrimary;
-            _speedButton.style.minWidth = Systems_UiTheme.TAP_TARGET * 1.5f;
-            _speedButton.style.height = Systems_UiTheme.TAP_TARGET;
+            _speedButton = BuildTransportButton(
+                SpeedLabel(_simSpeed == null ? 1f : _simSpeed.Speed), OnSpeedTapped);
             _speedButton.style.fontSize = Systems_UiTheme.TEXT_TITLE;
-            _speedButton.style.opacity = 0.85f;
-
             strip.Add(_speedButton);
+
+            _autoCamButton = BuildTransportButton("AUTO CAM", OnAutoCamTapped);
+            _autoCamButton.style.position = Position.Absolute;
+            _autoCamButton.style.right = Systems_UiTheme.SPACE_M;
+            _autoCamButton.style.display = DisplayStyle.None;
+            strip.Add(_autoCamButton);
+
             return strip;
+        }
+
+        private static Button BuildTransportButton(string label, Action onClick)
+        {
+            Button button = Systems_UiTheme.Button(label, Systems_UiTheme.SurfaceRaised, onClick);
+            button.style.color = Systems_UiTheme.TextPrimary;
+            button.style.minWidth = Systems_UiTheme.TAP_TARGET * 1.5f;
+            button.style.height = Systems_UiTheme.TAP_TARGET;
+            button.style.fontSize = Systems_UiTheme.TEXT_BODY;
+            button.style.opacity = 0.85f;
+            return button;
         }
 
         private void OnSpeedTapped()
@@ -650,6 +825,53 @@ namespace PoFootball.Views
             _speedButton.text = SpeedLabel(_simSpeed.Speed);
         }
 
+        private void OnPauseTapped()
+        {
+            if (_simSpeed == null)
+            {
+                return;
+            }
+
+            _simSpeed.TogglePause();
+        }
+
+        private void OnAutoCamTapped()
+        {
+            _spectatorSystem?.ResetView();
+        }
+
+        /// <summary>
+        /// Keeps the pause label and the AUTO CAM chip in step with what they
+        /// control. Polled, because the things they reflect have other writers: a
+        /// drag on the field makes the view manual, and a rematch resets a pause.
+        /// </summary>
+        private void RefreshTransport()
+        {
+            if (_pauseButton == null)
+            {
+                return;
+            }
+
+            bool paused = _simSpeed != null && _simSpeed.IsPaused;
+
+            if (paused != _lastPaused)
+            {
+                _lastPaused = paused;
+                _pauseButton.text = paused ? "PLAY" : "PAUSE";
+                _pauseButton.style.color = paused
+                    ? Systems_UiTheme.Positive
+                    : Systems_UiTheme.TextPrimary;
+            }
+
+            bool manual = _spectator != null && _spectator.IsManual && !_gameOver;
+
+            if (manual != _lastManualView)
+            {
+                _lastManualView = manual;
+                _autoCamButton.style.display = manual ? DisplayStyle.Flex : DisplayStyle.None;
+            }
+        }
+
         private static string SpeedLabel(float speed)
         {
             if (speed >= 4f)
@@ -657,7 +879,427 @@ namespace PoFootball.Views
                 return "4×";
             }
 
-            return speed >= 2f ? "2×" : "1×";
+            if (speed >= 2f)
+            {
+                return "2×";
+            }
+
+            return speed >= 1f ? "1×" : "0.5×";
+        }
+
+        // --- The field surface: tap, drag, pinch ---------------------------------
+
+        /// <summary>
+        /// A transparent, full-screen element under every other piece of HUD, which
+        /// is what turns a touch on the field into something the game can act on.
+        ///
+        /// WHY UI TOOLKIT EVENTS AND NOT AN InputAction. A pointer action fires for
+        /// every touch on the display, including the ones that landed on PAUSE or
+        /// MENU, and working out which is which means repeating the panel's own hit
+        /// test. Taking the events here means the panel has already done it: this
+        /// element only ever hears the touches nothing above it wanted.
+        ///
+        /// THE ONE PICKABLE THING IN A TREE THAT IS OTHERWISE DELIBERATELY NOT.
+        /// Systems_ScreenView explains at length why a full-screen pickable element
+        /// swallows taps meant for panels underneath. There is nothing underneath
+        /// during a game — the field is not UI — and the two documents drawn above
+        /// this one (the replay strip and the status HUD) are picked first. It is
+        /// switched off at the final whistle, when the post-game screens take over.
+        /// </summary>
+        private VisualElement BuildFieldSurface()
+        {
+            _fieldSurface = new VisualElement { name = "FieldSurface" };
+            Systems_UiTheme.FillParent(_fieldSurface);
+            _fieldSurface.pickingMode = PickingMode.Position;
+
+            _fieldSurface.RegisterCallback<PointerDownEvent>(OnFieldPointerDown);
+            _fieldSurface.RegisterCallback<PointerMoveEvent>(OnFieldPointerMove);
+            _fieldSurface.RegisterCallback<PointerUpEvent>(OnFieldPointerUp);
+            _fieldSurface.RegisterCallback<PointerCancelEvent>(OnFieldPointerCancel);
+            _fieldSurface.RegisterCallback<WheelEvent>(OnFieldWheel);
+
+            return _fieldSurface;
+        }
+
+        private void OnFieldPointerDown(PointerDownEvent evt)
+        {
+            int slot = PointerSlot(NO_POINTER);
+
+            if (slot < 0)
+            {
+                return;
+            }
+
+            Vector2 position = evt.position;
+
+            _pointerIds[slot] = evt.pointerId;
+            _pointerPositions[slot] = position;
+            _fieldSurface.CapturePointer(evt.pointerId);
+
+            // Only a lone finger can tap. A second one down makes it a pinch, and
+            // lifting either afterwards must not select whoever was underneath.
+            _tapCandidate = ActivePointerCount() == 1;
+            _tapStart = position;
+            _tapStartTime = Time.unscaledTime;
+        }
+
+        private void OnFieldPointerMove(PointerMoveEvent evt)
+        {
+            int slot = PointerSlot(evt.pointerId);
+
+            if (slot < 0)
+            {
+                return;
+            }
+
+            Vector2 position = evt.position;
+            Vector2 previous = _pointerPositions[slot];
+
+            if (ActivePointerCount() == MAX_POINTERS)
+            {
+                Vector2 other = _pointerPositions[1 - slot];
+                float before = (previous - other).magnitude;
+                float after = (position - other).magnitude;
+
+                // Fingers apart closes in, so the framing shrinks by the inverse.
+                if (before > 1f && after > 1f)
+                {
+                    _spectatorSystem.Zoom(before / after);
+                }
+            }
+            else if (!_tapCandidate || (position - _tapStart).sqrMagnitude > TAP_SLOP * TAP_SLOP)
+            {
+                _tapCandidate = false;
+                PanBy(position - previous);
+            }
+
+            _pointerPositions[slot] = position;
+        }
+
+        private void OnFieldPointerUp(PointerUpEvent evt)
+        {
+            int slot = PointerSlot(evt.pointerId);
+
+            if (slot < 0)
+            {
+                return;
+            }
+
+            bool tapped = _tapCandidate
+                && Time.unscaledTime - _tapStartTime <= TAP_SECONDS;
+
+            ReleasePointerSlot(slot, evt.pointerId);
+
+            if (tapped && TryPanelToWorld(evt.position, out Vector2 world))
+            {
+                _spectatorSystem.TapAt(world);
+            }
+
+            _tapCandidate = false;
+        }
+
+        private void OnFieldPointerCancel(PointerCancelEvent evt)
+        {
+            int slot = PointerSlot(evt.pointerId);
+
+            if (slot >= 0)
+            {
+                ReleasePointerSlot(slot, evt.pointerId);
+            }
+
+            _tapCandidate = false;
+        }
+
+        private void OnFieldWheel(WheelEvent evt)
+        {
+            // Wheel towards the viewer opens the shot, away closes it, a fixed step
+            // a notch — the delta's size differs by platform and mouse, its sign
+            // does not.
+            if (Mathf.Approximately(evt.delta.y, 0f))
+            {
+                return;
+            }
+
+            _spectatorSystem.Zoom(1f + (Mathf.Sign(evt.delta.y) * WHEEL_ZOOM_STEP));
+        }
+
+        /// <summary>Index of the slot tracking this pointer, or of a free one for NO_POINTER; -1 if none.</summary>
+        private int PointerSlot(int pointerId)
+        {
+            for (int slot = 0; slot < MAX_POINTERS; slot++)
+            {
+                if (_pointerIds[slot] == pointerId)
+                {
+                    return slot;
+                }
+            }
+
+            return -1;
+        }
+
+        private int ActivePointerCount()
+        {
+            int count = 0;
+
+            for (int slot = 0; slot < MAX_POINTERS; slot++)
+            {
+                if (_pointerIds[slot] != NO_POINTER)
+                {
+                    count++;
+                }
+            }
+
+            return count;
+        }
+
+        private void ReleasePointerSlot(int slot, int pointerId)
+        {
+            _pointerIds[slot] = NO_POINTER;
+
+            if (_fieldSurface.HasPointerCapture(pointerId))
+            {
+                _fieldSurface.ReleasePointer(pointerId);
+            }
+        }
+
+        /// <summary>
+        /// A drag, in panel units, turned into metres on the field. The picture
+        /// follows the finger, so the SHOT moves the other way across and — because
+        /// the panel's y runs down and the world's runs up — the same way vertically.
+        /// </summary>
+        private void PanBy(Vector2 panelDelta)
+        {
+            Rect bounds = UnsafeRoot.worldBound;
+
+            if (_fieldCamera == null || bounds.width <= 0f || bounds.height <= 0f)
+            {
+                return;
+            }
+
+            float worldHeight = _fieldCamera.orthographicSize * 2f;
+            float worldWidth = worldHeight * _fieldCamera.aspect;
+
+            _spectatorSystem.Pan(new Vector2(
+                -panelDelta.x / bounds.width * worldWidth,
+                panelDelta.y / bounds.height * worldHeight));
+        }
+
+        /// <summary>
+        /// Panel position to a point on the field. Through the viewport rather than
+        /// through screen pixels, because the panel scales on width and a panel unit
+        /// is not a pixel on any real device.
+        /// </summary>
+        private bool TryPanelToWorld(Vector2 panelPosition, out Vector2 world)
+        {
+            Rect bounds = UnsafeRoot.worldBound;
+
+            if (_fieldCamera == null || bounds.width <= 0f || bounds.height <= 0f)
+            {
+                world = Vector2.zero;
+                return false;
+            }
+
+            float viewportX = (panelPosition.x - bounds.xMin) / bounds.width;
+            float viewportY = 1f - ((panelPosition.y - bounds.yMin) / bounds.height);
+
+            world = _fieldCamera.ViewportToWorldPoint(new Vector3(viewportX, viewportY, 0f));
+            return true;
+        }
+
+        // --- The focus card -------------------------------------------------------
+
+        /// <summary>
+        /// The player the viewer tapped: who he is, what he is doing, how fast and
+        /// how tired.
+        ///
+        /// ONE CARD, FOR THE ONE PLAYER SOMEBODY ASKED ABOUT — the same reasoning
+        /// as the carrier chip, which answers "who has the ball" without being
+        /// asked. Twenty-two bars over twenty-two ten-pixel shapes would bury them.
+        ///
+        /// THE BADGE IS THE DECISION, NOT A GUESS AT IT. Whether he is braking comes
+        /// from the drive command his policy last emitted (Systems_IIntentSource),
+        /// which is the same tap the intent overlay draws from; the rest is his
+        /// rigidbody. There is no balance gauge because there is no balance: a
+        /// player here is one rigid shape, and a bar for a quantity the simulation
+        /// does not have would be decoration presented as telemetry.
+        ///
+        /// Tapping the card lets him go, as tapping him again does.
+        /// </summary>
+        private VisualElement BuildFocusCard()
+        {
+            VisualElement strip = Systems_UiTheme.Row();
+            strip.style.position = Position.Absolute;
+            strip.style.left = 0;
+            strip.style.right = 0;
+            strip.style.bottom = Systems_UiTheme.STATUS_FOOTER_HEIGHT
+                + Systems_UiTheme.TAP_TARGET + (Systems_UiTheme.SPACE_M * 2);
+            strip.style.justifyContent = Justify.Center;
+            strip.pickingMode = PickingMode.Ignore;
+
+            VisualElement card = Systems_UiTheme.Row();
+            card.style.backgroundColor = Systems_UiTheme.SurfaceOverField;
+            Systems_UiTheme.SetPadding(card, Systems_UiTheme.SPACE_S, Systems_UiTheme.SPACE_M);
+            Systems_UiTheme.SetRadius(card, Systems_UiTheme.RADIUS);
+            Systems_UiTheme.ApplyElevation(card);
+            card.RegisterCallback<ClickEvent>(OnFocusCardClicked);
+
+            _focusRole = Systems_UiTheme.Text(
+                string.Empty, Systems_UiTheme.TEXT_BODY,
+                Systems_UiTheme.TextPrimary, FontStyle.Bold);
+            _focusRole.pickingMode = PickingMode.Ignore;
+
+            _focusState = Systems_UiTheme.Text(
+                string.Empty, Systems_UiTheme.TEXT_CAPTION,
+                Systems_UiTheme.TextPrimary, FontStyle.Bold);
+            _focusState.style.marginLeft = Systems_UiTheme.SPACE_M;
+            _focusState.style.minWidth = 96;
+            _focusState.style.unityTextAlign = TextAnchor.MiddleCenter;
+            _focusState.style.backgroundColor = new Color(
+                Systems_UiTheme.TextPrimary.r, Systems_UiTheme.TextPrimary.g,
+                Systems_UiTheme.TextPrimary.b, 0.12f);
+            _focusState.pickingMode = PickingMode.Ignore;
+            Systems_UiTheme.SetPadding(_focusState, Systems_UiTheme.SPACE_XS, Systems_UiTheme.SPACE_S);
+            Systems_UiTheme.SetRadius(_focusState, Systems_UiTheme.RADIUS / 2);
+
+            _focusSpeed = Systems_UiTheme.Text(
+                MphLabels[0], Systems_UiTheme.TEXT_BODY, Systems_UiTheme.TextPrimary);
+            _focusSpeed.style.marginLeft = Systems_UiTheme.SPACE_M;
+            _focusSpeed.pickingMode = PickingMode.Ignore;
+
+            VisualElement track = new VisualElement();
+            track.style.width = 96;
+            track.style.height = Systems_UiTheme.SPACE_S;
+            track.style.marginLeft = Systems_UiTheme.SPACE_M;
+            track.style.backgroundColor = new Color(
+                Systems_UiTheme.TextMuted.r, Systems_UiTheme.TextMuted.g,
+                Systems_UiTheme.TextMuted.b, 0.3f);
+            track.pickingMode = PickingMode.Ignore;
+            Systems_UiTheme.SetRadius(track, Systems_UiTheme.SPACE_S / 2);
+
+            _focusFatigueFill = new VisualElement();
+            _focusFatigueFill.style.height = Length.Percent(100f);
+            _focusFatigueFill.style.width = Length.Percent(0f);
+            _focusFatigueFill.style.backgroundColor = Systems_UiTheme.Negative;
+            _focusFatigueFill.pickingMode = PickingMode.Ignore;
+            Systems_UiTheme.SetRadius(_focusFatigueFill, Systems_UiTheme.SPACE_S / 2);
+            track.Add(_focusFatigueFill);
+
+            Label release = Systems_UiTheme.Caption("TAP TO RELEASE");
+            release.style.marginLeft = Systems_UiTheme.SPACE_M;
+            release.pickingMode = PickingMode.Ignore;
+
+            card.Add(_focusRole);
+            card.Add(_focusState);
+            card.Add(_focusSpeed);
+            card.Add(track);
+            card.Add(release);
+            strip.Add(card);
+
+            strip.style.display = DisplayStyle.None;
+            _focusCard = strip;
+            return strip;
+        }
+
+        private void OnFocusCardClicked(ClickEvent evt)
+        {
+            _spectatorSystem?.ReleaseFocus();
+        }
+
+        private void RefreshFocus()
+        {
+            if (_focusCard == null || _spectator == null)
+            {
+                return;
+            }
+
+            Systems_IPlayerHandle focus = _spectator.HasFocus && !_gameOver
+                ? _registry.FindById(_spectator.FocusedPlayerId)
+                : null;
+
+            if (focus == null)
+            {
+                if (_lastFocusId != Systems_SpectatorModel.NO_FOCUS)
+                {
+                    _lastFocusId = Systems_SpectatorModel.NO_FOCUS;
+                    _focusCard.style.display = DisplayStyle.None;
+                }
+
+                return;
+            }
+
+            if (focus.Id != _lastFocusId)
+            {
+                _lastFocusId = focus.Id;
+                _focusRole.text = Systems_DisplayText.RoleTag(focus.Role);
+                _focusCard.style.display = DisplayStyle.Flex;
+            }
+
+            // Every frame, not only on a new focus: possession can change under a
+            // player who stays focused, and his team colour is derived from it.
+            Systems_TeamId team = focus.Side == Systems_TeamSide.Offense
+                ? _game.Possession
+                : _game.Possession.Opponent();
+
+            _focusRole.style.color = Systems_UiTheme.ColorOf(team);
+
+            float speed = focus.Velocity.magnitude;
+
+            int mph = Mathf.Clamp(Mathf.RoundToInt(speed * MPS_TO_MPH), 0, MAX_DISPLAY_MPH);
+
+            if (mph != _lastFocusMph)
+            {
+                _lastFocusMph = mph;
+                _focusSpeed.text = MphLabels[mph];
+            }
+
+            int fatiguePercent = Mathf.RoundToInt(Mathf.Clamp01(focus.Fatigue) * 100f);
+
+            if (fatiguePercent != _lastFocusFatiguePercent)
+            {
+                _lastFocusFatiguePercent = fatiguePercent;
+                _focusFatigueFill.style.width = Length.Percent(fatiguePercent);
+            }
+
+            FocusState state = FocusStateOf(focus, speed);
+
+            if (state != _lastFocusState)
+            {
+                _lastFocusState = state;
+                _focusState.text = FocusStateLabels[(int)state];
+            }
+        }
+
+        private FocusState FocusStateOf(Systems_IPlayerHandle player, float speed)
+        {
+            bool live = _play != null && _play.Phase == Systems_PlayPhase.Live;
+
+            Systems_PlayerIntent intent = _intents != null && _intents.Available
+                ? _intents.Read(player.Id)
+                : default;
+
+            // A throw is armed for a decision or two before the ball leaves, and
+            // that is the moment worth a word of its own.
+            if (live && player.IsCarrier && intent.HasAim && intent.ThrowArmed)
+            {
+                return FocusState.Throw;
+            }
+
+            if (player.IsCarrier)
+            {
+                return FocusState.Ball;
+            }
+
+            if (speed < MOVING_SPEED)
+            {
+                return FocusState.Set;
+            }
+
+            if (live && intent.Drive <= BRAKE_DRIVE)
+            {
+                return FocusState.Brake;
+            }
+
+            return speed >= SPRINT_SPEED ? FocusState.Sprint : FocusState.Run;
         }
 
         /// <summary>
@@ -832,10 +1474,28 @@ namespace PoFootball.Views
             menuButton.style.color = Systems_UiTheme.TextPrimary;
             Systems_UiTheme.ApplySecondaryActionSize(menuButton);
 
+            // THE SAME GAME AGAIN, NOT ANOTHER ONE. Everything downstream of the seed
+            // is deterministic, so the seed this game was played on is the whole
+            // game — REMATCH draws a new one, this hands the old one back. The
+            // number is shown so it can be written down or sent to someone: typed
+            // into the menu's GAME SEED sheet it plays this game on their phone.
+            uint seed = Systems_EpisodeSeed.Value;
+
+            Button replayButton = Systems_UiTheme.Button(
+                "REPLAY THIS GAME",
+                Systems_UiTheme.SurfaceRaised,
+                () => Systems_SceneRouter.ReplayGame(seed));
+            replayButton.style.color = Systems_UiTheme.TextPrimary;
+            Systems_UiTheme.ApplySecondaryActionSize(replayButton);
+
+            Label seedCaption = Systems_UiTheme.Caption("SEED " + seed);
+
             overlay.Content.Add(_finalHeadline);
             overlay.Content.Add(_finalCardHost);
             overlay.Content.Add(rematchButton);
+            overlay.Content.Add(replayButton);
             overlay.Content.Add(menuButton);
+            overlay.Content.Add(seedCaption);
             return overlay;
         }
 
@@ -861,6 +1521,8 @@ namespace PoFootball.Views
             RefreshScoreboard(false);
             RefreshCall();
             RefreshCarrier();
+            RefreshFocus();
+            RefreshTransport();
         }
 
         private void RefreshClock()
@@ -940,6 +1602,18 @@ namespace PoFootball.Views
                 _quarter.text = Systems_DisplayText.QuarterLabel(period);
             }
 
+            if (force || _game.HomeTimeouts != _lastHomeTimeouts)
+            {
+                _lastHomeTimeouts = _game.HomeTimeouts;
+                RefreshTimeoutPips(_homeTimeoutPips, _lastHomeTimeouts);
+            }
+
+            if (force || _game.AwayTimeouts != _lastAwayTimeouts)
+            {
+                _lastAwayTimeouts = _game.AwayTimeouts;
+                RefreshTimeoutPips(_awayTimeoutPips, _lastAwayTimeouts);
+            }
+
             if (force || _game.Down != _lastDown)
             {
                 _lastDown = _game.Down;
@@ -1008,7 +1682,9 @@ namespace PoFootball.Views
 
             _bannerDetail.text =
                 $"{Systems_DisplayText.PlayCallLabel(message.Call)}   "
-                + Systems_DisplayText.YardageDetail(message.YardsGained);
+                + Systems_DisplayText.YardageDetail(message.YardsGained)
+                + Systems_DisplayText.TryDetail(message.TwoPointAttempted, message.TwoPointGood)
+                + Systems_DisplayText.TimeoutDetail(message.TimeoutCalled, message.TimeoutTeam);
 
             // The overlay owns its own timer on the panel's scheduler. Nothing here
             // ticks; nothing here allocates a task.
@@ -1079,6 +1755,17 @@ namespace PoFootball.Views
             {
                 _callChip.style.visibility = Visibility.Hidden;
             }
+
+            // The field stops taking taps: there is nobody left to follow, and the
+            // post-game screens that come up now must get every touch. The shot
+            // goes back to the operator so the highlights are framed as intended.
+            if (_fieldSurface != null)
+            {
+                _fieldSurface.pickingMode = PickingMode.Ignore;
+            }
+
+            _spectatorSystem?.ReleaseFocus();
+            _spectatorSystem?.ResetView();
 
             _finalOverlay.Show();
         }

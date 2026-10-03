@@ -60,6 +60,10 @@ namespace PoFootball.Models
         /// </summary>
         public bool IsClockRunning { get; private set; } = true;
 
+        public int HomeTimeouts { get; private set; } = Systems_GameRules.TIMEOUTS_PER_HALF;
+
+        public int AwayTimeouts { get; private set; } = Systems_GameRules.TIMEOUTS_PER_HALF;
+
         /// <summary>Yards from the line of scrimmage to the goal line being attacked.</summary>
         public float YardsToGoal =>
             (Systems_FieldModel.ATTACKING_GOAL_LINE_Y - LineOfScrimmageY) / Systems_FieldModel.YARD;
@@ -70,6 +74,11 @@ namespace PoFootball.Models
         public int ScoreOf(Systems_TeamId team)
         {
             return team == Systems_TeamId.Home ? HomeScore : AwayScore;
+        }
+
+        public int TimeoutsOf(Systems_TeamId team)
+        {
+            return team == Systems_TeamId.Home ? HomeTimeouts : AwayTimeouts;
         }
 
         // --- Mutators. Systems_GameFlowSystem only. --------------------------
@@ -86,6 +95,7 @@ namespace PoFootball.Models
             PlaysRun = 0;
             DriveIndex = 0;
             IsClockRunning = true;
+            ResetTimeouts(Systems_GameRules.TIMEOUTS_PER_HALF);
             StartSeries(lineOfScrimmageY);
         }
 
@@ -124,6 +134,26 @@ namespace PoFootball.Models
             {
                 AwayScore += points;
             }
+        }
+
+        /// <summary>Spends one of a team's timeouts. The caller checks there is one to spend.</summary>
+        public void UseTimeout(Systems_TeamId team)
+        {
+            if (team == Systems_TeamId.Home)
+            {
+                HomeTimeouts = Mathf.Max(0, HomeTimeouts - 1);
+            }
+            else
+            {
+                AwayTimeouts = Mathf.Max(0, AwayTimeouts - 1);
+            }
+        }
+
+        /// <summary>Both teams back to a full set — at the half, and going into overtime.</summary>
+        public void ResetTimeouts(int perTeam)
+        {
+            HomeTimeouts = perTeam;
+            AwayTimeouts = perTeam;
         }
 
         public void CountPlay()

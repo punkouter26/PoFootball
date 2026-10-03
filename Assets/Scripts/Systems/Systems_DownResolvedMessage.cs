@@ -41,6 +41,21 @@ namespace PoFootball.Systems
         /// </summary>
         public readonly float ClockSecondsBurned;
 
+        /// <summary>
+        /// A team stopped the clock after this play. Carried here rather than as a
+        /// message of its own because it is a fact about this whistle: the banner
+        /// that announces the play is the only place a viewer would look for it.
+        /// </summary>
+        public readonly bool TimeoutCalled;
+
+        /// <summary>Who called it. Meaningless unless <see cref="TimeoutCalled"/>.</summary>
+        public readonly Systems_TeamId TimeoutTeam;
+
+        /// <summary>The scoring team went for two rather than taking the kick.</summary>
+        public readonly bool TwoPointAttempted;
+
+        public readonly bool TwoPointGood;
+
         public Systems_DownResolvedMessage(
             Systems_DownResult result,
             Systems_TeamId offense,
@@ -50,7 +65,11 @@ namespace PoFootball.Systems
             int pointsScored,
             int nextDown,
             float nextYardsToGo,
-            float clockSecondsBurned)
+            float clockSecondsBurned,
+            bool timeoutCalled = false,
+            Systems_TeamId timeoutTeam = Systems_TeamId.Home,
+            bool twoPointAttempted = false,
+            bool twoPointGood = false)
         {
             Result = result;
             Offense = offense;
@@ -61,6 +80,10 @@ namespace PoFootball.Systems
             NextDown = nextDown;
             NextYardsToGo = nextYardsToGo;
             ClockSecondsBurned = clockSecondsBurned;
+            TimeoutCalled = timeoutCalled;
+            TimeoutTeam = timeoutTeam;
+            TwoPointAttempted = twoPointAttempted;
+            TwoPointGood = twoPointGood;
         }
     }
 }

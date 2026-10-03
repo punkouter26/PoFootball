@@ -30,6 +30,24 @@ namespace PoFootball.Agents
             return _table == null ? null : _table.ModelFor(group);
         }
 
+        /// <summary>
+        /// Why no model is being handed out, as a clause that completes "because …",
+        /// or empty when the table loaded and matches. The same two facts Report
+        /// logs once at startup, for the DEBUG sheet, which is where someone
+        /// holding a handset can actually read them.
+        /// </summary>
+        internal static string RefusalReason()
+        {
+            EnsureLoaded();
+
+            if (_table == null)
+            {
+                return "no brain table has been built";
+            }
+
+            return _table.MatchesCurrentContract ? string.Empty : _table.RejectionReason;
+        }
+
         private static void EnsureLoaded()
         {
             if (_loaded)

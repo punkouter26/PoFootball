@@ -38,6 +38,7 @@ namespace PoFootball.Systems
         private readonly Systems_GameModel _game;
         private readonly Systems_PlayModel _play;
         private readonly Systems_IKickModel _kickModel;
+        private readonly Systems_SimHealthModel _health;
         private readonly ISubscriber<Systems_PlayEndedMessage> _endedSubscriber;
         private readonly IPublisher<Systems_DownResolvedMessage> _resolvedPublisher;
         private readonly IPublisher<Systems_GameOverMessage> _gameOverPublisher;
@@ -54,10 +55,16 @@ namespace PoFootball.Systems
         /// <summary>Ticks the ball has been live this play, for time of possession.</summary>
         private int _liveTicks;
 
+        // The try after the touchdown Resolve just scored, for the message. Fields
+        // rather than more ref parameters on Resolve; cleared at every whistle.
+        private bool _twoPointAttempted;
+        private bool _twoPointGood;
+
         public Systems_GameFlowSystem(
             Systems_GameModel game,
             Systems_PlayModel play,
             Systems_IKickModel kickModel,
+            Systems_SimHealthModel health,
             ISubscriber<Systems_PlayEndedMessage> endedSubscriber,
             IPublisher<Systems_DownResolvedMessage> resolvedPublisher,
             IPublisher<Systems_GameOverMessage> gameOverPublisher)
@@ -65,6 +72,7 @@ namespace PoFootball.Systems
             _game = game;
             _play = play;
             _kickModel = kickModel;
+            _health = health;
             _endedSubscriber = endedSubscriber;
             _resolvedPublisher = resolvedPublisher;
             _gameOverPublisher = gameOverPublisher;
@@ -87,6 +95,7 @@ namespace PoFootball.Systems
             }
 
             _liveTicks += 1;
+            _health.CountLiveTick();
 
             if (!_game.IsClockRunning)
             {
@@ -236,8 +245,27 @@ namespace PoFootball.Systems
             // is exactly the pathology these tallies were added to chase.
             int downBefore = _game.Down;
 
+            _twoPointAttempted = false;
+            _twoPointGood = false;
+
             Systems_DownResult result = Resolve(
                 message.Outcome, spotY, offense, ref pointsScored);
+
+            // A TIMEOUT IS THE HUDDLE THAT DOES NOT GET CHARGED. Asked only when the
+            // clock would otherwise have kept running, and never on a play the
+            // period already expired during — there is nothing left to save. After
+            // Resolve, because who needs the clock depends on who now has the ball.
+            Systems_TeamId timeoutTeam = offense;
+
+            bool timeoutCalled = !clockStops
+                && !_quarterExpiredMidPlay
+                && TryCallTimeout(out timeoutTeam);
+
+            if (timeoutCalled)
+            {
+                clockStops = true;
+                _timeoutsCalled++;
+            }
 
             // Clock is burned AFTER the down is resolved, so a play that both
             // scores and ends the quarter still counts its points. Expiry then
@@ -290,12 +318,18 @@ namespace PoFootball.Systems
                 pointsScored,
                 _game.Down,
                 _game.YardsToGo,
-                clockBurned));
+                clockBurned,
+                timeoutCalled,
+                timeoutTeam,
+                _twoPointAttempted,
+                _twoPointGood));
 
             CountKick(result);
             _resultCounts[(int)result]++;
 
-            if (downBefore >= Systems_GameRules.DOWNS_PER_SERIES)
+            bool facedFourthDown = downBefore >= Systems_GameRules.DOWNS_PER_SERIES;
+
+            if (facedFourthDown)
             {
                 _fourthDowns++;
             }
@@ -303,14 +337,25 @@ namespace PoFootball.Systems
             // Scrimmage plays only. A kick is spotted at the line by the referee so
             // it contributes zero yards by construction, and counting it would drag
             // the average down without describing anything the offense did.
-            if (message.Outcome != Systems_PlayOutcome.Punt
+            bool isScrimmagePlay = message.Outcome != Systems_PlayOutcome.Punt
                 && message.Outcome != Systems_PlayOutcome.FieldGoalGood
-                && message.Outcome != Systems_PlayOutcome.FieldGoalMissed)
+                && message.Outcome != Systems_PlayOutcome.FieldGoalMissed;
+
+            if (isScrimmagePlay)
             {
                 _scrimmagePlays++;
                 _scrimmageYards += yardsGained;
             }
             _outcomeCounts[(int)message.Outcome]++;
+
+            // The same three numbers the REALISM line reports at the whistle, kept
+            // current so the DEBUG sheet can give the verdict mid-game.
+            _health.RecordPlay(
+                isScrimmagePlay,
+                yardsGained,
+                facedFourthDown,
+                message.Outcome == Systems_PlayOutcome.Touchdown,
+                _game.DriveIndex);
 
             // Progress tally, so a pathological game can be diagnosed without
             // sitting through forty minutes of it to reach the final whistle.
@@ -341,7 +386,8 @@ namespace PoFootball.Systems
                     + $"after {_game.PlaysRun} plays, {_game.DriveIndex} drives. "
                     + $"Punts {_punts}, FG {_fieldGoalsMade}/{_fieldGoalsAttempted}, "
                     + $"safeties {_safeties}, turnovers on downs {_turnoversOnDowns}, "
-                    + $"fumbles lost {_fumblesLost}.");
+                    + $"fumbles lost {_fumblesLost}, timeouts {_timeoutsCalled}, "
+                    + $"2-pt {_twoPointsMade}/{_twoPointsAttempted}.");
 
                 float yardsPerPlay = _scrimmagePlays > 0
                     ? _scrimmageYards / _scrimmagePlays
@@ -379,8 +425,7 @@ namespace PoFootball.Systems
         {
             if (outcome == Systems_PlayOutcome.Touchdown)
             {
-                pointsScored = Systems_GameRules.TOUCHDOWN_POINTS
-                    + Systems_GameRules.EXTRA_POINT_POINTS;
+                pointsScored = Systems_GameRules.TOUCHDOWN_POINTS + TryPoints(offense);
                 _game.AddPoints(offense, pointsScored);
 
                 KickOffTo(offense);
@@ -485,6 +530,103 @@ namespace PoFootball.Systems
         }
 
         /// <summary>
+        /// The try after a touchdown: the kick, which is awarded (see
+        /// Systems_GameRules.EXTRA_POINT_POINTS), or two, which is not.
+        ///
+        /// Called BEFORE the six points are added, so the margins below are worked
+        /// out from the score as it stood plus the touchdown.
+        /// </summary>
+        private int TryPoints(Systems_TeamId scorer)
+        {
+            if (!ShouldGoForTwo(scorer))
+            {
+                return Systems_GameRules.EXTRA_POINT_POINTS;
+            }
+
+            _twoPointAttempted = true;
+            _twoPointsAttempted++;
+            _twoPointGood = _kickModel.IsTwoPointGood();
+
+            if (!_twoPointGood)
+            {
+                return 0;
+            }
+
+            _twoPointsMade++;
+            return Systems_GameRules.TWO_POINT_POINTS;
+        }
+
+        /// <summary>
+        /// Whether the scoring team goes for two. Fourth quarter only, and only at
+        /// the margins where the kick leaves the game a score apart and two does
+        /// not: down two (ties it), down five (inside a field goal), down ten
+        /// (inside one score), up one (makes it a field goal) and up five (makes it
+        /// a touchdown). That is the late-game column of the chart every staff
+        /// carries; earlier in a game the kick is right at every one of them.
+        ///
+        /// Never in overtime: sudden death has already been won by the touchdown.
+        /// </summary>
+        private bool ShouldGoForTwo(Systems_TeamId scorer)
+        {
+            if (_game.Quarter < Systems_GameRules.QUARTER_COUNT
+                || _game.Phase == Systems_GamePhase.Overtime)
+            {
+                return false;
+            }
+
+            int margin = _game.ScoreOf(scorer) + Systems_GameRules.TOUCHDOWN_POINTS
+                - _game.ScoreOf(scorer.Opponent());
+
+            return margin == -10 || margin == -5 || margin == -2 || margin == 1 || margin == 5;
+        }
+
+        /// <summary>
+        /// Whether somebody stops the clock, and who.
+        ///
+        /// Only inside the last minute of a half, and only the team the clock is
+        /// hurting. Before the half that is whoever has the ball. At the end of the
+        /// game it is whoever is not ahead: the offense when it is level or behind,
+        /// and otherwise the DEFENSE, which is the case that matters most — a team
+        /// trailing with the other side running out the clock had no way at all to
+        /// make it stop.
+        ///
+        /// Reads possession AFTER Resolve, so a turnover on downs is judged for the
+        /// team that now has the ball.
+        /// </summary>
+        private bool TryCallTimeout(out Systems_TeamId caller)
+        {
+            caller = _game.Possession;
+
+            if (_game.SecondsRemaining > Systems_GameRules.TIMEOUT_WINDOW_SECONDS
+                || _game.SecondsRemaining <= 0f)
+            {
+                return false;
+            }
+
+            bool endOfGame = _game.Quarter >= Systems_GameRules.QUARTER_COUNT;
+            bool endOfHalf = _game.Quarter == Systems_GameRules.QUARTER_COUNT / 2;
+
+            if (!endOfGame && !endOfHalf)
+            {
+                return false;
+            }
+
+            if (endOfGame
+                && _game.ScoreOf(caller) > _game.ScoreOf(caller.Opponent()))
+            {
+                caller = caller.Opponent();
+            }
+
+            if (_game.TimeoutsOf(caller) <= 0)
+            {
+                return false;
+            }
+
+            _game.UseTimeout(caller);
+            return true;
+        }
+
+        /// <summary>
         /// A carrier ruled down on or behind its own goal line is a safety. The
         /// physics layer has no concept of one — Systems_FieldModel treats leaving
         /// the back of the end zone as out of bounds — so it is recognised here, at
@@ -523,6 +665,9 @@ namespace PoFootball.Systems
         private int _safeties;
         private int _turnoversOnDowns;
         private int _fumblesLost;
+        private int _timeoutsCalled;
+        private int _twoPointsAttempted;
+        private int _twoPointsMade;
 
         /// <summary>
         /// Tallies the rare results, purely so the final log line can prove a game
@@ -629,6 +774,7 @@ namespace PoFootball.Systems
                 if (_game.HomeScore == _game.AwayScore)
                 {
                     _game.BeginOvertime();
+                    _game.ResetTimeouts(Systems_GameRules.TIMEOUTS_IN_OVERTIME);
 
                     // The team that did not receive the opening kickoff receives
                     // again, standing in for the overtime coin toss.
@@ -653,6 +799,7 @@ namespace PoFootball.Systems
             if (nextQuarter == 3)
             {
                 _game.SetPhase(Systems_GamePhase.Halftime);
+                _game.ResetTimeouts(Systems_GameRules.TIMEOUTS_PER_HALF);
 
                 _game.GiveBallTo(
                     _game.OpeningPossession.Opponent(),

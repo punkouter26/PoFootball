@@ -228,6 +228,13 @@ namespace PoFootball.Agents
         /// </summary>
         private Systems_IContactSink _contactSink;
 
+        /// <summary>
+        /// Where this player says whether it got a brain and when the speed clamp
+        /// fires, for the DEBUG sheet. Null-checked for the reason
+        /// <see cref="_intentSink"/> is.
+        /// </summary>
+        private Systems_SimHealthModel _health;
+
         public int Id => _formationSlotIndex;
 
         public Systems_PlayerRole Role => _role;
@@ -276,8 +283,10 @@ namespace PoFootball.Agents
             Systems_SimMode simMode,
             Systems_IIntentSink intentSink,
             Systems_IContactSink contactSink,
-            Systems_FormationSelection formations)
+            Systems_FormationSelection formations,
+            Systems_SimHealthModel health)
         {
+            _health = health;
             _play = play;
             _ball = ball;
             _ballSystem = ballSystem;
@@ -464,6 +473,12 @@ namespace PoFootball.Agents
             // A null model is a valid, supported outcome — ML-Agents runs
             // Heuristic instead, which is a playable game. See Agent_BrainTable.
             behaviorParameters.Model = Agent_BrainRegistry.ModelFor(group);
+
+            if (_health != null)
+            {
+                _health.ReportBrain(
+                    behaviorParameters.Model != null, Agent_BrainRegistry.RefusalReason());
+            }
 
             // The rays, for the same reason as everything above: the scene used to
             // author them and the promotion gate used to read them back out of the
@@ -900,6 +915,11 @@ namespace PoFootball.Agents
             {
                 _rigidbody.linearVelocity = velocity.normalized * maxSpeed;
                 _speedClampHits++;
+
+                if (_health != null)
+                {
+                    _health.CountSpeedClamp();
+                }
             }
         }
 
