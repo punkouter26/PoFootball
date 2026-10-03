@@ -1,0 +1,149 @@
+# PoFootball -- the first config against CONTRACT_REVISION 11.
+#
+# Pairs 1:1 with run-id `football_base13` (UNITY_RULES section 1).
+#
+# Launch (CUDA_VISIBLE_DEVICES=-1 is MANDATORY on this machine -- see CLAUDE.md):
+#   $env:CUDA_VISIBLE_DEVICES = "-1"
+#   mlagents-learn Config/FootballBase13.yaml --run-id=football_base13 `
+#     --env=Builds/FootballEnv/PoFootball.exe --no-graphics `
+#     --base-port=5400 --num-envs=4
+#
+# REBUILD Builds/FootballEnv FIRST (Tools > PoFootball > Build Training Env).
+# Revision 11 changes the RULES with every shape identical, so a revision 10 env
+# is NOT refused by the handshake. That rebuild is on you, not on the stamp.
+#
+# WHY THIS EXISTS: football_base12 (revision 10) trained cleanly and learned a game
+# that was not football. Promoted as Football_v01, it played 18.8 yards a play and
+# 0.78 touchdowns per drive over three games, completing 97% of its passes: the
+# offense had found that a receiver caught in stride could almost never be tackled
+# from beside or behind, and that a receiver a step closer than his defender always
+# made the catch. Both were rules, not training, so revision 11 changes the rules:
+#
+#   Reach tackle   a defender within REACH_TACKLE_RANGE (1.5 m) beside or behind the
+#                  carrier counts as contact for the wrap-up (Systems_Referee
+#                  .CountPursuitReach). In front, the collision still decides.
+#   Pass breakup   a defender within PASS_BREAKUP_RADIUS (1.5 m) of the ball when the
+#                  receiver would catch it makes the pass incomplete
+#                  (Systems_BallSystem.IsContestedByDefense). Deterministic.
+#
+# Measured on the scripted players over four fixed seeds (games with a pinned seed
+# replay exactly, so this is a like-for-like comparison):
+#
+#                       revision 10   revision 11   real football
+#   yards per play          9.13          7.25           ~5.5
+#   TDs per drive           0.42          0.33        0.20-0.35
+#   completion rate          69%           62%            ~65%
+#   median yards after catch  20.0         -0.2
+#
+# What is still out of band there belongs to the scripted players (wide receivers
+# left uncovered, runs losing a yard), which a trained team does not use.
+#
+# EVERY HYPERPARAMETER BELOW IS FootballBase12's, deliberately: the game changed,
+# not the optimizer, so the two runs stay comparable. Budget is the same 7M
+# Offense / 700k Quarterback steps; base12 took 11.0 h of wall clock for it.
+#
+# AFTER IT FINISHES:
+#   .venv\Scripts\python.exe Tools\promote_brain.py --run football_base13 `
+#     --version 02 --num-envs 4
+#   then Unity: Tools > PoFootball > Build Brain Table, Evaluate Realism (3 games),
+#   and promote_brain.py --version 02 --check-realism <report>.
+
+behaviors:
+  # MA-POCA for the two ten- and eleven-man groups; see FootballBase11.yaml for
+  # why, and Systems_BrainGroup for why there are three behaviours, not six.
+  Offense: &football_brain
+    trainer_type: poca
+
+    hyperparameters:
+      batch_size: 512
+      buffer_size: 10240
+      learning_rate: 3.0e-4
+      beta: 5.0e-3
+      epsilon: 0.2
+      lambd: 0.95
+      num_epoch: 3
+      learning_rate_schedule: constant
+      beta_schedule: constant
+      epsilon_schedule: constant
+
+    network_settings:
+      normalize: false            # Sensor_FootballState emits [-1, 1] already;
+                                  # Systems_ContractTests asserts this stays off.
+      hidden_units: 256
+      num_layers: 2
+      vis_encode_type: simple
+
+    reward_signals:
+      extrinsic:
+        gamma: 0.99
+        strength: 1.0
+
+    keep_checkpoints: 20
+    checkpoint_interval: 100000
+    max_steps: 7000000
+
+    # One whole play: MAX_PHYSICS_TICKS 600 / DECISION_PERIOD 5. Pinned by
+    # Systems_ContractTests.
+    time_horizon: 120
+
+    summary_freq: 50000
+    threaded: false               # deterministic ordering (UNITY_RULES section 2)
+
+  Defense:
+    <<: *football_brain
+
+  Quarterback:
+    <<: *football_brain
+    trainer_type: ppo
+    max_steps: 700000
+    hyperparameters:
+      batch_size: 256
+      buffer_size: 2048
+      learning_rate: 3.0e-4
+      beta: 5.0e-2                # ten times the movement brains; see Base11
+      epsilon: 0.2
+      lambd: 0.95
+      num_epoch: 3
+      learning_rate_schedule: constant
+      beta_schedule: constant
+      epsilon_schedule: constant
+
+environment_parameters:
+  spot_lesson:
+    curriculum:
+      - name: RedZone
+        completion_criteria:
+          measure: progress
+          behavior: Offense
+          signal_smoothing: false
+          min_lesson_length: 0
+          threshold: 0.1
+        value: 0.0
+      - name: OpenFieldEarlyDowns
+        completion_criteria:
+          measure: progress
+          behavior: Offense
+          signal_smoothing: false
+          min_lesson_length: 0
+          threshold: 0.3
+        value: 1.0
+      - name: FullGame
+        value: 2.0
+
+env_settings:
+  # --env, --num-envs and --base-port go on the command line (see the header).
+  # Record --num-envs in the run's MANIFEST.md; promote_brain.py does it for you.
+  seed: 1
+
+engine_settings:
+  time_scale: 20                  # physics stays at dt=0.02; this only speeds the clock
+  quality_level: 0
+  target_frame_rate: -1
+  capture_frame_rate: 60
+
+torch_settings:
+  device: cpu                     # Not sufficient alone: launch with
+                                  # CUDA_VISIBLE_DEVICES=-1 (see CLAUDE.md).
+
+checkpoint_settings:
+  results_dir: results

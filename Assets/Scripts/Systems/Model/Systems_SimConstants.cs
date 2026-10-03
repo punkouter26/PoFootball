@@ -117,6 +117,29 @@ namespace PoFootball.Models
         public const int SUSTAINED_TACKLE_TICKS = 10;
 
         /// <summary>
+        /// Centre-to-centre metres inside which a defender beside or behind the
+        /// carrier counts as having a hand on him (Systems_Referee.CountPursuitReach).
+        /// Two bodies touch at 2 x PLAYER_RADIUS = 1.0 m; the half metre beyond is an
+        /// arm. Revision 11.
+        /// </summary>
+        public const float REACH_TACKLE_RANGE = 1.5f;
+
+        /// <summary>
+        /// Cosine of the cone in front of the carrier where reach does NOT count —
+        /// 0.5 is 60 degrees either side of his direction of travel. A defender there
+        /// tackles by collision, as he always has.
+        /// </summary>
+        public const float REACH_TACKLE_FRONT_COS = 0.5f;
+
+        /// <summary>
+        /// Metres from the ball within which a defender breaks up a catch the
+        /// receiver would otherwise make (Systems_BallSystem.IsContestedByDefense).
+        /// A little beyond CATCH_RADIUS: the receiver needs the ball in his hands,
+        /// the defender only needs a hand on it. Revision 11.
+        /// </summary>
+        public const float PASS_BREAKUP_RADIUS = 1.5f;
+
+        /// <summary>
         /// How many physics ticks of BROKEN contact a wrap-up survives before the
         /// count restarts. 3 ticks = 0.06 s.
         ///

@@ -84,18 +84,16 @@ Config/archive/                configs for superseded contracts; they will NOT r
 results/<run-id>/MANIFEST.md   one per run — records --num-envs, which is part of the run's identity
 ```
 
-**`Assets/Agents/Football_v01` is promoted** (from `football_base12`, contract
-revision 10, 7M steps, 2026-10-03) and `Resources/PoFootballBrains.asset` lists it,
-so all 22 players run trained brains — verified in a played game: 22 of 22 agents
-with a model, none in heuristic mode. **It FAILS the realism gate**: 18.8 yards per
-play and 0.78 touchdowns per drive over three games (see its MANIFEST.md). The
-offense learned that a receiver caught in stride can rarely be tackled from beside
-or behind, which is a rules defect, not a training one. When the contract moves
-past revision 10 the stamp refuses this table and every player falls back to
-`Heuristic` until a matching run is promoted.
+**`Assets/Agents/Football_v01` is promoted but REFUSED, so every player runs
+`Heuristic` until `football_base13` is promoted.** v01 came from `football_base12`
+(contract revision 10, 7M steps, 2026-10-03); while the build was on revision 10 all
+22 players ran it — verified in a played game, 22 of 22 agents with a model. It
+FAILS the realism gate (18.8 yards per play, 0.78 TDs per drive, 97% completions;
+see its MANIFEST.md) because the offense found two rules defects, and fixing those
+rules is revision 11, which the table's revision 10 stamp now correctly refuses.
 
-`Assets/Agents/Football_v01` and that table both existed until 2026-08-22 and were
-deleted, for the reason the stamp exists. They came from `football_base08` at
+An EARLIER `Assets/Agents/Football_v01` and its table existed until 2026-08-22 and
+were deleted, for the reason the stamp exists. They came from `football_base08` at
 **contract revision 4** against a build now on **revision 7**. The table was worse
 than merely old: it carried six entries numbered 0..5 from the six-brain-group era,
 and `Systems_BrainGroup` has had three members since revision 7, so entries 3-5 were
@@ -113,8 +111,15 @@ To promote: train against a config for the CURRENT contract revision, run
 Editor. That last step is not optional — the Python side copies `.onnx` files but
 cannot write the ScriptableObject that lists them.
 
-**THE CURRENT REVISION IS 10, AND `Config/FootballBase12.yaml` IS ITS CONFIG. NO
-RUN AGAINST IT EXISTS YET.** Revision 9 gave the quarterback's aim precision an
+**THE CURRENT REVISION IS 11, AND `Config/FootballBase13.yaml` IS ITS CONFIG.**
+Revision 11 changed two RULES, shapes untouched: a defender within 1.5 m beside or
+behind the carrier counts as contact for the wrap-up (`Systems_Referee
+.CountPursuitReach`), and a defender within 1.5 m of the ball breaks up a catch
+(`Systems_BallSystem.IsContestedByDefense`). On the scripted players over four
+fixed seeds that took the game from 9.13 to 7.25 yards per play, 0.42 to 0.33 TDs
+per drive and 69% to 62% completions; the FootballBase13 header has the table.
+
+Revision 10 (FootballBase12, now archived) was: Revision 9 gave the quarterback's aim precision an
 effect (a pass can now miss); no run was ever made against it. Revision 10 batched
 four more contract changes on top — rear-facing rays (52 -> 84 ray floats, now
 fixed in `Sensor_RayContract` rather than the scenes), body-frame own velocity, and
@@ -130,16 +135,21 @@ run that ended in a tackle), a block no longer outpays the time cost, and there 
 no pursuit reward while the ball is in the air.
 
 Every config for an older contract is in `Config/archive/`, including
-FootballBase06-11, FootballLong01 and the six `experiments/` variants. Until a
-revision 10 run exists and is promoted, every player is a heuristic.
+FootballBase06-12, FootballLong01 and the six `experiments/` variants. Until a
+revision 11 run is promoted, every player is a heuristic.
+
+**Judge balance on fixed seeds.** Games with a pinned seed (`Systems_GameLifetimeScope
+._varySeedPerGame` off, `_episodeSeed` set) replay exactly, and today's single
+games ranged 6.7-13.1 yards a play on unchanged code, so comparisons of one game
+each are noise. Compare means over the same four seeds.
 
 Note that `m_Model` references serialized in the scenes are dead either way:
 `Agent_FootballPlayer` assigns `behaviorParameters.Model` from
 `Agent_BrainRegistry` at `Awake`, overwriting whatever the scene held.
 
 Heuristic-only is a supported, playable state, not a bug — but nothing you watch
-right now is a trained policy. **To change that, train `football_base12` and
-promote it.** No such run exists yet — see above.
+right now is a trained policy. **To change that, promote `football_base13`** when
+it finishes — see above.
 
 **Scenes.** `SCN_MENU` (front end) → `SCN_GAME` (a scored game) and
 `SCN_TRAIN_FOOTBALL` (the trainer's endless single plays). All three share one
@@ -184,7 +194,7 @@ different dynamics than it was fitted against.
 
 # In-editor smoke test: start the trainer, then press Play.
 $env:CUDA_VISIBLE_DEVICES = "-1"     # MANDATORY on this machine. See below.
-mlagents-learn Config\FootballBase12.yaml --run-id=football_base12
+mlagents-learn Config\FootballBase13.yaml --run-id=football_base13
 
 # Headless sweep — envs take CONSECUTIVE ports from --base-port.
 # REBUILD Builds/FootballEnv FIRST whenever the contract revision moved:
@@ -193,7 +203,7 @@ mlagents-learn Config\FootballBase12.yaml --run-id=football_base12
 # stale env is NOT always refused by the handshake. That rebuild is on you.
 # --num-envs=4: measured 257.7 / 255.1 / 236.3 steps/s at 2 / 4 / 12 envs
 # (rl_optimization_log.md); the trainer is the bottleneck.
-mlagents-learn Config\FootballBase12.yaml --run-id=football_base12 `
+mlagents-learn Config\FootballBase13.yaml --run-id=football_base13 `
   --env=Builds\FootballEnv\PoFootball.exe --no-graphics `
   --base-port=5400 --num-envs=4
 
@@ -267,7 +277,7 @@ for `cpu`, the `else` branch only sets the dtype — it never puts the default d
 back. Hiding the GPU is what fixes it. Use `-1`; an empty string is ignored on Windows.
 
 `Config/archive/FootballBase06.yaml` (long superseded — the live config is
-`FootballBase12.yaml`, three behaviors, revision 10) carried **six** behaviors. The quarterback has its own brain
+`FootballBase13.yaml`, three behaviors, revision 11) carried **six** behaviors. The quarterback has its own brain
 — it is the only one with discrete actions, and while it shared `OffenseSkill`
 with the backs and receivers its play-call gradient was diluted five to one and
 its entropy bonus could not be raised without injecting noise into four other

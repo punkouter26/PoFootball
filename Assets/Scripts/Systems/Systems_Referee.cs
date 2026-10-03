@@ -253,6 +253,84 @@ namespace PoFootball.Systems
             if (_play.PhysicsTick >= Systems_PlayModel.MAX_PHYSICS_TICKS)
             {
                 EndPlay(Systems_PlayOutcome.TimeExpired, position);
+                return;
+            }
+
+            CountPursuitReach(carrier);
+        }
+
+        /// <summary>
+        /// A defender within arm's reach of the carrier, beside or behind him, has a
+        /// hand on him — whether or not the two discs are touching this tick.
+        ///
+        /// WHY (revision 11). The wrap-up rule counted only ticks of PHYSICAL contact,
+        /// reported by OnCollisionStay2D. Two discs running level at the same speed
+        /// barely touch, and when they do the impulse pushes them apart, so a
+        /// receiver caught in stride with a defender a metre off his shoulder could
+        /// almost never be brought down: measured, 42 of 96 completions gained more
+        /// than thirty yards AFTER the catch, many with a defender 1-3 m away, and a
+        /// trained offense learned to throw nothing else (97% completions, 18.8
+        /// yards a play). Real tacklers have arms.
+        ///
+        /// IN FRONT IS LEFT TO THE COLLISION. A defender meeting the carrier head-on
+        /// already produces the closing speed TACKLE_CLOSING_SPEED measures, and
+        /// giving him reach as well would end every run at the first man standing in
+        /// the hole. So only an opponent outside REACH_TACKLE_FRONT_COS of the
+        /// carrier's direction of travel counts here.
+        ///
+        /// It feeds ReportSustainedContact unchanged, so the role's own wrap-up time,
+        /// the gang-tackle discount and the grace window all apply exactly as to a
+        /// physical contact. One pass over the roster, no allocation.
+        /// </summary>
+        private void CountPursuitReach(Systems_IPlayerHandle carrier)
+        {
+            if (_play.Phase != Systems_PlayPhase.Live)
+            {
+                return;
+            }
+
+            Vector2 position = carrier.Position;
+            Vector2 velocity = carrier.Velocity;
+
+            // Direction of travel; a carrier barely moving has no "front", and every
+            // side then counts.
+            bool hasHeading = velocity.sqrMagnitude > 0.25f;
+            Vector2 heading = hasHeading ? velocity.normalized : Vector2.zero;
+
+            float reachSquared =
+                Systems_SimConstants.REACH_TACKLE_RANGE * Systems_SimConstants.REACH_TACKLE_RANGE;
+
+            for (int slotIndex = 0; slotIndex < Systems_PlayerRegistry.CAPACITY; slotIndex++)
+            {
+                Systems_IPlayerHandle other = _registry.Get(slotIndex);
+
+                if (other == null || other.Side == carrier.Side)
+                {
+                    continue;
+                }
+
+                Vector2 offset = other.Position - position;
+                float distanceSquared = offset.sqrMagnitude;
+
+                if (distanceSquared > reachSquared || distanceSquared < 0.0001f)
+                {
+                    continue;
+                }
+
+                if (hasHeading
+                    && Vector2.Dot(offset / Mathf.Sqrt(distanceSquared), heading)
+                        > Systems_SimConstants.REACH_TACKLE_FRONT_COS)
+                {
+                    continue;
+                }
+
+                ReportSustainedContact(
+                    other.Id, (other.Velocity - velocity).magnitude);
+
+                if (_play.Phase != Systems_PlayPhase.Live)
+                {
+                    return;
+                }
             }
         }
 

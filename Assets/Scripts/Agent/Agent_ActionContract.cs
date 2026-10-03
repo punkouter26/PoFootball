@@ -204,10 +204,20 @@ namespace PoFootball.Agents
         /// the ball is in the air — but rewards are not part of the contract: they
         /// change what a run learns, not what a trained brain expects to be fed.
         ///
-        /// Nothing is promoted against any revision, so every player still runs
-        /// Heuristic. Config/FootballBase12.yaml is the first config for this one.
+        /// Config/FootballBase12.yaml is the config for revision 10, and
+        /// Assets/Agents/Football_v01 (football_base12) was promoted against it.
+        ///
+        /// Revision 11 changes the RULES of tackling, with every shape identical:
+        /// a defender within Systems_SimConstants.REACH_TACKLE_RANGE of the carrier,
+        /// beside or behind him, now counts as contact for the wrap-up
+        /// (Systems_Referee.CountPursuitReach) whether or not the two bodies are
+        /// touching that tick. Football_v01 learned that a receiver caught in stride
+        /// could almost never be brought down from behind — 97% completions, 18.8
+        /// yards a play — and would be steering a game whose tackling it was never
+        /// fitted to. So it must not load here, and every player runs Heuristic
+        /// until a revision 11 run is promoted.
         /// </summary>
-        public const int CONTRACT_REVISION = 10;
+        public const int CONTRACT_REVISION = 11;
 
         /// <summary>Continuous outputs every brain has: drive and steer.</summary>
         public const int BASE_CONTINUOUS_ACTIONS = 2;

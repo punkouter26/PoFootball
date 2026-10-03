@@ -118,6 +118,23 @@ namespace PoFootball.Systems
 
             Systems_IPlayerHandle catcher = FindCatcher();
 
+            // A CATCH WITH A DEFENDER ON THE BALL IS BROKEN UP (revision 11).
+            //
+            // FindCatcher hands the ball to whoever is nearest inside CATCH_RADIUS,
+            // so a receiver a step closer than his defender always made the catch:
+            // the trained offense completed 97% of its passes, against roughly 65% in
+            // real football. A defender within PASS_BREAKUP_RADIUS of the ball as it
+            // arrives now gets a hand on it and the pass falls incomplete. It is a
+            // rule, not a roll, so a policy can learn exactly what "covered" means;
+            // a defender who is nearest still intercepts, as before.
+            if (catcher != null
+                && catcher.Side == Systems_TeamSide.Offense
+                && IsContestedByDefense())
+            {
+                _ball.MarkIncomplete();
+                return Systems_PlayOutcome.Incompletion;
+            }
+
             if (catcher != null)
             {
                 bool intercepted = catcher.Side == Systems_TeamSide.Defense;
@@ -152,6 +169,35 @@ namespace PoFootball.Systems
             }
 
             return Systems_PlayOutcome.None;
+        }
+
+        /// <summary>
+        /// Whether a defender who could catch the ball — anyone but the defensive
+        /// line, as in FindCatcher — is within PASS_BREAKUP_RADIUS of it now.
+        /// </summary>
+        private bool IsContestedByDefense()
+        {
+            float radiusSquared =
+                Systems_SimConstants.PASS_BREAKUP_RADIUS * Systems_SimConstants.PASS_BREAKUP_RADIUS;
+
+            for (int slotIndex = 0; slotIndex < Systems_PlayerRegistry.CAPACITY; slotIndex++)
+            {
+                Systems_IPlayerHandle candidate = _registry.Get(slotIndex);
+
+                if (candidate == null
+                    || candidate.Side != Systems_TeamSide.Defense
+                    || candidate.Role == Systems_PlayerRole.DefensiveLine)
+                {
+                    continue;
+                }
+
+                if ((candidate.Position - _ball.Position).sqrMagnitude <= radiusSquared)
+                {
+                    return true;
+                }
+            }
+
+            return false;
         }
 
         /// <summary>
