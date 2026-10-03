@@ -84,9 +84,15 @@ Config/archive/                configs for superseded contracts; they will NOT r
 results/<run-id>/MANIFEST.md   one per run — records --num-envs, which is part of the run's identity
 ```
 
-**No brain is promoted, so every player runs `Heuristic`.** `Agent_BrainRegistry`
-finds no `Resources/PoFootballBrains.asset`, `ModelFor` returns null, and the
-built-in heuristic drives all 22 players.
+**`Assets/Agents/Football_v01` is promoted** (from `football_base12`, contract
+revision 10, 7M steps, 2026-10-03) and `Resources/PoFootballBrains.asset` lists it,
+so all 22 players run trained brains — verified in a played game: 22 of 22 agents
+with a model, none in heuristic mode. **It FAILS the realism gate**: 18.8 yards per
+play and 0.78 touchdowns per drive over three games (see its MANIFEST.md). The
+offense learned that a receiver caught in stride can rarely be tackled from beside
+or behind, which is a rules defect, not a training one. When the contract moves
+past revision 10 the stamp refuses this table and every player falls back to
+`Heuristic` until a matching run is promoted.
 
 `Assets/Agents/Football_v01` and that table both existed until 2026-08-22 and were
 deleted, for the reason the stamp exists. They came from `football_base08` at

@@ -1,0 +1,22 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 5264aba841c6ed54ebbca638d25f13d7, type: 3}
+  m_Name: PoFootballBrains
+  m_EditorClassIdentifier: PoFootball.Agents::PoFootball.Agents.Agent_BrainTable
+  _contractRevision: 10
+  _entries:
+  - _group: 0
+    _model: {fileID: 5022602860645237092, guid: 39e4db0efe5f9a64880956acd5a68114, type: 3}
+  - _group: 1
+    _model: {fileID: 5022602860645237092, guid: 1c8547e552d54f341ac929c10dbc9572, type: 3}
+  - _group: 2
+    _model: {fileID: 5022602860645237092, guid: e74c5a7605d025044a11b5fee7cf42bc, type: 3}
