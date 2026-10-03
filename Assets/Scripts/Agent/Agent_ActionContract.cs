@@ -216,8 +216,34 @@ namespace PoFootball.Agents
         /// yards a play — and would be steering a game whose tackling it was never
         /// fitted to. So it must not load here, and every player runs Heuristic
         /// until a revision 11 run is promoted.
+        ///
+        /// Revision 12 changes the MEANING of eight vector observations and the
+        /// DYNAMICS of fatigue, with every shape identical — 36 floats, the same
+        /// action specs — so, like 2, 5, 8, 9 and 11, only this number can refuse a
+        /// stale brain:
+        ///
+        ///     Ball offset, velocity   world frame -> the body's own frame, the
+        ///                             change revision 10 made to own velocity
+        ///     Sideline distances      removed; x was already there (NormalizeX)
+        ///     Own spin                new, in the first of those two slots
+        ///     Play clock              new, in the second
+        ///     Fatigue                 rested between plays, not cleared
+        ///                             (FATIGUE_CARRIED_BETWEEN_PLAYS); gain
+        ///                             0.030 -> 0.050; contact impulse is a third
+        ///                             load term
+        ///
+        /// A revision 11 brain would read the ball in the wrong frame and two
+        /// sideline distances out of the spin and clock slots, without one shape
+        /// check noticing. results/football_base13 is fitted against revision 11
+        /// and must not be promoted from a revision 12 working tree: check out the
+        /// commit it was trained at first, or Build Brain Table will stamp it 12.
+        ///
+        /// The reward moved alongside, and as ever is not part of the contract: a
+        /// play that runs out the clock is priced as a tackle, reaching the line to
+        /// gain pays FIRST_DOWN_REWARD, and COMPLETION_REWARD fell 0.6 -> 0.45.
+        /// Config/FootballBase14.yaml is the config for revision 12.
         /// </summary>
-        public const int CONTRACT_REVISION = 11;
+        public const int CONTRACT_REVISION = 12;
 
         /// <summary>Continuous outputs every brain has: drive and steer.</summary>
         public const int BASE_CONTINUOUS_ACTIONS = 2;

@@ -62,6 +62,73 @@ namespace PoFootball.Tests
             Assert.That(forLoss, Is.LessThan(afterGain));
         }
 
+        /// <summary>
+        /// Holding the ball until the tick cap was the cheaper way to lose a down
+        /// through football_base13 — half a tackle — and a quarter of all plays
+        /// ended there. The time cost is not counted here, so equality is enough:
+        /// it only ever makes the stall worse.
+        /// </summary>
+        [Test]
+        public void RunningOutTheClock_IsNoCheaperThanBeingTackled()
+        {
+            float timeout = Reward_Terminal.For(
+                Systems_TeamSide.Offense, Systems_PlayOutcome.TimeExpired, 4f, false);
+            float tackle = Reward_Terminal.For(
+                Systems_TeamSide.Offense, Systems_PlayOutcome.Tackle, 4f, false);
+
+            Assert.That(timeout, Is.LessThanOrEqualTo(tackle));
+        }
+
+        [Test]
+        public void ReachingTheLineToGain_PaysOnATackleButNeverOnAStall()
+        {
+            float converted = Reward_Terminal.For(
+                Systems_TeamSide.Offense, Systems_PlayOutcome.Tackle, 11f, false, true);
+            float stopped = Reward_Terminal.For(
+                Systems_TeamSide.Offense, Systems_PlayOutcome.Tackle, 11f, false, false);
+
+            Assert.That(
+                converted - stopped,
+                Is.EqualTo(Systems_SimConstants.FIRST_DOWN_REWARD).Within(1e-6f));
+
+            Assert.That(
+                Reward_Terminal.For(
+                    Systems_TeamSide.Offense, Systems_PlayOutcome.TimeExpired, 11f, false, true),
+                Is.EqualTo(Reward_Terminal.For(
+                    Systems_TeamSide.Offense, Systems_PlayOutcome.TimeExpired, 11f, false, false)),
+                "a play that ran out the clock was paid for the first down it stalled past");
+        }
+
+        /// <summary>
+        /// The best ordinary play — a completion past the sticks — must still be
+        /// worth less than scoring, or a drive has no reason to finish.
+        /// </summary>
+        [Test]
+        public void ACompletionForAFirstDown_IsStillWorthLessThanATouchdown()
+        {
+            float bestStop = Reward_Terminal.For(
+                Systems_TeamSide.Offense, Systems_PlayOutcome.Tackle, 30f, true, true);
+            float touchdown = Reward_Terminal.For(
+                Systems_TeamSide.Offense, Systems_PlayOutcome.Touchdown, 30f, true, true);
+
+            Assert.That(touchdown, Is.GreaterThan(bestStop));
+        }
+
+        /// <summary>
+        /// The floor under COMPLETION_REWARD. Below it the offense is paid more for
+        /// throwing the ball into the ground than for a short catch.
+        /// </summary>
+        [Test]
+        public void AShortCompletionThatIsTackled_BeatsAnIncompletion()
+        {
+            float completedForNothing = Reward_Terminal.For(
+                Systems_TeamSide.Offense, Systems_PlayOutcome.Tackle, 0f, true);
+            float incompletion = Reward_Terminal.For(
+                Systems_TeamSide.Offense, Systems_PlayOutcome.Incompletion, 0f, false);
+
+            Assert.That(completedForNothing, Is.GreaterThan(incompletion));
+        }
+
         [Test]
         public void NoOutcome_PaysNothing()
         {

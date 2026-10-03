@@ -39,6 +39,13 @@ namespace PoFootball.Agents
         /// </summary>
         private const int THROW_AT_TICK = 60;
 
+        /// <summary>
+        /// Drive command at or beyond which a tick counts as saturated in the
+        /// Control/DriveSaturation series. ML-Agents hands over clamp(x, -3, 3) / 3,
+        /// so this is a policy whose mean has reached the rail, not noise.
+        /// </summary>
+        private const float DRIVE_SATURATION_THRESHOLD = 0.95f;
+
         [Tooltip("Index into Systems_Formation. Determines role, brain, team and start position.")]
         [SerializeField] private int _formationSlotIndex;
 
@@ -57,6 +64,13 @@ namespace PoFootball.Agents
         private float _driveForce;
         private float _steerTorque;
         private float _fatigue;
+
+        /// <summary>
+        /// Normal impulse resolved against this body since AccumulateFatigue last
+        /// ran, in newton-seconds. Written by the collision callbacks, which fire
+        /// after the solver step, and spent on the following tick.
+        /// </summary>
+        private float _contactImpulse;
 
         // --- CONTROL-EFFORT TELEMETRY (flushed in EndEpisodeNow) ---------------
         //
@@ -81,6 +95,18 @@ namespace PoFootball.Agents
         private float _previousSteerCommand;
         private int _effortTicks;
         private int _speedClampHits;
+
+        // Mean size of the drive command and how often it sits at the rail, PER
+        // ROLE. Control/Effort above cannot tell a lineman leaning on a block from
+        // a receiver who never opens the throttle: it started football_base12 at
+        // 0.525, which is exactly what the sampling noise alone produces, and ended
+        // seven million steps later at 0.65 with SpeedUtilization at 0.15. Whether
+        // that is twenty-two players not running or ten linemen held up is a
+        // question only a per-role series can answer.
+        private float _driveCommandSum;
+        private int _driveSaturatedTicks;
+        private string _driveStatKey;
+        private string _driveSaturationStatKey;
         private bool _isCarrier;
         private float _previousBallY;
         private float _previousBallDistance;
@@ -359,6 +385,8 @@ namespace PoFootball.Agents
 
             _driveForce = Systems_RoleTable.DriveForceOf(_role);
             _steerTorque = Systems_RoleTable.SteerTorqueOf(_role);
+            _driveStatKey = "Control/Drive/" + _role;
+            _driveSaturationStatKey = "Control/DriveSaturation/" + _role;
             _isBlocker = Reward_Role.IsBlocker(_role);
             _isReceiver = Reward_Role.IsReceiver(_role);
             _isBack = _role == Systems_PlayerRole.Fullback
@@ -530,6 +558,7 @@ namespace PoFootball.Agents
                 position,
                 Velocity,
                 _rigidbody == null ? 0f : _rigidbody.rotation,
+                _rigidbody == null ? 0f : _rigidbody.angularVelocity,
                 _fatigue,
                 _isCarrier,
                 hasBall ? _ball.Position : position,
@@ -538,7 +567,8 @@ namespace PoFootball.Agents
                 hasPlay ? _play.Call : Systems_PlayCall.None,
                 hasPlay ? _play.LineOfScrimmageY : 0f,
                 hasPlay ? _play.Down : 1,
-                hasPlay ? _play.YardsToGo : Systems_GameRules.YARDS_TO_GAIN);
+                hasPlay ? _play.YardsToGo : Systems_GameRules.YARDS_TO_GAIN,
+                hasPlay ? _play.PhysicsTick : 0);
         }
 
         /// <summary>
@@ -680,7 +710,7 @@ namespace PoFootball.Agents
             ReportIntent(actions, drive, steer);
 
             AccumulateFatigue(driveForce, steerTorque);
-            AccumulateControlEffort(driveForce, steerTorque, steer);
+            AccumulateControlEffort(driveForce, steerTorque, steer, drive);
             ClampSpeed();
             AwardDenseRewards();
         }
@@ -806,7 +836,7 @@ namespace PoFootball.Agents
         /// reading the action would score that as resting (CLAUDE.md section 2).
         ///
         /// Each term is divided by this role's own maximum, so load is
-        /// dimensionless and lands in [0, 2]. The previous form summed newtons and
+        /// dimensionless and lands in [0, 3]. The previous form summed newtons and
         /// newton-metres directly, which is not a quantity, and the constants it
         /// was scaled by could not accumulate against the recovery rate at all —
         /// fatigue was pinned at zero for the whole of base01 through base03.
@@ -823,7 +853,7 @@ namespace PoFootball.Agents
         /// alone cannot see chatter.
         /// </summary>
         private void AccumulateControlEffort(
-            float driveForce, float steerTorque, float steerCommand)
+            float driveForce, float steerTorque, float steerCommand, float driveCommand)
         {
             _effortSum += (Mathf.Abs(driveForce) / _driveForce)
                 + (Mathf.Abs(steerTorque) / _steerTorque);
@@ -833,6 +863,14 @@ namespace PoFootball.Agents
 
             _speedSum += Mathf.Clamp01(
                 _rigidbody.linearVelocity.magnitude / Systems_RoleTable.TopSpeedOf(_role));
+
+            float driveSize = Mathf.Abs(driveCommand);
+            _driveCommandSum += driveSize;
+
+            if (driveSize >= DRIVE_SATURATION_THRESHOLD)
+            {
+                _driveSaturatedTicks++;
+            }
 
             _effortTicks++;
         }
@@ -878,6 +916,11 @@ namespace PoFootball.Agents
                 stats.Add("Control/SpeedClampRate", _speedClampHits / ticks);
 
                 stats.Add("Control/Fatigue", _fatigue);
+
+                // Per role: mean |drive| in [0, 1], and the share of ticks it was
+                // at the rail. Keys are built once in Awake.
+                stats.Add(_driveStatKey, _driveCommandSum / ticks);
+                stats.Add(_driveSaturationStatKey, _driveSaturatedTicks / ticks);
             }
 
             _effortSum = 0f;
@@ -886,12 +929,27 @@ namespace PoFootball.Agents
             _previousSteerCommand = 0f;
             _effortTicks = 0;
             _speedClampHits = 0;
+            _driveCommandSum = 0f;
+            _driveSaturatedTicks = 0;
         }
 
         private void AccumulateFatigue(float driveForce, float steerTorque)
         {
+            // The third term is what the first two could never see. They are the
+            // action times a constant, so a lineman held in a block he is not
+            // driving into contributed nothing — the bracing case the summary
+            // above is about. The impulse is what the solver resolved against this
+            // body over the last step; over the step length it is a force, and
+            // over this role's own drive force it is the same unit as the others.
+            float contactLoad = Mathf.Min(
+                _contactImpulse / (Time.fixedDeltaTime * _driveForce),
+                Systems_SimConstants.FATIGUE_CONTACT_LOAD_MAX);
+
+            _contactImpulse = 0f;
+
             float load = (Mathf.Abs(driveForce) / _driveForce)
-                + (Mathf.Abs(steerTorque) / _steerTorque);
+                + (Mathf.Abs(steerTorque) / _steerTorque)
+                + contactLoad;
 
             _fatigue += load
                 * Systems_SimConstants.FATIGUE_GAIN_PER_UNIT_LOAD
@@ -1043,8 +1101,26 @@ namespace PoFootball.Agents
             return best;
         }
 
+        /// <summary>
+        /// Adds this collision's resolved normal impulse to the running total
+        /// AccumulateFatigue spends on the next tick. Every contact counts, a
+        /// team-mate's and the boundary's included: being leaned on is load
+        /// whoever is doing the leaning.
+        /// </summary>
+        private void AccumulateContactImpulse(Collision2D collision)
+        {
+            int contactCount = collision.contactCount;
+
+            for (int contactIndex = 0; contactIndex < contactCount; contactIndex++)
+            {
+                _contactImpulse += Mathf.Abs(collision.GetContact(contactIndex).normalImpulse);
+            }
+        }
+
         private void OnCollisionEnter2D(Collision2D collision)
         {
+            AccumulateContactImpulse(collision);
+
             if (!collision.gameObject.TryGetComponent(out Agent_FootballPlayer other))
             {
                 return;
@@ -1114,6 +1190,8 @@ namespace PoFootball.Agents
         /// </summary>
         private void OnCollisionStay2D(Collision2D collision)
         {
+            AccumulateContactImpulse(collision);
+
             if (!_isCarrier || _referee == null)
             {
                 return;
@@ -1143,9 +1221,13 @@ namespace PoFootball.Agents
             }
         }
 
-        public void ClearFatigue()
+        public void RestBetweenPlays()
         {
-            _fatigue = 0f;
+            _fatigue *= Systems_SimConstants.FATIGUE_CARRIED_BETWEEN_PLAYS;
+
+            // Whatever the solver resolved against this body after the whistle,
+            // and whatever the re-formation is about to resolve, is not exertion.
+            _contactImpulse = 0f;
         }
 
         public void ResetTo(Vector2 position)
@@ -1169,9 +1251,13 @@ namespace PoFootball.Agents
         }
 
         public void ApplyTerminalReward(
-            Systems_PlayOutcome outcome, float netYards, bool passCompleted)
+            Systems_PlayOutcome outcome,
+            float netYards,
+            bool passCompleted,
+            bool reachedLineToGain)
         {
-            AddReward(Reward_Terminal.For(_side, outcome, netYards, passCompleted));
+            AddReward(Reward_Terminal.For(
+                _side, outcome, netYards, passCompleted, reachedLineToGain));
         }
 
         public void EndEpisodeNow()

@@ -15,16 +15,27 @@ namespace PoFootball.Rewards
             Systems_TeamSide side,
             Systems_PlayOutcome outcome,
             float netYards,
-            bool passCompleted)
+            bool passCompleted,
+            bool reachedLineToGain = false)
         {
-            float offenseReward = OffenseReward(outcome, netYards, passCompleted);
+            float offenseReward =
+                OffenseReward(outcome, netYards, passCompleted, reachedLineToGain);
 
             return side == Systems_TeamSide.Offense ? offenseReward : -offenseReward;
         }
 
         private static float OffenseReward(
-            Systems_PlayOutcome outcome, float netYards, bool passCompleted)
+            Systems_PlayOutcome outcome,
+            float netYards,
+            bool passCompleted,
+            bool reachedLineToGain)
         {
+            // Paid only where the play ended on football — a tackle or a step out
+            // of bounds. A touchdown already pays more than this, and a play that
+            // ran out the clock is the one ending this must not sweeten.
+            float firstDownBonus =
+                reachedLineToGain ? Systems_SimConstants.FIRST_DOWN_REWARD : 0f;
+
             // A completed pass pays on top of however the play then ended, because
             // the completion and the tackle that follows it are separate events —
             // a 20 yard catch brought down immediately is a good play, and scoring
@@ -49,11 +60,22 @@ namespace PoFootball.Rewards
                     return (netYards < 0f
                         ? -(Systems_SimConstants.TACKLE_REWARD
                             + Systems_SimConstants.TACKLE_FOR_LOSS_BONUS)
-                        : -Systems_SimConstants.TACKLE_REWARD) + completionBonus;
+                        : -Systems_SimConstants.TACKLE_REWARD)
+                        + completionBonus + firstDownBonus;
 
                 case Systems_PlayOutcome.OutOfBounds:
+                    return (-Systems_SimConstants.TACKLE_REWARD * 0.5f)
+                        + completionBonus + firstDownBonus;
+
+                // PRICED AS A TACKLE, NOT AS HALF OF ONE. It shared the line above
+                // with OutOfBounds until FootballBase14, which made holding the ball
+                // until MAX_PHYSICS_TICKS the cheaper way to lose a down: -0.25 and
+                // about -0.12 of time cost against -0.50 for being brought down on
+                // the same spot. Play/TimeExpiredRate was still 24% at the end of
+                // football_base12's seven million steps and 24% two million into
+                // base13. A play nobody resolved is the defense's down.
                 case Systems_PlayOutcome.TimeExpired:
-                    return (-Systems_SimConstants.TACKLE_REWARD * 0.5f) + completionBonus;
+                    return -Systems_SimConstants.TACKLE_REWARD + completionBonus;
 
                 case Systems_PlayOutcome.Incompletion:
                     return -Systems_SimConstants.INCOMPLETION_PENALTY;

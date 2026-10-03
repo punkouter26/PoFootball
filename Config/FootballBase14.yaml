@@ -1,0 +1,166 @@
+# PoFootball -- the first config against CONTRACT_REVISION 12.
+#
+# Pairs 1:1 with run-id `football_base14` (UNITY_RULES section 1).
+#
+# Launch (CUDA_VISIBLE_DEVICES=-1 is MANDATORY on this machine -- see CLAUDE.md):
+#   $env:CUDA_VISIBLE_DEVICES = "-1"
+#   mlagents-learn Config/FootballBase14.yaml --run-id=football_base14 `
+#     --env=Builds/FootballEnv/PoFootball.exe --no-graphics `
+#     --base-port=5400 --num-envs=4
+#
+# REBUILD Builds/FootballEnv FIRST (Tools > PoFootball > Build Training Env), and
+# NOT WHILE football_base13 IS STILL RUNNING -- it is executing that build.
+# Revision 12 keeps every shape identical (36 floats, the same action specs), so a
+# revision 11 env is NOT refused by the handshake. That rebuild is on you.
+#
+# WHY THIS EXISTS: an audit of football_base12 (finished) and football_base13 (two
+# million steps in) against the code. What it found, with the number that found it:
+#
+#   Stalling was the cheap way to lose a down. TimeExpired paid the offense -0.25
+#   against -0.50 for a tackle, and Play/TimeExpiredRate was 24% at the end of
+#   base12 and 24% in base13.                       -> priced as a tackle
+#   Down and distance were observed and never paid.  -> FIRST_DOWN_REWARD 0.3
+#   A catch was worth sixty yards; Call/Pass 70-73%. -> COMPLETION_REWARD 0.6 -> 0.45
+#   Control/Fatigue ended plays at 0.022-0.027, a 1% loss of drive force, and was
+#   cleared at every snap.                           -> rested not cleared, gain
+#                                                       0.030 -> 0.050, contact load
+#   Ball offset and velocity were world-frame; spin and the play clock were not
+#   observed; x was observed three times.            -> revision 12 observations
+#
+# Agent_ActionContract (revision 12) and Systems_SimConstants carry the detail.
+#
+# NOT COMPARABLE WITH base13 ON ANY REWARD CURVE: the reward changed. Compare the
+# Play/*, Pass/* and Call/* rates and, after promotion, the REALISM line.
+#
+# WHAT MOVED IN THIS FILE, against FootballBase13:
+#
+#   Offense/Defense  buffer_size 10240 -> 20480, batch_size 512 -> 1024.
+#       Ten team-mates share one outcome, so a buffer is worth the PLAYS in it,
+#       not the steps: 10240 / (10 agents x ~44 decisions) was about 23 plays an
+#       update, two of them touchdowns. Now about 46. This halves the number of
+#       updates in the same step budget (683 -> 342); if Play/NetYards is still
+#       climbing at 7M, that is the reason and max_steps is the lever.
+#   Quarterback      num_epoch 3 -> 5.
+#       One agent in twenty-one. 700k steps at buffer 2048 is 341 updates and
+#       about 17,000 play calls for the whole run, and more envs do not change
+#       its share. More passes over what it does get is the only lever in here.
+#   Curriculum       thresholds 0.1 / 0.3 -> 0.2 / 0.45.
+#       base13 left RedZone at 700k steps with a touchdown on 2% of plays and 48%
+#       of them timing out -- the lesson that exists to make touchdowns
+#       discoverable ended before they were. Still gated on progress: Offense's
+#       own cumulative reward is the only other measure ML-Agents offers and it
+#       is mostly shaping terms.
+#
+# FOUR CHANGES AT ONCE IS NOT AN EXPERIMENT. If base14 is worse than base13, the
+# first thing to do is rerun it with this file's hyperparameters put back to
+# FootballBase13's, which separates the trainer changes from the game changes.
+#
+# NEW SERIES TO READ: Control/Drive/<Role> and Control/DriveSaturation/<Role>.
+# Control/SpeedUtilization ended base12 at 0.15 of top speed; these say whether
+# that is everybody or the linemen.
+#
+# AFTER IT FINISHES:
+#   .venv\Scripts\python.exe Tools\promote_brain.py --run football_base14 `
+#     --version 02 --num-envs 4
+#   then Unity: Tools > PoFootball > Build Brain Table, Evaluate Realism (3 games),
+#   and promote_brain.py --version 02 --check-realism <report>.
+
+behaviors:
+  # MA-POCA for the two ten- and eleven-man groups; see FootballBase11.yaml for
+  # why, and Systems_BrainGroup for why there are three behaviours, not six.
+  Offense: &football_brain
+    trainer_type: poca
+
+    hyperparameters:
+      batch_size: 1024
+      buffer_size: 20480
+      learning_rate: 3.0e-4
+      beta: 5.0e-3
+      epsilon: 0.2
+      lambd: 0.95
+      num_epoch: 3
+      learning_rate_schedule: constant
+      beta_schedule: constant
+      epsilon_schedule: constant
+
+    network_settings:
+      normalize: false            # Sensor_FootballState emits [-1, 1] already;
+                                  # Systems_ContractTests asserts this stays off.
+      hidden_units: 256
+      num_layers: 2
+      vis_encode_type: simple
+
+    reward_signals:
+      extrinsic:
+        gamma: 0.99
+        strength: 1.0
+
+    keep_checkpoints: 20
+    checkpoint_interval: 100000
+    max_steps: 7000000
+
+    # One whole play: MAX_PHYSICS_TICKS 600 / DECISION_PERIOD 5. Pinned by
+    # Systems_ContractTests.
+    time_horizon: 120
+
+    summary_freq: 50000
+    threaded: false               # deterministic ordering (UNITY_RULES section 2)
+
+  Defense:
+    <<: *football_brain
+
+  Quarterback:
+    <<: *football_brain
+    trainer_type: ppo
+    max_steps: 700000
+    hyperparameters:
+      batch_size: 256
+      buffer_size: 2048
+      learning_rate: 3.0e-4
+      beta: 5.0e-2                # ten times the movement brains; see Base11
+      epsilon: 0.2
+      lambd: 0.95
+      num_epoch: 5
+      learning_rate_schedule: constant
+      beta_schedule: constant
+      epsilon_schedule: constant
+
+environment_parameters:
+  spot_lesson:
+    curriculum:
+      - name: RedZone
+        completion_criteria:
+          measure: progress
+          behavior: Offense
+          signal_smoothing: false
+          min_lesson_length: 0
+          threshold: 0.2
+        value: 0.0
+      - name: OpenFieldEarlyDowns
+        completion_criteria:
+          measure: progress
+          behavior: Offense
+          signal_smoothing: false
+          min_lesson_length: 0
+          threshold: 0.45
+        value: 1.0
+      - name: FullGame
+        value: 2.0
+
+env_settings:
+  # --env, --num-envs and --base-port go on the command line (see the header).
+  # Record --num-envs in the run's MANIFEST.md; promote_brain.py does it for you.
+  seed: 1
+
+engine_settings:
+  time_scale: 20                  # physics stays at dt=0.02; this only speeds the clock
+  quality_level: 0
+  target_frame_rate: -1
+  capture_frame_rate: 60
+
+torch_settings:
+  device: cpu                     # Not sufficient alone: launch with
+                                  # CUDA_VISIBLE_DEVICES=-1 (see CLAUDE.md).
+
+checkpoint_settings:
+  results_dir: results

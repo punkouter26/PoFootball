@@ -67,11 +67,12 @@ namespace PoFootball.Tests
 
                 Sensor_FootballState.Write(
                     buffer, new Systems_FieldModel(), role,
-                    new Vector2(3f, -8f), new Vector2(1f, 2f), 45f, 0.3f, false,
+                    new Vector2(3f, -8f), new Vector2(1f, 2f), 45f, 30f, 0.3f, false,
                     new Vector2(-2f, 5f), new Vector2(0f, 9f),
                     Systems_BallState.InFlight, Systems_PlayCall.Pass, 4f,
                 1,
-                Systems_GameRules.YARDS_TO_GAIN);
+                Systems_GameRules.YARDS_TO_GAIN,
+                120);
 
                 for (int index = 0; index < buffer.Length; index++)
                 {
@@ -101,11 +102,12 @@ namespace PoFootball.Tests
 
             Sensor_FootballState.Write(
                 buffer, new Systems_FieldModel(), Systems_PlayerRole.Quarterback,
-                Vector2.zero, Vector2.zero, 0f, 0f, true,
+                Vector2.zero, Vector2.zero, 0f, 0f, 0f, true,
                 Vector2.zero, Vector2.zero, Systems_BallState.Held,
                 Systems_PlayCall.KeepQuarterback, 0f,
                 1,
-                Systems_GameRules.YARDS_TO_GAIN);
+                Systems_GameRules.YARDS_TO_GAIN,
+                120);
 
             for (int index = Sensor_FootballState.OBSERVATION_SIZE; index < buffer.Length; index++)
             {

@@ -47,7 +47,7 @@ namespace PoFootball.Tests
             /// </summary>
             public int RewardsAfterEnd { get; private set; }
 
-            public void ClearFatigue() { }
+            public void RestBetweenPlays() { }
 
             public void Freeze() { }
 
@@ -60,7 +60,10 @@ namespace PoFootball.Tests
             public void SetTeamColor(Color color) => TeamColor = color;
 
             public void ApplyTerminalReward(
-                Systems_PlayOutcome outcome, float netYards, bool passCompleted)
+                Systems_PlayOutcome outcome,
+                float netYards,
+                bool passCompleted,
+                bool reachedLineToGain)
             {
                 RewardCount++;
 
@@ -94,7 +97,7 @@ namespace PoFootball.Tests
 
             public float Fatigue => 0f;
 
-            public void ClearFatigue() { }
+            public void RestBetweenPlays() { }
 
             public void Freeze() { }
 
@@ -135,7 +138,7 @@ namespace PoFootball.Tests
             Systems_TrainingEpisodeBoundary boundary =
                 new Systems_TrainingEpisodeBoundary(registry);
 
-            boundary.EndEpisode(Systems_PlayOutcome.Tackle, 4.5f, false);
+            boundary.EndEpisode(Systems_PlayOutcome.Tackle, 4.5f, false, false);
 
             for (int slotIndex = 0; slotIndex < agents.Length; slotIndex++)
             {
@@ -155,7 +158,7 @@ namespace PoFootball.Tests
             Systems_PlayerRegistry registry = FillRegistry(out StubAgent[] agents);
 
             new Systems_TrainingEpisodeBoundary(registry)
-                .EndEpisode(Systems_PlayOutcome.Touchdown, 60f, true);
+                .EndEpisode(Systems_PlayOutcome.Touchdown, 60f, true, true);
 
             for (int slotIndex = 0; slotIndex < agents.Length; slotIndex++)
             {
@@ -184,7 +187,7 @@ namespace PoFootball.Tests
                 new Systems_TrainingEpisodeBoundary(registry);
 
             Assert.DoesNotThrow(
-                () => boundary.EndEpisode(Systems_PlayOutcome.Tackle, 1f, false));
+                () => boundary.EndEpisode(Systems_PlayOutcome.Tackle, 1f, false, false));
         }
 
         /// <summary>
@@ -197,7 +200,7 @@ namespace PoFootball.Tests
             Systems_PlayerRegistry registry = FillRegistry(out StubAgent[] agents);
 
             new Systems_NullEpisodeBoundary()
-                .EndEpisode(Systems_PlayOutcome.Touchdown, 42f, true);
+                .EndEpisode(Systems_PlayOutcome.Touchdown, 42f, true, true);
 
             for (int slotIndex = 0; slotIndex < agents.Length; slotIndex++)
             {

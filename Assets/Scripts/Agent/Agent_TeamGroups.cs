@@ -126,14 +126,16 @@ namespace PoFootball.Agents
             Systems_TeamSide side,
             Systems_PlayOutcome outcome,
             float netYards,
-            bool passCompleted)
+            bool passCompleted,
+            bool reachedLineToGain)
         {
             if (!_registered)
             {
                 return;
             }
 
-            float reward = Reward_Terminal.For(side, outcome, netYards, passCompleted);
+            float reward = Reward_Terminal.For(
+                side, outcome, netYards, passCompleted, reachedLineToGain);
 
             if (side == Systems_TeamSide.Offense)
             {
@@ -166,14 +168,16 @@ namespace PoFootball.Agents
                 Systems_TeamSide side,
                 Systems_PlayOutcome outcome,
                 float netYards,
-                bool passCompleted)
+                bool passCompleted,
+                bool reachedLineToGain)
             {
                 if (_owner == null)
                 {
                     return;
                 }
 
-                _owner.AddTeamTerminal(side, outcome, netYards, passCompleted);
+                _owner.AddTeamTerminal(
+                    side, outcome, netYards, passCompleted, reachedLineToGain);
             }
         }
     }

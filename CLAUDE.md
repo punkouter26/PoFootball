@@ -85,7 +85,7 @@ results/<run-id>/MANIFEST.md   one per run — records --num-envs, which is part
 ```
 
 **`Assets/Agents/Football_v01` is promoted but REFUSED, so every player runs
-`Heuristic` until `football_base13` is promoted.** v01 came from `football_base12`
+`Heuristic` until a revision 12 run (`football_base14`) is promoted.** v01 came from `football_base12`
 (contract revision 10, 7M steps, 2026-10-03); while the build was on revision 10 all
 22 players ran it — verified in a played game, 22 of 22 agents with a model. It
 FAILS the realism gate (18.8 yards per play, 0.78 TDs per drive, 97% completions;
@@ -111,8 +111,32 @@ To promote: train against a config for the CURRENT contract revision, run
 Editor. That last step is not optional — the Python side copies `.onnx` files but
 cannot write the ScriptableObject that lists them.
 
-**THE CURRENT REVISION IS 11, AND `Config/FootballBase13.yaml` IS ITS CONFIG.**
-Revision 11 changed two RULES, shapes untouched: a defender within 1.5 m beside or
+**THE CURRENT REVISION IS 12, AND `Config/FootballBase14.yaml` IS ITS CONFIG.**
+Revision 12 (2026-10-03) changed eight observations and the fatigue dynamics with
+every shape left identical — still 36 floats — so only the stamp refuses an older
+brain. The ball's offset and velocity are in the body's frame; the two sideline
+distances became own spin and the play clock; fatigue is **rested between plays
+(60% carried), not cleared**, its gain rose 0.030 → 0.050, and the contact impulse
+the solver resolved against a body is a third load term. The reward moved in the
+same change and is not contract: a play that runs out the clock is priced as a
+tackle, reaching the line to gain pays `FIRST_DOWN_REWARD`, and `COMPLETION_REWARD`
+fell 0.6 → 0.45 (0.4 is the floor — below it an incompletion outpays a short
+catch). `Agent_ActionContract` and the FootballBase14 header have the evidence.
+
+Three scripted games on revision 12 read 8.02 yards per play and 0.37 TDs per
+drive (`results/realism/realism-20261003-140511.json`) against revision 11's 7.25
+and 0.33 — but on three random seeds against four fixed ones, so that is inside
+single-game noise and is NOT a like-for-like measurement. Re-measure on the fixed
+seeds before reading anything into it.
+
+**`football_base13` IS A REVISION 11 RUN AND MUST NOT BE PROMOTED FROM A REVISION
+12 TREE.** It was started 2026-10-03 from commit `278e8c6` and its shapes match, so
+`promote_brain.py` would pass it and Build Brain Table would stamp it 12. To
+promote or realism-check it, check out the commit it was trained at.
+`Config/FootballBase13.yaml` stays out of `Config/archive/` only until that run is
+finished with.
+
+Revision 11 (FootballBase13) changed two RULES, shapes untouched: a defender within 1.5 m beside or
 behind the carrier counts as contact for the wrap-up (`Systems_Referee
 .CountPursuitReach`), and a defender within 1.5 m of the ball breaks up a catch
 (`Systems_BallSystem.IsContestedByDefense`). On the scripted players over four
@@ -136,7 +160,7 @@ no pursuit reward while the ball is in the air.
 
 Every config for an older contract is in `Config/archive/`, including
 FootballBase06-12, FootballLong01 and the six `experiments/` variants. Until a
-revision 11 run is promoted, every player is a heuristic.
+revision 12 run is promoted, every player is a heuristic.
 
 **Judge balance on fixed seeds.** Games with a pinned seed (`Systems_GameLifetimeScope
 ._varySeedPerGame` off, `_episodeSeed` set) replay exactly, and today's single
@@ -148,7 +172,7 @@ Note that `m_Model` references serialized in the scenes are dead either way:
 `Agent_BrainRegistry` at `Awake`, overwriting whatever the scene held.
 
 Heuristic-only is a supported, playable state, not a bug — but nothing you watch
-right now is a trained policy. **To change that, promote `football_base13`** when
+right now is a trained policy. **To change that, train and promote `football_base14`** when
 it finishes — see above.
 
 **Scenes.** `SCN_MENU` (front end) → `SCN_GAME` (a scored game) and
@@ -182,7 +206,12 @@ deliberately has no sprite atlas and no `AudioMixer` asset — is in
 **Physics** is 2D here (`Rigidbody2D`), so §2's joint/biomechanics clauses apply to
 whatever articulated shapes get built; the invariants that always hold are:
 fixed Δt = 0.02, actions only in `FixedUpdate`, actions normalized to [−1, 1],
-fatigue derived from applied force/torque rather than the action vector.
+fatigue derived from applied force/torque rather than the action vector — since
+revision 12 that includes the contact impulse, which is what makes it true of a
+braced lineman. §2's "clear it on reset" is `RestBetweenPlays` here: called before
+the body is restored, as the rule says, but it keeps
+`FATIGUE_CARRIED_BETWEEN_PLAYS` of the fatigue rather than zeroing it, so a drive
+costs something.
 `Time.fixedDeltaTime` is pinned in project settings — do not override it at runtime
 or from a trainer flag, or every existing `.onnx` is being evaluated against
 different dynamics than it was fitted against.
@@ -194,7 +223,7 @@ different dynamics than it was fitted against.
 
 # In-editor smoke test: start the trainer, then press Play.
 $env:CUDA_VISIBLE_DEVICES = "-1"     # MANDATORY on this machine. See below.
-mlagents-learn Config\FootballBase13.yaml --run-id=football_base13
+mlagents-learn Config\FootballBase14.yaml --run-id=football_base14
 
 # Headless sweep — envs take CONSECUTIVE ports from --base-port.
 # REBUILD Builds/FootballEnv FIRST whenever the contract revision moved:
@@ -203,7 +232,7 @@ mlagents-learn Config\FootballBase13.yaml --run-id=football_base13
 # stale env is NOT always refused by the handshake. That rebuild is on you.
 # --num-envs=4: measured 257.7 / 255.1 / 236.3 steps/s at 2 / 4 / 12 envs
 # (rl_optimization_log.md); the trainer is the bottleneck.
-mlagents-learn Config\FootballBase13.yaml --run-id=football_base13 `
+mlagents-learn Config\FootballBase14.yaml --run-id=football_base14 `
   --env=Builds\FootballEnv\PoFootball.exe --no-graphics `
   --base-port=5400 --num-envs=4
 
@@ -277,7 +306,7 @@ for `cpu`, the `else` branch only sets the dtype — it never puts the default d
 back. Hiding the GPU is what fixes it. Use `-1`; an empty string is ignored on Windows.
 
 `Config/archive/FootballBase06.yaml` (long superseded — the live config is
-`FootballBase13.yaml`, three behaviors, revision 11) carried **six** behaviors. The quarterback has its own brain
+`FootballBase14.yaml`, three behaviors, revision 12) carried **six** behaviors. The quarterback has its own brain
 — it is the only one with discrete actions, and while it shared `OffenseSkill`
 with the backs and receivers its play-call gradient was diluted five to one and
 its entropy bonus could not be raised without injecting noise into four other

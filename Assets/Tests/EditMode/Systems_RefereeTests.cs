@@ -41,7 +41,7 @@ namespace PoFootball.Tests
             /// </summary>
             public float Fatigue => 0f;
 
-            public void ClearFatigue() { }
+            public void RestBetweenPlays() { }
 
             public void Freeze() { }
 

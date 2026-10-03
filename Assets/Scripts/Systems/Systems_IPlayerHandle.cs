@@ -49,11 +49,16 @@ namespace PoFootball.Systems
         bool IsCarrier { get; }
 
         /// <summary>
-        /// Zeroes accumulated fatigue. Must be called BEFORE ResetTo restores the
-        /// body, per CLAUDE.md section 2 — otherwise episode two starts pre-tired
-        /// (acceptance criterion #11).
+        /// The huddle: keeps Systems_SimConstants.FATIGUE_CARRIED_BETWEEN_PLAYS of
+        /// the fatigue this player finished the last play with. Still called BEFORE
+        /// ResetTo restores the body, per CLAUDE.md section 2.
+        ///
+        /// This was ClearFatigue, and zeroed it, through revision 11 — on the
+        /// reasoning that otherwise "episode two starts pre-tired". Since revision
+        /// 12 that is the intent: a drive is supposed to cost something, and the
+        /// starting value is in the observation, so a policy can see it.
         /// </summary>
-        void ClearFatigue();
+        void RestBetweenPlays();
 
         /// <summary>Teleports the body to its formation slot and zeroes velocity.</summary>
         void ResetTo(Vector2 position);
@@ -121,7 +126,10 @@ namespace PoFootball.Systems
         /// goes WRONG.
         /// </summary>
         void ApplyTerminalReward(
-            Systems_PlayOutcome outcome, float netYards, bool passCompleted);
+            Systems_PlayOutcome outcome,
+            float netYards,
+            bool passCompleted,
+            bool reachedLineToGain);
 
         /// <summary>Ends this agent's ML-Agents episode. Repositioning is the director's job.</summary>
         void EndEpisodeNow();

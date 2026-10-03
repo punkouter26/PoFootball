@@ -245,7 +245,7 @@ namespace PoFootball.Tests
                 netPerSecond * playSeconds,
                 Is.GreaterThan(0.25f),
                 "Fatigue accumulates but too slowly to reach a meaningful level within "
-                + "a single play, and it is cleared at every episode boundary.");
+                + "a single play.");
         }
 
         /// <summary>

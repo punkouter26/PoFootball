@@ -25,16 +25,20 @@ namespace PoFootball.Tests
             Vector2 ballVelocity,
             float lineOfScrimmageY,
             Systems_BallState ballState = Systems_BallState.Held,
-            Systems_PlayCall call = Systems_PlayCall.None)
+            Systems_PlayCall call = Systems_PlayCall.None,
+            float angularVelocityDegrees = 0f,
+            int physicsTick = 0)
         {
             float[] buffer = new float[Sensor_FootballState.OBSERVATION_SIZE];
 
             Sensor_FootballState.Write(
                 buffer, new Systems_FieldModel(), role, position, velocity,
-                rotationDegrees, fatigue, isCarrier, ballPosition, ballVelocity,
+                rotationDegrees, angularVelocityDegrees, fatigue, isCarrier,
+                ballPosition, ballVelocity,
                 ballState, call, lineOfScrimmageY,
                 1,
-                Systems_GameRules.YARDS_TO_GAIN);
+                Systems_GameRules.YARDS_TO_GAIN,
+                physicsTick);
 
             return buffer;
         }
@@ -63,6 +67,65 @@ namespace PoFootball.Tests
 
             Assert.That(observation[velocityStart], Is.EqualTo(expectedSideways).Within(1e-4f), "sideways");
             Assert.That(observation[velocityStart + 1], Is.EqualTo(expectedForward).Within(1e-4f), "forward");
+        }
+
+        /// <summary>
+        /// Revision 12: the ball's offset and velocity are in the body's frame too.
+        /// A ball ten metres up the field from a player facing +X (rotation -90) is
+        /// off his LEFT shoulder, not ahead of him.
+        /// </summary>
+        [TestCase(0f, 0f, 10f, 0f, 10f)]
+        [TestCase(-90f, 10f, 0f, 0f, 10f)]
+        [TestCase(-90f, 0f, 10f, -10f, 0f)]
+        [TestCase(180f, 0f, 10f, 0f, -10f)]
+        public void TheBall_IsReadInTheBodysFrame(
+            float rotationDegrees, float worldX, float worldY,
+            float expectedSideways, float expectedForward)
+        {
+            Vector2 world = new Vector2(worldX, worldY);
+
+            float[] observation = Collect(
+                Systems_PlayerRole.Safety, Vector2.zero, Vector2.zero, rotationDegrees,
+                0f, false, world, world, 0f);
+
+            int ballStart = Systems_RoleTable.ROLE_COUNT + 8;
+            float range = Systems_SimConstants.OBSERVATION_RANGE;
+            float speed = Systems_SimConstants.PASS_SPEED_MAX;
+
+            Assert.That(observation[ballStart], Is.EqualTo(expectedSideways / range).Within(1e-4f), "offset sideways");
+            Assert.That(observation[ballStart + 1], Is.EqualTo(expectedForward / range).Within(1e-4f), "offset forward");
+            Assert.That(observation[ballStart + 2], Is.EqualTo(expectedSideways / speed).Within(1e-4f), "velocity sideways");
+            Assert.That(observation[ballStart + 3], Is.EqualTo(expectedForward / speed).Within(1e-4f), "velocity forward");
+        }
+
+        /// <summary>
+        /// Revision 12: own spin against the role's turn rate, and the play clock.
+        /// Both took the slots the two sideline distances held, so the vector is the
+        /// same width and only this test and CONTRACT_REVISION know they moved.
+        /// </summary>
+        [Test]
+        public void SpinAndThePlayClock_AreNormalizedAndSaturate()
+        {
+            Systems_PlayerRole role = Systems_PlayerRole.Linebacker;
+            float turnRateDegrees = Systems_RoleTable.TurnRateOf(role) * Mathf.Rad2Deg;
+
+            const int spinIndex = Systems_RoleTable.ROLE_COUNT + 16;
+            const int clockIndex = spinIndex + 1;
+
+            float[] half = Collect(
+                role, Vector2.zero, Vector2.zero, 0f, 0f, false, Vector2.zero, Vector2.zero, 0f,
+                Systems_BallState.Held, Systems_PlayCall.None,
+                -0.5f * turnRateDegrees, Systems_PlayModel.MAX_PHYSICS_TICKS / 2);
+
+            float[] beyond = Collect(
+                role, Vector2.zero, Vector2.zero, 0f, 0f, false, Vector2.zero, Vector2.zero, 0f,
+                Systems_BallState.Held, Systems_PlayCall.None,
+                99999f, Systems_PlayModel.MAX_PHYSICS_TICKS * 3);
+
+            Assert.That(half[spinIndex], Is.EqualTo(-0.5f).Within(1e-4f));
+            Assert.That(half[clockIndex], Is.EqualTo(0.5f).Within(1e-4f));
+            Assert.That(beyond[spinIndex], Is.EqualTo(1f).Within(1e-5f));
+            Assert.That(beyond[clockIndex], Is.EqualTo(1f).Within(1e-5f));
         }
 
         /// <summary>

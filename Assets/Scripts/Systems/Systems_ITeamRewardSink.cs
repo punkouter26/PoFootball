@@ -39,6 +39,7 @@ namespace PoFootball.Systems
             Systems_TeamSide side,
             Systems_PlayOutcome outcome,
             float netYards,
-            bool passCompleted);
+            bool passCompleted,
+            bool reachedLineToGain);
     }
 }

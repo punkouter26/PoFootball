@@ -290,8 +290,53 @@ namespace PoFootball.Models
         /// Fatigue is also self-limiting: the applied force is already scaled by
         /// (1 - fatigue * FATIGUE_MAX_PENALTY), so a tiring player generates less
         /// load and the curve flattens instead of running away.
+        ///
+        /// RAISED 0.030 -> 0.050 IN REVISION 12, AND CONTACT IS NOW A THIRD TERM.
+        /// At 0.030 the gain barely outran the recovery at the loads a play really
+        /// produces: Control/Fatigue ended a play at 0.027 after seven million
+        /// steps of football_base12 and 0.022 in football_base13, which is a 1%
+        /// loss of drive force — an observation slot that never moved. And the
+        /// "applied" force above was the action times a constant, so a lineman
+        /// locked in a block he was not driving into read as resting, which is the
+        /// exact case the paragraph above says it covers. Agent_FootballPlayer now
+        /// adds the contact impulse the solver actually resolved against the body,
+        /// capped at FATIGUE_CONTACT_LOAD_MAX, so load lands in [0, 3].
         /// </summary>
-        public const float FATIGUE_GAIN_PER_UNIT_LOAD = 0.030f;
+        public const float FATIGUE_GAIN_PER_UNIT_LOAD = 0.050f;
+
+        /// <summary>
+        /// Ceiling on the contact term of the fatigue load, in units of this role's
+        /// own full drive force. One: being pushed as hard as you can push costs
+        /// what pushing that hard does. The cap is what stops a single blown-apart
+        /// collision impulse from spending a whole play's stamina in one tick.
+        /// </summary>
+        public const float FATIGUE_CONTACT_LOAD_MAX = 1f;
+
+        /// <summary>
+        /// Share of a player's fatigue still in his legs at the next snap.
+        ///
+        /// Fatigue used to be cleared at every snap, so the tenth play of a drive
+        /// was run by the same fresh bodies as the first and nothing in a game
+        /// could ever tire. It is RESTED now, not cleared: the huddle takes 40% of
+        /// it back. At roughly 0.08 gained over an ordinary play that settles
+        /// near 0.12 at the snap and 0.20 at the whistle — a body down about 7% of
+        /// its drive force late in a long series, more for whoever spent it
+        /// blocking. Those figures are arithmetic, not a measurement; the
+        /// Control/Fatigue series of the first revision 12 run is the measurement.
+        ///
+        /// The same in training and in a game, deliberately: training's endless
+        /// single plays are run by the same twenty-two bodies, so they arrive at
+        /// each snap carrying what the last one cost and a policy sees the whole
+        /// range of the fatigue observation without a second random draw — which
+        /// would have been a second thing that differs between the two modes
+        /// (docs/GAME_LAYER.md).
+        ///
+        /// A change of possession does not reset it. The bodies are units, not
+        /// teams (Systems_GameFlowSystem mirrors the field), so the side coming on
+        /// inherits the legs of the side going off. Known, and small next to the
+        /// alternative of threading possession into the director.
+        /// </summary>
+        public const float FATIGUE_CARRIED_BETWEEN_PLAYS = 0.6f;
 
         /// <summary>
         /// Recovery must stay well below the gain at realistic load or fatigue is
@@ -303,8 +348,9 @@ namespace PoFootball.Models
         ///
         /// At these values a hard cut (load ~2.0) nets 0.045/s and reaches ~0.67
         /// over a full 15 s play, while cruising (load ~1.0) nets 0.015/s and
-        /// barely registers. Fatigue is cleared every episode, so only within-play
-        /// exertion matters.
+        /// barely registers. (Those are the revision 4-11 figures, at a gain of
+        /// 0.030 and with fatigue cleared at every snap; see the constants above
+        /// for what revision 12 changed.)
         /// </summary>
         public const float FATIGUE_RECOVERY_PER_SECOND = 0.015f;
 
@@ -688,8 +734,32 @@ namespace PoFootball.Models
         /// even, and football_base05 threw at 27-44% — so throwing was EV-negative
         /// against a handoff that reliably paid its yardage, and Call/Pass went to
         /// 0.000 for the second run running. Break-even is now 25%.
+        ///
+        /// LOWERED 0.6 -> 0.45 FOR FootballBase14, AND NO FURTHER. At 0.6 a catch
+        /// was worth sixty yards of YARD_REWARD_SCALE: a completion tackled on the
+        /// spot netted +0.1 where a ten-yard run netted -0.4, and the call mix sat
+        /// at 70-73% passes through football_base12 and base13. The floor is set by
+        /// two things Reward_Tests already pin. A completion that ends in a tackle
+        /// must still beat an incompletion, or the offense is paid to throw the
+        /// ball away (-TACKLE_REWARD + this > -INCOMPLETION_PENALTY, so above 0.4),
+        /// and a pass must stay worth attempting at a 35% completion rate, which
+        /// also needs it above 0.4. 0.1 was the number first proposed and it fails
+        /// both.
         /// </remarks>
-        public const float COMPLETION_REWARD = 0.6f;
+        public const float COMPLETION_REWARD = 0.45f;
+
+        /// <summary>
+        /// Paid to the offense, and charged to the defense, when a play that ends
+        /// in a tackle or out of bounds reached the line to gain.
+        ///
+        /// Down and distance have been in every player's observation since
+        /// revision 6 and nothing paid for them: third-and-one converted was worth
+        /// the same 0.01 as one yard on first-and-ten, so there was no reason for a
+        /// quarterback to call the situation or for a defense to play it. Smaller
+        /// than TACKLE_REWARD, so a first down softens the stop rather than
+        /// reversing it, and a third of a touchdown.
+        /// </summary>
+        public const float FIRST_DOWN_REWARD = 0.3f;
 
         /// <summary>
         /// An incompletion wastes the down and nothing more, so it must not cost

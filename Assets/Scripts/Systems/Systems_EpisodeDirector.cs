@@ -165,7 +165,10 @@ namespace PoFootball.Systems
             // model, and in training the reward for the play that just ended has to
             // be computed from how it ended.
             _episodeBoundary.EndEpisode(
-                _play.Outcome, _play.NetYards, _play.PassCompleted);
+                _play.Outcome,
+                _play.NetYards,
+                _play.PassCompleted,
+                _play.NetYards >= _play.YardsToGo);
 
             // The contest may be over. The terminal reward above still had to be
             // paid — the last play of a game is as real as any other — but there is
@@ -228,9 +231,10 @@ namespace PoFootball.Systems
                 Systems_FormationSlot slot = _formations.GetSlot(slotIndex);
                 Systems_IPlayerHandle player = _registry.Get(slotIndex);
 
-                // Fatigue is cleared BEFORE the body is restored, per CLAUDE.md
-                // section 2 (acceptance criterion #11).
-                player.ClearFatigue();
+                // Fatigue is settled BEFORE the body is restored, per CLAUDE.md
+                // section 2 (acceptance criterion #11). Rested rather than
+                // cleared since revision 12: see FATIGUE_CARRIED_BETWEEN_PLAYS.
+                player.RestBetweenPlays();
                 player.ResetTo(new Vector2(slot.OffsetX, lineOfScrimmageY + slot.OffsetY));
                 player.SetCarrier(false);
             }

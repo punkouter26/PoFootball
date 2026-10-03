@@ -82,6 +82,7 @@ namespace PoFootball.Sensors
             Vector2 position,
             Vector2 velocity,
             float rotationDegrees,
+            float angularVelocityDegrees,
             float fatigue,
             bool isCarrier,
             Vector2 ballPosition,
@@ -90,7 +91,8 @@ namespace PoFootball.Sensors
             Systems_PlayCall call,
             float lineOfScrimmageY,
             int down,
-            float yardsToGo)
+            float yardsToGo,
+            int physicsTick)
         {
             int cursor = 0;
 
@@ -132,25 +134,60 @@ namespace PoFootball.Sensors
             buffer[cursor++] = Mathf.Clamp01(fatigue);
             buffer[cursor++] = isCarrier ? 1f : 0f;
 
-            // Ball relative to self, and how fast it is travelling: 4
+            // Ball relative to self, and how fast it is travelling, IN THE BODY'S
+            // OWN FRAME — sideways, then forward — like the velocity above: 4
+            //
+            // World frame through revision 11, which was the defect revision 10
+            // fixed for own velocity and left standing here. "The ball is ahead
+            // and to my right" is the thing a drive-and-steer body acts on, and it
+            // was a function of these four floats AND the facing two above.
             Vector2 toBall = ballPosition - position;
-            buffer[cursor++] = NormalizeRange(toBall.x);
-            buffer[cursor++] = NormalizeRange(toBall.y);
+            buffer[cursor++] = NormalizeRange((toBall.x * cos) + (toBall.y * sin));
+            buffer[cursor++] = NormalizeRange((-toBall.x * sin) + (toBall.y * cos));
             buffer[cursor++] = Mathf.Clamp(
-                ballVelocity.x / Systems_SimConstants.PASS_SPEED_MAX, -1f, 1f);
+                ((ballVelocity.x * cos) + (ballVelocity.y * sin))
+                    / Systems_SimConstants.PASS_SPEED_MAX,
+                -1f, 1f);
             buffer[cursor++] = Mathf.Clamp(
-                ballVelocity.y / Systems_SimConstants.PASS_SPEED_MAX, -1f, 1f);
+                ((-ballVelocity.x * sin) + (ballVelocity.y * cos))
+                    / Systems_SimConstants.PASS_SPEED_MAX,
+                -1f, 1f);
 
             // Ball state: 2. Defenders need to see a live ball in the air.
             buffer[cursor++] = ballState == Systems_BallState.Held ? 1f : 0f;
             buffer[cursor++] = ballState == Systems_BallState.InFlight ? 1f : 0f;
 
-            // Field geometry: 4
+            // Field geometry: 2. Distance to the goal line and to the line of
+            // scrimmage.
+            //
+            // The two sideline distances that sat between them through revision 11
+            // are gone: with NormalizeX above they were the same coordinate three
+            // times. Their two floats went to the pair below, so OBSERVATION_SIZE
+            // did not move — which means nothing but CONTRACT_REVISION refuses a
+            // revision 11 brain here.
             buffer[cursor++] =
                 Mathf.Clamp(field.YardsToAttackingGoal(position.y) / 100f, -1f, 1f);
-            buffer[cursor++] = NormalizeRange(Systems_FieldModel.HALF_WIDTH - position.x);
-            buffer[cursor++] = NormalizeRange(Systems_FieldModel.HALF_WIDTH + position.x);
             buffer[cursor++] = NormalizeRange(lineOfScrimmageY - position.y);
+
+            // Own spin, against this role's top turn rate: 1.
+            //
+            // Steer is a torque against ANGULAR_DAMPING, so the turn a body is
+            // already in outlasts the decision that started it by a step or two,
+            // and observations are not stacked. Without this the policy steered a
+            // second-order system while seeing only its position.
+            buffer[cursor++] = Mathf.Clamp(
+                (angularVelocityDegrees * Mathf.Deg2Rad) / Systems_RoleTable.TurnRateOf(role),
+                -1f, 1f);
+
+            // The play clock: 1. Ticks since the snap over MAX_PHYSICS_TICKS.
+            //
+            // The call latches at DROPBACK_TICKS, the throw is refused after
+            // THROW_WINDOW_TICKS and the play is whistled dead at the cap, and
+            // none of the three was visible — so a critic could not tell the first
+            // second of a play from the last, on a quarter of plays that ended on
+            // the cap.
+            buffer[cursor++] = Mathf.Clamp01(
+                physicsTick / (float)Systems_PlayModel.MAX_PHYSICS_TICKS);
 
             // The situation: 2. Down normalized to [0, 1] across the four downs,
             // and distance normalized against a long-yardage cap.
@@ -183,6 +220,7 @@ namespace PoFootball.Sensors
             Vector2 position,
             Vector2 velocity,
             float rotationDegrees,
+            float angularVelocityDegrees,
             float fatigue,
             bool isCarrier,
             Vector2 ballPosition,
@@ -191,12 +229,14 @@ namespace PoFootball.Sensors
             Systems_PlayCall call,
             float lineOfScrimmageY,
             int down,
-            float yardsToGo)
+            float yardsToGo,
+            int physicsTick)
         {
             Write(
-                buffer, field, role, position, velocity, rotationDegrees, fatigue,
+                buffer, field, role, position, velocity, rotationDegrees,
+                angularVelocityDegrees, fatigue,
                 isCarrier, ballPosition, ballVelocity, ballState, call, lineOfScrimmageY,
-                down, yardsToGo);
+                down, yardsToGo, physicsTick);
 
             sensor.AddObservation(buffer);
         }
