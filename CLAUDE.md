@@ -107,26 +107,33 @@ To promote: train against a config for the CURRENT contract revision, run
 Editor. That last step is not optional — the Python side copies `.onnx` files but
 cannot write the ScriptableObject that lists them.
 
-**THE CURRENT REVISION IS 9, AND NO CONFIG OR COMPLETED RUN MATCHES IT YET.**
-`Agent_ActionContract.CONTRACT_REVISION` went to 9 when the quarterback's aim
-precision was given an effect, which made `INCOMPLETION_PENALTY`,
-`INTERCEPTION_REWARD` and the whole Interception branch of `Reward_Terminal`
-reachable for the first time. That file says it plainly: *"results/football_long01
-is fitted against revision 8 and must not load."* So the 2.6M-step run that
-concluded the optimization loop is **not promotable** — it learned a game in which
-a pass could not miss.
+**THE CURRENT REVISION IS 10, AND `Config/FootballBase12.yaml` IS ITS CONFIG. NO
+RUN AGAINST IT EXISTS YET.** Revision 9 gave the quarterback's aim precision an
+effect (a pass can now miss); no run was ever made against it. Revision 10 batched
+four more contract changes on top — rear-facing rays (52 -> 84 ray floats, now
+fixed in `Sensor_RayContract` rather than the scenes), body-frame own velocity, and
+masks that pin every play-call decision that cannot latch and every throw
+`HandleQuarterback` would refuse. `Agent_ActionContract` lists them.
+*"results/football_long01 is fitted against revision 8 and must not load"* still
+holds: the 2.6M-step run that concluded the optimization loop is **not
+promotable**.
 
-`Config/FootballBase11.yaml` is a revision **8** config; its own header says so.
-A revision 9 run needs its own config and run-id, per the 1:1 naming rule in
-UNITY_RULES §1. Until that run exists and is promoted, every player is a heuristic.
+The reward moved in the same change: flight yardage is paid on the catch, not in
+the air (an incomplete forty-yard heave used to net the offense +0.30, more than any
+run that ended in a tackle), a block no longer outpays the time cost, and there is
+no pursuit reward while the ball is in the air.
+
+Every config for an older contract is in `Config/archive/`, including
+FootballBase06-11, FootballLong01 and the six `experiments/` variants. Until a
+revision 10 run exists and is promoted, every player is a heuristic.
 
 Note that `m_Model` references serialized in the scenes are dead either way:
 `Agent_FootballPlayer` assigns `behaviorParameters.Model` from
 `Agent_BrainRegistry` at `Awake`, overwriting whatever the scene held.
 
 Heuristic-only is a supported, playable state, not a bug — but nothing you watch
-right now is a trained policy. **To change that, train a revision 9 run against the
-three-behavior config and promote it.** No such run exists yet — see above.
+right now is a trained policy. **To change that, train `football_base12` and
+promote it.** No such run exists yet — see above.
 
 **Scenes.** `SCN_MENU` (front end) → `SCN_GAME` (a scored game) and
 `SCN_TRAIN_FOOTBALL` (the trainer's endless single plays). All three share one
@@ -171,16 +178,18 @@ different dynamics than it was fitted against.
 
 # In-editor smoke test: start the trainer, then press Play.
 $env:CUDA_VISIBLE_DEVICES = "-1"     # MANDATORY on this machine. See below.
-mlagents-learn Config\FootballBase11.yaml --run-id=football_base11
+mlagents-learn Config\FootballBase12.yaml --run-id=football_base12
 
 # Headless sweep — envs take CONSECUTIVE ports from --base-port.
 # REBUILD Builds/FootballEnv FIRST whenever the contract revision moved:
 #   Unity: Tools > PoFootball > Build Training Env
-# Revision 8 changed the DYNAMICS with every shape left identical, so a stale env
-# is NOT refused by the handshake. That rebuild is on you, not on the stamp.
-mlagents-learn Config\FootballBase11.yaml --run-id=football_base11 `
+# Revisions 8 and 9 changed the DYNAMICS with every shape left identical, so a
+# stale env is NOT always refused by the handshake. That rebuild is on you.
+# --num-envs=4: measured 257.7 / 255.1 / 236.3 steps/s at 2 / 4 / 12 envs
+# (rl_optimization_log.md); the trainer is the bottleneck.
+mlagents-learn Config\FootballBase12.yaml --run-id=football_base12 `
   --env=Builds\FootballEnv\PoFootball.exe --no-graphics `
-  --base-port=5400 --num-envs=12
+  --base-port=5400 --num-envs=4
 
 tensorboard --logdir results
 ```
@@ -200,6 +209,14 @@ Balance changes are judged on that line and nothing else — four were reasoned 
 confidently during the revision 8 work and two of them made the game measurably
 worse. **Single games are very noisy** (4.48 to 7.37 yards/play on one config), so
 compare three-game means.
+
+`Tools > PoFootball > Evaluate Realism (3 games)` (`Editor_RealismEval`) plays three
+games at 8x and writes `results/realism/realism-<stamp>.json`; headless, run
+`Unity.exe -batchmode -projectPath . -executeMethod
+PoFootball.EditorTools.Editor_RealismEval.RunBatch` without `-quit`.
+`Tools/promote_brain.py --version NN --check-realism <file>` judges the three-game
+means (yards/play 4.5-6.5, TD/drive 0.15-0.40) and records the verdict in that
+version's MANIFEST.md.
 
 `Tools > PoFootball > Sim Speed > 8x` (editor-only, `Assets/Editor/Editor_SimSpeed.cs`)
 turns a full game from ~10 minutes into ~100 seconds. It raises `Time.timeScale`
@@ -243,9 +260,8 @@ given it picks `"cuda"` whenever a GPU is visible and calls
 for `cpu`, the `else` branch only sets the dtype — it never puts the default device
 back. Hiding the GPU is what fixes it. Use `-1`; an empty string is ignored on Windows.
 
-`FootballBase06.yaml` (long superseded — the newest config is
-`FootballBase11.yaml`, three behaviors, and it is itself a revision **8** config
-against a build now on revision 9) carries **six** behaviors. The quarterback has its own brain
+`Config/archive/FootballBase06.yaml` (long superseded — the live config is
+`FootballBase12.yaml`, three behaviors, revision 10) carried **six** behaviors. The quarterback has its own brain
 — it is the only one with discrete actions, and while it shared `OffenseSkill`
 with the backs and receivers its play-call gradient was diluted five to one and
 its entropy bonus could not be raised without injecting noise into four other
@@ -256,8 +272,10 @@ batched, so two runs with the same YAML and different `--num-envs` are not
 comparable. Before `--force`, kill TensorBoard: it holds Windows file handles and
 the wipe silently no-ops. Shut down in order: trainer → envs → TensorBoard.
 
-Judge a self-play run on the `Self-play/ELO` curve. Mean reward is zero-sum
-across offense and defense and stays near 0 however strong the policy becomes.
+Judge a self-play run on the `Self-play/ELO` curve — but no current config runs
+self-play (UNITY_RULES §4), so from base05 on there is no ELO to read. Mean reward
+is zero-sum across offense and defense and stays near 0 however strong the policy
+becomes.
 Watch `Call/Entropy` alongside it: the trainer's own `Policy/Entropy` sums across
 every action head at once and sat at a healthy 3.5 through `football_base03`
 while the play call had collapsed onto one option on 93% of downs.
@@ -283,8 +301,12 @@ hand:
 ```
 
 The gate reads every expected value out of `Sensor_FootballState.cs`,
-`Agent_ActionContract.cs`, `Systems_RoleTable.cs` and the training scene, so it
-cannot drift from the contract it guards. The deleted `Assets/Agents/Football_v01`
+`Sensor_RayContract.cs`, `Agent_ActionContract.cs` and `Systems_RoleTable.cs`, so it
+cannot drift from the contract it guards. (The ray width came from the training
+scene until revision 10; `Agent_FootballPlayer` now applies `Sensor_RayContract`
+over whatever the scenes say.) It also refuses a run whose `Control/SpeedClampRate`
+averaged above 0.001 over its last five summaries — a policy exploiting solver
+blow-ups — and `--check-realism` judges the promoted brains' REALISM line. The deleted `Assets/Agents/Football_v01`
 is the reason it exists: those four brains came from `football_base02` at ~500k
 steps against a contract that had since changed, the shipped `OffenseSkill.onnx`
 had no discrete output at all, and the resulting "quarterback calls the same play
@@ -320,7 +342,7 @@ shipping on the punkouter27 Play account.
 | Property | Value |
 |---|---|
 | Application id | `com.punkoutersoftware.pofootball` |
-| Version / code | `1.0.0` / `1` — bump `VERSION_CODE` in `Editor_ConfigureAndroidRelease` for every upload; Play rejects a reused code |
+| Version / code | `1.0.0` / `7` at time of writing — both Android builders bump the code once per build (`Editor_BuildAndroidAAB.NextVersionCode`); `Editor_ConfigureAndroidRelease` only enforces a floor of 1 and never lowers it. Play rejects a reused code |
 | min / target SDK | 26 / 36 (Play requires target 36 for new uploads from 2026-08-31) |
 | Architecture | ARM64, IL2CPP, Release |
 | Orientation | Portrait is locked in `Editor_ConfigureAndroidRelease`. |
@@ -375,6 +397,7 @@ blocks the one artifact whose job is to get onto a phone today. That build logs 
 | *Tools → PoFootball → Build Android APK* | Sideloadable APK on the SAME key, so it installs over a Play build → `Builds/Android/PoFootball.apk`. Logs `BUILD RESULT:` |
 | *Tools → PoFootball → Build Android APK (development)* | The same APK with Development Build on — the only artifact where `Debug.isDebugBuild` is true and therefore the only one whose DEBUG sheet appears. This is what goes on a test handset |
 | `Tools/play_publish.py` | Uploads a built AAB. Defaults to the `internal` track as a `draft`; `--dry-run` rehearses and discards |
+| `Tools/publish.ps1` | Headless AAB build + `play_publish.py` in one command, with vault credentials. See `Tools/PUBLISHING.md` (moved from `Scripts/`) |
 
 `Tools/play_publish.py` needs its own venv (`Tools/publish-venv`). Do not install it
 into `.venv` — that one carries load-bearing ml-agents/torch pins, and the C#/Python
