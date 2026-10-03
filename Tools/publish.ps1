@@ -1,17 +1,23 @@
-# Scripts\publish.ps1 - build the signed AAB and upload it to Play internal testing.
+# Tools\publish.ps1 - build the signed AAB and upload it to Play internal testing.
 #
-#   .\Scripts\publish.ps1              # build + upload as DRAFT to internal track
-#   .\Scripts\publish.ps1 -DryRun      # full rehearsal, nothing lands in the console
-#   .\Scripts\publish.ps1 -SkipBuild   # upload the existing Builds\Android\PoFootball.aab
+#   .\Tools\publish.ps1              # build + upload as DRAFT to internal track
+#   .\Tools\publish.ps1 -DryRun      # full rehearsal, nothing lands in the console
+#   .\Tools\publish.ps1 -SkipBuild   # upload the existing Builds\Android\PoFootball.aab
 #
-# bundleVersionCode is bumped automatically before each build (Play rejects
-# duplicate versionCodes); pass -NoBump to keep the current one.
+# bundleVersionCode is bumped by the build itself (Editor_BuildAndroidAAB
+# .NextVersionCode). This script used to bump it as well, before invoking that
+# build, so every publish advanced the code by two.
+#
+# Secrets come from the shared signing vault (CLAUDE.md, "Secrets live OUTSIDE the
+# repo"), and the uploader runs in its own venv, never .venv, which carries the
+# load-bearing ml-agents/torch pins. This script used to point at PoRacer's
+# service-account key and at a venv outside this repository.
+#
 # The Unity editor must NOT have this project open, or the headless build fails on
 # the project lock — the script checks and refuses up front.
 param(
     [switch]$SkipBuild,
     [switch]$DryRun,
-    [switch]$NoBump,
     [string]$Track = 'internal',
     [string]$Status = 'draft'
 )
@@ -19,12 +25,17 @@ $ErrorActionPreference = 'Stop'
 $App = 'PoFootball'
 $BuildMethod = 'PoFootball.EditorTools.Editor_BuildAndroidAAB.Build'
 $Proj = Split-Path $PSScriptRoot -Parent
-$Python = 'C:\Users\punko\Downloads\PlayStoreUploads\publish-venv\Scripts\python.exe'
-$Creds = 'C:\Users\punko\Downloads\PoRacer-Release\play-service-account.json'
+$Python = Join-Path $Proj 'Tools\publish-venv\Scripts\python.exe'
+$Creds = if ($env:POFOOTBALL_PLAY_CREDENTIALS) { $env:POFOOTBALL_PLAY_CREDENTIALS } `
+         else { 'C:\Users\punko\OneDrive\VAULT\_CODE\pofootball-play-service-account.json' }
 $Aab = Join-Path $Proj "Builds\Android\$App.aab"
 
-if (-not (Test-Path $Python)) { Write-Error "Publish venv python not found at $Python" }
-if (-not (Test-Path $Creds)) { Write-Error "Service account key not found at $Creds" }
+if (-not (Test-Path $Python)) {
+    Write-Error ("Publish venv not found at $Python. Create it with:`n" +
+        "  py -3 -m venv Tools\publish-venv`n" +
+        "  Tools\publish-venv\Scripts\python.exe -m pip install -r Tools\requirements-publish.txt")
+}
+if (-not (Test-Path $Creds)) { Write-Error "Service account key not found at $Creds (see the SETUP block in Tools\play_publish.py)" }
 
 if (-not $SkipBuild) {
     # Fail fast if the project is open in the editor — the headless build would
@@ -33,23 +44,6 @@ if (-not $SkipBuild) {
         Where-Object { $_.MainWindowTitle -like "$App -*" }
     if ($open) {
         Write-Error "$App is open in the Unity editor (PID $($open[0].Id)). Close it and retry."
-    }
-
-    # Play refuses a versionCode it has seen before, so bump it every build.
-    $settings = Join-Path $Proj 'ProjectSettings\ProjectSettings.asset'
-    $raw = Get-Content $settings -Raw
-    if ($raw -match 'AndroidBundleVersionCode: (\d+)') {
-        $current = [int]$Matches[1]
-        if ($NoBump) {
-            Write-Host "bundleVersionCode: $current (kept, -NoBump)"
-        } else {
-            $next = $current + 1
-            ($raw -replace 'AndroidBundleVersionCode: \d+', "AndroidBundleVersionCode: $next") |
-                Set-Content $settings -NoNewline
-            Write-Host "bundleVersionCode: $current -> $next"
-        }
-    } else {
-        Write-Warning 'AndroidBundleVersionCode not found in ProjectSettings.asset; not bumping.'
     }
 
     $ver = (Select-String -Path (Join-Path $Proj 'ProjectSettings\ProjectVersion.txt') `
@@ -66,7 +60,7 @@ if (-not $SkipBuild) {
     Write-Host "Building $App AAB headlessly (log: $log)..."
     $proc = Start-Process -FilePath $unity -PassThru -Wait -ArgumentList `
         '-batchmode', '-nographics', '-quit', '-projectPath', $Proj, `
-        '-executeMethod', $BuildMethod, '-logFile', $log
+        '-buildTarget', 'Android', '-executeMethod', $BuildMethod, '-logFile', $log
     $result = Select-String -Path $log -Pattern 'AAB BUILD RESULT:' | Select-Object -Last 1
     if ($result) { Write-Host $result.Line }
     if ($proc.ExitCode -ne 0 -or -not $result -or $result.Line -notmatch 'Succeeded') {
@@ -78,7 +72,7 @@ if (-not $SkipBuild) {
 
 if (-not (Test-Path $Aab)) { Write-Error "No AAB at $Aab - run without -SkipBuild first" }
 $pyArgs = @((Join-Path $Proj 'Tools\play_publish.py'),
-            '--credentials', $Creds, '--track', $Track, '--status', $Status)
+            '--aab', $Aab, '--credentials', $Creds, '--track', $Track, '--status', $Status)
 if ($DryRun) { $pyArgs += '--dry-run' }
 & $Python @pyArgs
 exit $LASTEXITCODE

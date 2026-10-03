@@ -275,7 +275,7 @@ PlayerSettings:
   AndroidTargetArchitectures: 2
   AndroidSplashScreenScale: 0
   androidSplashScreen: {fileID: 0}
-  AndroidKeystoreName: C:/Users/punko/Downloads/PoFootball-Release/pofootball-upload.jks
+  AndroidKeystoreName: C:/Users/punko/OneDrive/VAULT/_CODE/pofootball-upload.jks
   AndroidKeyaliasName: pofootball-upload
   AndroidEnableArmv9SecurityFeatures: 0
   AndroidEnableArm64MTE: 0

@@ -34,9 +34,10 @@ SETUP (one time, and it needs a human in a browser):
      and use Play App Signing" (or narrower) for the PoFootball app.
      The invite must be for the APP, and permission changes take a few minutes
      to propagate -- a 401 right after granting is usually just impatience.
-  5. Put the JSON next to the keystore, which is already the project's
-     convention for secrets that must stay out of the repo:
-       C:/Users/punko/Downloads/PoFootball-Release/play-service-account.json
+  5. Put the JSON in the shared signing vault beside the keystore, which is the
+     convention for every Punkouter app's secrets (KEYSTORES-README.txt there):
+       C:/Users/punko/OneDrive/VAULT/_CODE/pofootball-play-service-account.json
+     The old C:/Users/punko/Downloads/PoFootball-Release/ default never existed.
 
   The FIRST bundle for a brand new app cannot be uploaded through this script:
   Play will not accept an API upload until the app's store listing, content
@@ -67,7 +68,7 @@ REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 PACKAGE_NAME = "com.punkoutersoftware.pofootball"
 
 DEFAULT_AAB = os.path.join(REPO_ROOT, "Builds", "Android", "PoFootball.aab")
-DEFAULT_CREDENTIALS = "C:/Users/punko/Downloads/PoFootball-Release/play-service-account.json"
+DEFAULT_CREDENTIALS = "C:/Users/punko/OneDrive/VAULT/_CODE/pofootball-play-service-account.json"
 
 API_ROOT = "https://androidpublisher.googleapis.com/androidpublisher/v3"
 UPLOAD_ROOT = "https://androidpublisher.googleapis.com/upload/androidpublisher/v3"

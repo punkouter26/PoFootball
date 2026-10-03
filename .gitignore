@@ -200,3 +200,14 @@ Assets/packages-merged-link.meta
 # Play publishing tooling venv — deliberately not .venv, which carries
 # load-bearing ml-agents/torch pins.
 Tools/publish-venv/
+
+# Signing and publishing secrets. They live in C:\Users\punko\OneDrive\VAULT\_CODE\
+# (CLAUDE.md, "Secrets live OUTSIDE the repo"); these patterns are the backstop for
+# the day one is copied in here by mistake. A committed upload key cannot be revoked.
+*.jks
+*.keystore
+*.pass
+*.pem
+*.p12
+*service-account*.json
+.env

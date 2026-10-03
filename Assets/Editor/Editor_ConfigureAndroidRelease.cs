@@ -30,6 +30,16 @@ namespace PoFootball.EditorTools
         private const string LEGACY = ICON_DIR + "AppIcon_Legacy.png";
 
         private const string VERSION = "1.0.0";
+
+        /// <summary>
+        /// The FLOOR for bundleVersionCode, not its value.
+        ///
+        /// This used to assign it outright, so re-running the menu item to refresh
+        /// the icons reset the code to 1 under a project that had already reached 7
+        /// — and Play rejects any upload whose code is not higher than the last one.
+        /// The builders own the increment (Editor_BuildAndroidAAB.NextVersionCode);
+        /// all this may do is make sure it never starts below 1.
+        /// </summary>
         private const int VERSION_CODE = 1;
 
         [MenuItem("Tools/PoFootball/Configure Android Release Settings")]
@@ -39,7 +49,8 @@ namespace PoFootball.EditorTools
             PlayerSettings.productName = "PoFootball";
             PlayerSettings.SetApplicationIdentifier(NamedBuildTarget.Android, Editor_BuildAndroidAAB.APP_ID);
             PlayerSettings.bundleVersion = VERSION;
-            PlayerSettings.Android.bundleVersionCode = VERSION_CODE;
+            PlayerSettings.Android.bundleVersionCode =
+                Mathf.Max(PlayerSettings.Android.bundleVersionCode, VERSION_CODE);
 
             PlayerSettings.Android.minSdkVersion = AndroidSdkVersions.AndroidApiLevel26;
             PlayerSettings.Android.targetSdkVersion = (AndroidSdkVersions)36;
@@ -65,7 +76,7 @@ namespace PoFootball.EditorTools
             AssetDatabase.SaveAssets();
 
             Debug.Log($"ANDROID CONFIG RESULT: id={Editor_BuildAndroidAAB.APP_ID} v{VERSION} " +
-                      $"(code {VERSION_CODE}) min=26 target=36 arch=ARM64 IL2CPP | {iconReport}");
+                      $"(code {PlayerSettings.Android.bundleVersionCode}) min=26 target=36 arch=ARM64 IL2CPP | {iconReport}");
         }
 
         private static string ApplyIcons()
