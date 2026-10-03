@@ -174,6 +174,41 @@ pitch looked exactly like a kickoff pitch.
 
 ---
 
+## Physics-driven polish, 2026-10-03
+
+Five additions, each rendering a number the simulation already had. **The C#
+compiles; none of it has been tuned against a capture yet**, which every other
+number in this document was. Treat the defaults as starting points.
+
+| what | where | driven by |
+|---|---|---|
+| Scuffs left on the turf, fading over ~45 s of game time | `Systems_ImpactView` (second particle system, sorting order 1) | tackle closing speed and tackler mass; off-ball impulse above half strength |
+| Looping scrape while a defender is on the carrier | `Systems_AudioView` + `Systems_ToneBank.Grind` | `Systems_GrindMessage`: relative speed from `OnCollisionStay2D` |
+| Lens distortion and chromatic aberration pulse, 0.22 s, centred on the hit | `Systems_PostProcessView` | tackles at or above `FUMBLE_CLOSING_SPEED` only |
+| Follow spot on the ball, non-casting | `Systems_StadiumRigView` | `Systems_BallModel.Position` |
+| Laboured breathing: the body draws in, faster and deeper | `PoFootball/Player` `_Breath`, `Systems_PlayerAppearanceView` | shown fatigue above 0.2 |
+
+**The scrape reaches presentation through `Systems_IContactSink.ReportGrind`**,
+the seam the off-ball contacts already use, so training gets the null object.
+The agent calls it after `ReportSustainedContact` and reads nothing back.
+
+**The lens pulse is the camera kick's replacement, not its return.** It writes
+two volume parameters and restores both to zero on disable; it does not move
+the camera or touch `Time.timeScale`. The distortion is negative on purpose —
+positive pushes the frame's edges outward and shows what is past them.
+
+**The follow spot is the thing to check first on a capture.** It adds light to
+the carrier, whose rim is already the brightest thing on screen, and the bloom
+threshold above was tuned without it. If jerseys near the ball pick up a halo,
+lower `_spotIntensity` (0 builds no spot).
+
+**Breathing only ever shrinks the sprite.** The sprite is exactly the size of
+the collider, and one that swelled past it would be drawn where it cannot be
+hit. The phase is accumulated in C# rather than derived from `_Time`, because a
+rate that changes with fatigue makes `sin(time * rate)` jump.
+
+---
+
 ## Sprite atlases — why this project has none
 
 `.claude/rules/performance.md` requires atlases for all 2D sprites, and

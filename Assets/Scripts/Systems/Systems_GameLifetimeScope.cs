@@ -136,6 +136,7 @@ namespace PoFootball.Systems
             builder.RegisterMessageBroker<Systems_PassThrownMessage>(messagePipeOptions);
             builder.RegisterMessageBroker<Systems_PassCaughtMessage>(messagePipeOptions);
             builder.RegisterMessageBroker<Systems_ContactMessage>(messagePipeOptions);
+            builder.RegisterMessageBroker<Systems_GrindMessage>(messagePipeOptions);
             builder.RegisterMessageBroker<Systems_TurfCutMessage>(messagePipeOptions);
             builder.RegisterMessageBroker<Systems_HighlightPlaybackMessage>(messagePipeOptions);
 

@@ -71,6 +71,13 @@ Shader "PoFootball/Player"
         // every trained .onnx would suddenly be running different physics.
         _Lean("Sprint narrowing", Range(0, 0.35)) = 0
 
+        // Laboured breathing: the whole body drawn this much SMALLER, about its
+        // centre, on a cycle Systems_PlayerAppearanceView runs faster and deeper
+        // as fatigue rises. A vertex offset for the reason _Lean is one, and it
+        // only ever shrinks: the sprite is exactly as big as the collider, and a
+        // body that swelled past it would be drawn somewhere it cannot be hit.
+        _Breath("Laboured breathing", Range(0, 0.15)) = 0
+
         _MaskTex("Mask", 2D) = "white" {}
         _NormalMap("Normal Map", 2D) = "bump" {}
         [HideInInspector] _Color("Tint", Color) = (1,1,1,1)
@@ -102,7 +109,8 @@ Shader "PoFootball/Player"
             float _Fatigue;                 \
             float _FatigueDesaturation;     \
             float _Lean;                    \
-            float _Impact;
+            float _Impact;                  \
+            float _Breath;
 
         // Narrows the body across its local X. The rigidbody already rotates the
         // player to face its direction of travel, so local X is "across the
@@ -110,6 +118,13 @@ Shader "PoFootball/Player"
         float3 PoFootballLean(float3 positionOS, float lean)
         {
             return float3(positionOS.x * (1.0 - lean), positionOS.yz);
+        }
+
+        // Draws the body in toward its own centre. Uniform, so the role shape
+        // stays the role shape — a hexagon breathing is still a hexagon.
+        float3 PoFootballBreathe(float3 positionOS, float breath)
+        {
+            return float3(positionOS.xy * (1.0 - breath), positionOS.z);
         }
         ENDHLSL
 
@@ -156,6 +171,7 @@ Shader "PoFootball/Player"
                 SetUpSpriteInstanceProperties();
                 input.positionOS = UnityFlipSprite(input.positionOS, unity_SpriteProps.xy);
                 input.positionOS = PoFootballLean(input.positionOS, _Lean);
+                input.positionOS = PoFootballBreathe(input.positionOS, _Breath);
 
                 Varyings o = CommonLitVertex(input);
                 o.color = input.color * _Color * unity_SpriteColor;
@@ -217,6 +233,7 @@ Shader "PoFootball/Player"
                 SetUpSpriteInstanceProperties();
                 input.positionOS = UnityFlipSprite(input.positionOS, unity_SpriteProps.xy);
                 input.positionOS = PoFootballLean(input.positionOS, _Lean);
+                input.positionOS = PoFootballBreathe(input.positionOS, _Breath);
 
                 Varyings o = CommonNormalsVertex(input);
                 o.color = input.color * _Color * unity_SpriteColor;
@@ -271,6 +288,7 @@ Shader "PoFootball/Player"
                 SetUpSpriteInstanceProperties();
                 input.positionOS = UnityFlipSprite(input.positionOS, unity_SpriteProps.xy);
                 input.positionOS = PoFootballLean(input.positionOS, _Lean);
+                input.positionOS = PoFootballBreathe(input.positionOS, _Breath);
 
                 Varyings o = CommonUnlitVertex(input);
                 o.color = input.color * _Color * unity_SpriteColor;

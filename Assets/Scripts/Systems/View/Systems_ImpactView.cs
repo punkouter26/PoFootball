@@ -48,6 +48,17 @@ namespace PoFootball.Views
     /// ten times a play has stopped saying which collision mattered. Same buffer,
     /// same material, still one draw call.
     ///
+    /// A HIT LEAVES A MARK, AND THE MARK OUTLASTS THE PLAY. Everything above is
+    /// gone in under half a second, so a goal-line stand and a quiet drive left
+    /// the same field behind them; the turf shader's wear term is one number for
+    /// the whole pitch. A tackle now scuffs the turf where it happened — smeared
+    /// along the line the hit carried, sized by the closing speed — and so does
+    /// an off-ball collision in the top half of the impulse range. The marks
+    /// fade over the next few plays, so what a viewer sees on the grass is where
+    /// the last few plays were fought. This IS a second particle system and a
+    /// second draw call: the marks sort under the players and the burst sorts
+    /// over the ball, and one renderer has one sorting order.
+    ///
     /// NO CAMERA SHAKE, DELIBERATELY. Systems_BroadcastCameraView used to kick on a
     /// big hit and drop into slow motion, and both were removed — the slow motion
     /// because a presentation view driving Time.timeScale stranded the editor at
@@ -182,6 +193,57 @@ namespace PoFootball.Views
         /// </summary>
         private static readonly Color DustColor = new Color(0.8f, 0.77f, 0.64f, 0.5f);
 
+        /// <summary>
+        /// On the ground: under the players and the ball, level with the clods
+        /// Systems_TurfScuffView throws.
+        /// </summary>
+        private const int MARK_SORTING_ORDER = 1;
+
+        /// <summary>
+        /// Room for about three plays of marks at the rate SCN_GAME makes them —
+        /// one tackle and a handful of hard blocks a play. When it is full Emit
+        /// drops the newest, which costs a scuff and nothing else.
+        /// </summary>
+        private const int MAX_MARKS = 256;
+
+        /// <summary>
+        /// Game seconds a mark lasts, the last third of it fading. Game time, so
+        /// that at Sim Speed 8x the field still shows the last few plays rather
+        /// than the last few dozen.
+        /// </summary>
+        private const float MARK_LIFETIME = 45f;
+
+        private const int MIN_TACKLE_MARKS = 3;
+        private const int MAX_TACKLE_MARKS = 7;
+
+        private const float MARK_SIZE_MIN = 0.3f;
+        private const float MARK_SIZE_MAX = 0.75f;
+
+        /// <summary>
+        /// How far along the line of the hit the marks are smeared at full force,
+        /// in metres. A hard tackle carries both bodies a stride past the contact
+        /// point; a scuff stamped in a round patch would say they stopped dead.
+        /// </summary>
+        private const float MARK_SMEAR = 1.3f;
+
+        /// <summary>Scatter either side of that line, in metres.</summary>
+        private const float MARK_SCATTER = 0.3f;
+
+        /// <summary>
+        /// Contact strength below which a block leaves no mark. The line engaging
+        /// at the snap sits a third of the way up the impulse range
+        /// (Systems_ContactMessage.FULL_IMPULSE); marking that would draw the line
+        /// of scrimmage in dirt on every down, which the chains already do.
+        /// </summary>
+        private const float MARK_CONTACT_FLOOR = 0.5f;
+
+        /// <summary>
+        /// Bare soil, the colour of the clods Systems_TurfScuffView throws but
+        /// thin — a mark is turf pressed flat and torn, not a hole. Overlapping
+        /// marks darken, so a spot hit three times reads as hit three times.
+        /// </summary>
+        private static readonly Color MarkColor = new Color(0.2f, 0.17f, 0.1f, 0.3f);
+
         private Systems_PlayerRegistry _registry;
         private Systems_PresentationBudget _budget;
         private ISubscriber<Systems_TackleMessage> _tackleSubscriber;
@@ -192,6 +254,7 @@ namespace PoFootball.Views
         private IDisposable _contactSubscription;
 
         private ParticleSystem _particles;
+        private ParticleSystem _marks;
         private ParticleSystem.EmitParams _emit;
 
         /// <summary>
@@ -239,6 +302,7 @@ namespace PoFootball.Views
             }
 
             BuildParticles(source);
+            BuildMarks(source);
             _tackleSubscription = _tackleSubscriber.Subscribe(OnTackle);
             _caughtSubscription = _caughtSubscriber?.Subscribe(OnPassCaught);
             _contactSubscription = _contactSubscriber?.Subscribe(OnContact);
@@ -333,6 +397,73 @@ namespace PoFootball.Views
             _particles.Play();
         }
 
+        /// <summary>
+        /// The marks' own system. Nothing in it moves: no velocity, no drag, no
+        /// size curve — a mark is put down and left. Looping for the reason
+        /// <see cref="BuildParticles"/> gives.
+        /// </summary>
+        private void BuildMarks(Material source)
+        {
+            GameObject host = new GameObject("TurfMarks");
+            host.transform.SetParent(transform, false);
+
+            _marks = host.AddComponent<ParticleSystem>();
+
+            ParticleSystem.MainModule main = _marks.main;
+            main.loop = true;
+            main.playOnAwake = false;
+            main.simulationSpace = ParticleSystemSimulationSpace.World;
+            main.maxParticles = MAX_MARKS;
+            main.startSpeed = 0f;
+            main.startSize = MARK_SIZE_MIN;
+            main.startLifetime = MARK_LIFETIME;
+            main.gravityModifier = 0f;
+
+            ParticleSystem.EmissionModule emission = _marks.emission;
+            emission.enabled = false;
+
+            ParticleSystem.ShapeModule shape = _marks.shape;
+            shape.enabled = false;
+
+            ParticleSystem.ColorOverLifetimeModule fade = _marks.colorOverLifetime;
+            fade.enabled = true;
+            fade.color = new ParticleSystem.MinMaxGradient(BuildMarkGradient());
+
+            ParticleSystemRenderer renderer = host.GetComponent<ParticleSystemRenderer>();
+
+            renderer.sharedMaterial = source;
+            renderer.sortingOrder = MARK_SORTING_ORDER;
+            renderer.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
+            renderer.receiveShadows = false;
+            renderer.alignment = ParticleSystemRenderSpace.View;
+
+            _marks.Play();
+        }
+
+        /// <summary>
+        /// Full for two thirds of its life and then away. A mark that began
+        /// fading the moment it was made would be half gone by the next snap.
+        /// </summary>
+        private static Gradient BuildMarkGradient()
+        {
+            Gradient gradient = new Gradient();
+
+            gradient.SetKeys(
+                new[]
+                {
+                    new GradientColorKey(Color.white, 0f),
+                    new GradientColorKey(Color.white, 1f)
+                },
+                new[]
+                {
+                    new GradientAlphaKey(1f, 0f),
+                    new GradientAlphaKey(1f, 0.66f),
+                    new GradientAlphaKey(0f, 1f)
+                });
+
+            return gradient;
+        }
+
         private static Gradient BuildFadeGradient()
         {
             Gradient gradient = new Gradient();
@@ -406,6 +537,13 @@ namespace PoFootball.Views
 
             EmitFlash(point, force, FlashColor);
             EmitSparks(point, closing, force, weight, SparkColor);
+
+            // Count by momentum and reach by closing speed, the same split the
+            // sparks make: a lineman tears up more turf, a faster hit carries it
+            // further.
+            StampMarks(
+                point, closing, force,
+                Mathf.RoundToInt(Mathf.Lerp(MIN_TACKLE_MARKS, MAX_TACKLE_MARKS, weight)));
 
             // A hit hard enough to strip the ball gets a ring as well, so the
             // viewer sees the fumble roll coming. Same buffer, no extra draw call,
@@ -488,6 +626,49 @@ namespace PoFootball.Views
                 _emit.startColor = DustColor;
 
                 _particles.Emit(_emit, 1);
+            }
+
+            // One or two, along the normal: that is the line the two of them
+            // were driven along, which the dust above is at right angles to.
+            if (strength >= MARK_CONTACT_FLOOR)
+            {
+                StampMarks(message.Point, message.Normal, strength, strength >= 0.8f ? 2 : 1);
+            }
+        }
+
+        /// <summary>
+        /// Puts <paramref name="count"/> scuffs on the turf, smeared from
+        /// <paramref name="point"/> along <paramref name="along"/> — a unit vector,
+        /// or zero for a patch with no direction.
+        /// </summary>
+        private void StampMarks(Vector2 point, Vector2 along, float strength, int count)
+        {
+            if (_marks == null)
+            {
+                return;
+            }
+
+            Vector2 across = new Vector2(-along.y, along.x);
+
+            for (int mark = 0; mark < count; mark++)
+            {
+                float reach = NextFloat() * MARK_SMEAR * strength;
+                float scatter = ((NextFloat() * 2f) - 1f) * MARK_SCATTER;
+
+                _emit = default;
+                _emit.position = point + (along * reach) + (across * scatter);
+                _emit.velocity = Vector3.zero;
+                _emit.startLifetime = MARK_LIFETIME * (0.75f + (NextFloat() * 0.25f));
+
+                _emit.startSize = Mathf.Lerp(
+                    MARK_SIZE_MIN, MARK_SIZE_MAX, strength * (0.5f + (NextFloat() * 0.5f)));
+
+                // Turned at random, so a patch of square quads overlaps into
+                // something ragged rather than into a bigger square.
+                _emit.rotation = NextFloat() * 360f;
+                _emit.startColor = MarkColor;
+
+                _marks.Emit(_emit, 1);
             }
         }
 

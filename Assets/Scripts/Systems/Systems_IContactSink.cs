@@ -25,6 +25,14 @@ namespace PoFootball.Systems
         /// must not allocate.
         /// </summary>
         void Report(Vector2 point, Vector2 normal, float impulse);
+
+        /// <summary>
+        /// Called from OnCollisionStay2D, on every tick a defender stays in
+        /// contact with the carrier. The referee is told about the same contact
+        /// separately and rules on it; this is only so it can be heard.
+        /// Implementations must not allocate.
+        /// </summary>
+        void ReportGrind(Vector2 point, float relativeSpeed);
     }
 
     /// <summary>
@@ -39,10 +47,14 @@ namespace PoFootball.Systems
     public sealed class Systems_ContactRelay : Systems_IContactSink
     {
         private readonly IPublisher<Systems_ContactMessage> _publisher;
+        private readonly IPublisher<Systems_GrindMessage> _grindPublisher;
 
-        public Systems_ContactRelay(IPublisher<Systems_ContactMessage> publisher)
+        public Systems_ContactRelay(
+            IPublisher<Systems_ContactMessage> publisher,
+            IPublisher<Systems_GrindMessage> grindPublisher)
         {
             _publisher = publisher;
+            _grindPublisher = grindPublisher;
         }
 
         public void Report(Vector2 point, Vector2 normal, float impulse)
@@ -54,6 +66,20 @@ namespace PoFootball.Systems
 
             _publisher.Publish(new Systems_ContactMessage(point, normal, impulse));
         }
+
+        /// <summary>
+        /// The same floor, for the same reason: two bodies moving as one are in
+        /// contact on every tick and scraping on none of them.
+        /// </summary>
+        public void ReportGrind(Vector2 point, float relativeSpeed)
+        {
+            if (relativeSpeed < Systems_GrindMessage.AUDIBLE_SPEED)
+            {
+                return;
+            }
+
+            _grindPublisher.Publish(new Systems_GrindMessage(point, relativeSpeed));
+        }
     }
 
     /// <summary>
@@ -63,6 +89,10 @@ namespace PoFootball.Systems
     public sealed class Systems_NullContactSink : Systems_IContactSink
     {
         public void Report(Vector2 point, Vector2 normal, float impulse)
+        {
+        }
+
+        public void ReportGrind(Vector2 point, float relativeSpeed)
         {
         }
     }

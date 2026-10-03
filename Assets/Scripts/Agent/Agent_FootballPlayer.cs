@@ -1129,7 +1129,18 @@ namespace PoFootball.Agents
                 return;
             }
 
-            _referee.ReportSustainedContact(other.Id, collision.relativeVelocity.magnitude);
+            float relativeSpeed = collision.relativeVelocity.magnitude;
+
+            _referee.ReportSustainedContact(other.Id, relativeSpeed);
+
+            // The same contact, handed to presentation so the wrap-up can be
+            // heard. After the referee and reading nothing back from it, so the
+            // rule above sees exactly what it saw before this line existed; in
+            // training the sink is the null object.
+            if (_contactSink != null && collision.contactCount > 0)
+            {
+                _contactSink.ReportGrind(collision.GetContact(0).point, relativeSpeed);
+            }
         }
 
         public void ClearFatigue()

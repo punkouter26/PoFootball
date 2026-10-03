@@ -11,6 +11,9 @@ namespace PoFootball.Views
     /// Puts PoFootball/Player on all twenty-two bodies and feeds it the four
     /// pieces of per-player state that change during a play: who has the ball, how
     /// tired each player is, how hard each one is running, and who was just hit.
+    /// Tiredness is written twice — as the tint it always was, and as a breath
+    /// that gets faster and deeper with it, so a gassed lineman heaves between
+    /// plays and a fresh corner stands still.
     ///
     /// THE HIT FLASH LIVES HERE RATHER THAN IN Systems_ImpactView, which is where
     /// it looks like it belongs. Two components writing MaterialPropertyBlocks to
@@ -50,6 +53,26 @@ namespace PoFootball.Views
         private static readonly int FatigueId = Shader.PropertyToID("_Fatigue");
         private static readonly int LeanId = Shader.PropertyToID("_Lean");
         private static readonly int ImpactId = Shader.PropertyToID("_Impact");
+        private static readonly int BreathId = Shader.PropertyToID("_Breath");
+
+        /// <summary>
+        /// How far a fully spent body draws in at the bottom of a breath, as a
+        /// fraction of its size. About three pixels on a thirty-pixel body: the
+        /// desaturation already says HOW tired, and this only has to say that
+        /// the tiredness is something the player is doing rather than a tint.
+        /// </summary>
+        private const float MAX_BREATH = 0.1f;
+
+        /// <summary>
+        /// Fatigue below which nobody is breathing hard. Every player carries a
+        /// little after one play; twenty-two shapes pulsing from the first snap
+        /// would be noise, and the cue is for the ones who are gassed.
+        /// </summary>
+        private const float BREATH_FLOOR = 0.2f;
+
+        /// <summary>Breaths per second just over the floor, and when spent.</summary>
+        private const float BREATH_RATE_MIN = 1.1f;
+        private const float BREATH_RATE_MAX = 2.6f;
 
         /// <summary>
         /// Maximum body narrowing at top speed. Kept small deliberately: this is a
@@ -95,6 +118,19 @@ namespace PoFootball.Views
         private float[] _fatigueAmount;
         private float[] _leanAmount;
         private float[] _impactAmount;
+
+        /// <summary>
+        /// Where each player is in his breath, in radians.
+        ///
+        /// ACCUMULATED HERE RATHER THAN DERIVED FROM _Time IN THE SHADER, which is
+        /// how the carrier pulse does it. That pulse has a fixed rate. This one
+        /// speeds up with fatigue, and sin(time * rate) with a moving rate does
+        /// not speed up — it jumps, by the whole of the elapsed time multiplied
+        /// by however much the rate changed. A phase that is stepped forward
+        /// each frame can change rate without a seam.
+        /// </summary>
+        private float[] _breathPhase;
+
         private int _count;
 
         private MaterialPropertyBlock _properties;
@@ -198,7 +234,14 @@ namespace PoFootball.Views
             _fatigueAmount = new float[capacity];
             _leanAmount = new float[capacity];
             _impactAmount = new float[capacity];
+            _breathPhase = new float[capacity];
             _properties = new MaterialPropertyBlock();
+
+            // Spread out, or eleven tired linemen would heave in unison.
+            for (int index = 0; index < capacity; index++)
+            {
+                _breathPhase[index] = index * 1.7f;
+            }
 
             for (int index = 0; index < behaviours.Length && _count < capacity; index++)
             {
@@ -244,6 +287,10 @@ namespace PoFootball.Views
             float carrierChase = 1f - Mathf.Exp(-CARRIER_CHASE_RATE * Time.deltaTime);
             float impactDecay = IMPACT_DECAY_RATE * Time.deltaTime;
 
+            // Real seconds: a breath is something a viewer watches, and at Sim
+            // Speed 8x a game-time one would be a twenty-hertz flicker.
+            float breathStep = 2f * Mathf.PI * Time.unscaledDeltaTime;
+
             for (int index = 0; index < _count; index++)
             {
                 Systems_IPlayerHandle handle = _handles[index];
@@ -269,7 +316,20 @@ namespace PoFootball.Views
                 _impactAmount[index] = Mathf.Max(
                     0f, _impactAmount[index] - impactDecay);
 
+                // Off the SHOWN fatigue, not the simulated one, so the breathing
+                // and the desaturation it accompanies rise and settle together.
+                float labour = Mathf.InverseLerp(BREATH_FLOOR, 1f, _fatigueAmount[index]);
+
+                _breathPhase[index] = Mathf.Repeat(
+                    _breathPhase[index]
+                        + (breathStep * Mathf.Lerp(BREATH_RATE_MIN, BREATH_RATE_MAX, labour)),
+                    2f * Mathf.PI);
+
+                float breath = MAX_BREATH * labour
+                    * (0.5f - (0.5f * Mathf.Cos(_breathPhase[index])));
+
                 renderer.GetPropertyBlock(_properties);
+                _properties.SetFloat(BreathId, breath);
                 _properties.SetFloat(CarrierId, _carrierAmount[index]);
                 _properties.SetFloat(FatigueId, _fatigueAmount[index]);
                 _properties.SetFloat(LeanId, _leanAmount[index]);

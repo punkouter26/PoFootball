@@ -214,6 +214,37 @@ namespace PoFootball.Views
             + "channel, or the rig brightens and the yard lines start to bloom.")]
         [SerializeField] private Color _leverageBankColor = new Color(1f, 0.87f, 0.68f, 1f);
 
+        // THE SECOND EXCEPTION TO "MOODIER, NEVER BRIGHTER", BOUNDED BY LEVEL
+        // WHERE THE TOUCHDOWN FLASH IS BOUNDED BY TIME. A follow spot adds light,
+        // and it adds it to the one body whose rim is already the brightest thing
+        // in the picture. It is kept to a fraction of a fill bank and to a few
+        // metres, so what it lifts is the turf around the play — the pool of
+        // light a viewer's eye is led to — and the leverage drop above still
+        // takes more out of the ambient than this puts back. It does not cast:
+        // a second casting light is twenty-two more shadow meshes a frame.
+        [Header("Follow spot")]
+        [Tooltip(
+            "Intensity of the light that tracks the ball. Zero builds no spot at "
+            + "all. Raise it against a capture, watching the jerseys next to the "
+            + "carrier: the moment they pick up a halo, it has spent the bloom "
+            + "margin Systems_PostProcessView's threshold was tuned to keep.")]
+        [Range(0f, 0.4f)]
+        [SerializeField] private float _spotIntensity = 0.12f;
+
+        [Tooltip("Fully-bright core of the spot, in metres. About the carrier and one blocker.")]
+        [SerializeField] private float _spotInnerRadius = 1.5f;
+
+        [Tooltip("Where the spot has fallen away to nothing, in metres.")]
+        [SerializeField] private float _spotOuterRadius = 8f;
+
+        /// <summary>
+        /// How fast the spot chases the ball, per second of game time. Behind a
+        /// runner by under a metre at a sprint, and visibly behind a thrown ball
+        /// — which is how a real follow spot behaves, because somebody is aiming
+        /// it. Game time so that it keeps up at Sim Speed 8x.
+        /// </summary>
+        private const float SPOT_CHASE_RATE = 7f;
+
         /// <summary>
         /// Leverage units per second the rig moves at: two seconds from an
         /// ordinary down to the biggest one. Slow on purpose — a lighting change
@@ -265,6 +296,14 @@ namespace PoFootball.Views
         // reason as the two lists above.
         private Behaviour _key;
 
+        /// <summary>
+        /// The follow spot's transform, and where the ball is read from to aim
+        /// it. Null when the spot was not built. Not in <see cref="_banks"/>: the
+        /// leverage tint is the stadium's mood, and the spot is not the stadium.
+        /// </summary>
+        private Transform _spot;
+        private Systems_BallModel _ball;
+
         private float _shownLeverage;
         private float _appliedLeverage;
 
@@ -276,8 +315,10 @@ namespace PoFootball.Views
             Systems_PresentationBudget budget,
             Systems_PlayerRegistry registry,
             Systems_GameModel game,
+            Systems_BallModel ball,
             ISubscriber<Systems_ScoreMessage> scoreSubscriber)
         {
+            _ball = ball;
             _budget = budget;
             _registry = registry;
             _game = game;
@@ -300,6 +341,7 @@ namespace PoFootball.Views
 
             DimExistingAmbient();
             BuildBanks();
+            BuildSpot();
 
             if (_castPlayerShadows)
             {
@@ -336,6 +378,7 @@ namespace PoFootball.Views
         private void Update()
         {
             TickScoreFlash();
+            AimSpot();
 
             if (_game == null)
             {
@@ -499,6 +542,58 @@ namespace PoFootball.Views
                 castsShadows: true);
 
             _key = _banks[_banks.Count - 1];
+        }
+
+        /// <summary>
+        /// One small point light that follows the ball. Built like the banks —
+        /// inactive, configured, then switched on, for the reason
+        /// <see cref="BeginLightHolder"/> gives — but not through CreatePointLight,
+        /// which would put it in the list the leverage tint and the key lookup
+        /// both read.
+        /// </summary>
+        private void BuildSpot()
+        {
+            if (_ball == null || _spotIntensity <= 0f)
+            {
+                return;
+            }
+
+            GameObject holder = BeginLightHolder(
+                "FollowSpot", new Vector3(_ball.Position.x, _ball.Position.y, 0f));
+
+            Light2D light = holder.AddComponent<Light2D>();
+            light.lightType = Light2D.LightType.Point;
+            light.color = _bankColor;
+            light.intensity = _spotIntensity;
+            light.pointLightOuterRadius = _spotOuterRadius;
+            light.pointLightInnerRadius = _spotInnerRadius;
+
+            // Softer than the banks. A hard-edged disc sliding across the turf is
+            // a cursor; this has to be a pool with no edge to find.
+            light.falloffIntensity = 0.8f;
+            light.shadowsEnabled = false;
+
+            _spot = holder.transform;
+
+            holder.SetActive(true);
+        }
+
+        /// <summary>
+        /// Chases the ball: on the carrier while it is carried, in the air with
+        /// it while it is thrown, waiting on the spot between plays. One read of
+        /// a model and one write of a transform — no player is looked up.
+        /// </summary>
+        private void AimSpot()
+        {
+            if (_spot == null)
+            {
+                return;
+            }
+
+            Vector3 target = new Vector3(_ball.Position.x, _ball.Position.y, 0f);
+
+            _spot.localPosition = Vector3.Lerp(
+                _spot.localPosition, target, 1f - Mathf.Exp(-SPOT_CHASE_RATE * Time.deltaTime));
         }
 
         private void CreateBank(string bankName, Vector3 position)

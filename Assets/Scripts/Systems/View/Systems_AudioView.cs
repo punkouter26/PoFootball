@@ -86,6 +86,15 @@ namespace PoFootball.Views
     ///   watches the carrier alone and already decides when he cut; it publishes
     ///   Systems_TurfCutMessage and this plays it, one voice at a time. Nothing
     ///   here looks at a player to find one.
+    ///
+    ///   AND THE WRAP-UP, WHICH IS THE ONE SOUND HERE THAT LASTS. Every cue above
+    ///   is an instant. Systems_GrindMessage is a defender staying in contact
+    ///   with the carrier, tick after tick, and it opens one looping voice by the
+    ///   relative speed of the two bodies — a back dragging a man who is losing
+    ///   him scrapes, two bodies moving as one do not. Pushed from the physics
+    ///   callback that fired anyway, like the block. It is not in the voice pool:
+    ///   a loop that took a pooled voice would be cut off by the tackle it is
+    ///   leading up to.
     /// </summary>
     [DisallowMultipleComponent]
     public sealed class Systems_AudioView : MonoBehaviour, Systems_IInjectableView
@@ -171,6 +180,27 @@ namespace PoFootball.Views
         private const float CUT_INTERVAL = 0.2f;
 
         /// <summary>
+        /// The scrape at its loudest, before the effects setting. Under the
+        /// quietest block: it runs for as long as the contact does, and a sound
+        /// that lasts is heard as louder than a pop at the same level.
+        /// </summary>
+        private const float GRIND_VOLUME = 0.22f;
+
+        /// <summary>
+        /// Game seconds without a report after which the contact is over. Three
+        /// physics ticks: bodies in a wrap-up separate and re-touch, and a gate
+        /// that shut on the first missed tick would chop the loop into a buzz.
+        /// </summary>
+        private const float GRIND_HOLD = 0.06f;
+
+        /// <summary>
+        /// How fast the scrape opens and shuts, per real second. A fifth of a
+        /// second end to end — slow enough to hide the 50 Hz steps it is fed in,
+        /// fast enough to be gone before the whistle.
+        /// </summary>
+        private const float GRIND_RATE = 5f;
+
+        /// <summary>
         /// How far the tackle's pitch moves with the tackler's mass, either way: a
         /// 92 kg corner plays it this much higher, a 140 kg lineman this much
         /// lower. Modest because it multiplies the closing-speed sweep already on
@@ -207,7 +237,9 @@ namespace PoFootball.Views
         private ISubscriber<Systems_PassCaughtMessage> _caughtSubscriber;
         private ISubscriber<Systems_ContactMessage> _contactSubscriber;
         private ISubscriber<Systems_TurfCutMessage> _cutSubscriber;
+        private ISubscriber<Systems_GrindMessage> _grindSubscriber;
 
+        private IDisposable _grindSubscription;
         private IDisposable _resolvedSubscription;
         private IDisposable _tackleSubscription;
         private IDisposable _endedSubscription;
@@ -258,6 +290,22 @@ namespace PoFootball.Views
         /// <summary>Real seconds until another cut sound may play.</summary>
         private float _cutCooldown;
 
+        /// <summary>The looping scrape. Always playing; silent unless a wrap-up is under way.</summary>
+        private AudioSource _grind;
+
+        /// <summary>
+        /// The hardest scrape reported since Update last looked, in [0, 1]. Kept
+        /// as a maximum because two defenders on one carrier each report.
+        /// </summary>
+        private float _pendingGrind;
+
+        /// <summary>What the scrape is being opened toward, and what it is at.</summary>
+        private float _grindTarget;
+        private float _grindLevel;
+
+        /// <summary>Game seconds since the last report. See GRIND_HOLD.</summary>
+        private float _grindSilence;
+
         // Cues. Built once at Start, never reallocated.
         private AudioClip _whistle;
         private AudioClip _impact;
@@ -279,6 +327,7 @@ namespace PoFootball.Views
             ISubscriber<Systems_PassCaughtMessage> caughtSubscriber,
             ISubscriber<Systems_ContactMessage> contactSubscriber,
             ISubscriber<Systems_TurfCutMessage> cutSubscriber,
+            ISubscriber<Systems_GrindMessage> grindSubscriber,
             Systems_PlayerRegistry registry,
             Systems_BallModel ball,
             Systems_GameModel game,
@@ -292,6 +341,7 @@ namespace PoFootball.Views
             _caughtSubscriber = caughtSubscriber;
             _contactSubscriber = contactSubscriber;
             _cutSubscriber = cutSubscriber;
+            _grindSubscriber = grindSubscriber;
             _registry = registry;
             _ball = ball;
             _game = game;
@@ -313,7 +363,9 @@ namespace PoFootball.Views
             BuildClips();
             BuildVoices();
             BuildCrowdBed();
+            BuildGrind();
 
+            _grindSubscription = _grindSubscriber?.Subscribe(OnGrind);
             _resolvedSubscription = _resolvedSubscriber?.Subscribe(OnDownResolved);
             _tackleSubscription = _tackleSubscriber?.Subscribe(OnTackle);
             _endedSubscription = _endedSubscriber?.Subscribe(OnPlayEnded);
@@ -327,6 +379,7 @@ namespace PoFootball.Views
         private void OnDestroy()
         {
             _cutSubscription?.Dispose();
+            _grindSubscription?.Dispose();
             _resolvedSubscription?.Dispose();
             _tackleSubscription?.Dispose();
             _endedSubscription?.Dispose();
@@ -354,6 +407,7 @@ namespace PoFootball.Views
         private void Update()
         {
             FlushContact();
+            TickGrind();
 
             if (_cutCooldown > 0f)
             {
@@ -475,7 +529,96 @@ namespace PoFootball.Views
             _crowd.Play();
         }
 
+        /// <summary>
+        /// The scrape's own source, on its own child so it has a position, and
+        /// outside the pool so nothing can take it mid-contact. It plays from
+        /// here on at zero volume, which the engine does not mix.
+        /// </summary>
+        private void BuildGrind()
+        {
+            GameObject holder = new GameObject("Grind");
+            holder.transform.SetParent(transform, false);
+
+            _grind = holder.AddComponent<AudioSource>();
+            _grind.clip = Systems_ToneBank.Grind();
+            _grind.loop = true;
+            _grind.playOnAwake = false;
+            _grind.rolloffMode = AudioRolloffMode.Logarithmic;
+            _grind.minDistance = VOICE_MIN_DISTANCE;
+            _grind.maxDistance = VOICE_MAX_DISTANCE;
+            _grind.spatialBlend = 1f;
+            _grind.volume = 0f;
+            _grind.Play();
+        }
+
         // --- Event handlers ---------------------------------------------------
+
+        /// <summary>
+        /// Keeps the hardest scrape of the tick and where it was. Runs inside the
+        /// physics step, so it only records; <see cref="TickGrind"/> does the rest.
+        /// </summary>
+        private void OnGrind(Systems_GrindMessage message)
+        {
+            _grindSilence = 0f;
+
+            float strength = message.Strength;
+
+            if (strength < _pendingGrind || _grind == null)
+            {
+                return;
+            }
+
+            _pendingGrind = strength;
+            _grind.transform.position = new Vector3(message.Point.x, message.Point.y, 0f);
+        }
+
+        /// <summary>
+        /// Opens the scrape toward the last thing reported and shuts it when the
+        /// reports stop.
+        ///
+        /// THE GATE IS IN GAME TIME AND THE FADE IN REAL TIME, and both are
+        /// deliberate. Reports arrive once a physics tick, so "no report for three
+        /// ticks" is a statement about the simulation and has to be measured on its
+        /// clock; how fast a sound may change before it clicks is a statement about
+        /// an ear, and CONTACT_INTERVAL says why that is real seconds.
+        /// </summary>
+        private void TickGrind()
+        {
+            if (_grind == null)
+            {
+                return;
+            }
+
+            if (_pendingGrind > 0f)
+            {
+                _grindTarget = _pendingGrind;
+                _pendingGrind = 0f;
+            }
+
+            _grindSilence += Time.deltaTime;
+
+            // A paused game stops the clock the gate runs on, and a loop left
+            // open would drone under the pause menu for as long as it was up.
+            if (_grindSilence > GRIND_HOLD || Time.timeScale <= 0f)
+            {
+                _grindTarget = 0f;
+            }
+
+            if (_grindLevel <= 0f && _grindTarget <= 0f)
+            {
+                return;
+            }
+
+            _grindLevel = Mathf.MoveTowards(
+                _grindLevel, _grindTarget, GRIND_RATE * Time.unscaledDeltaTime);
+
+            // Faster is higher as well as louder: friction, unlike a collision,
+            // does rise in pitch with speed.
+            _grind.pitch = 0.85f + (0.35f * _grindLevel);
+
+            _grind.volume = Mathf.Clamp01(
+                GRIND_VOLUME * _grindLevel * Systems_AudioSettings.EffectsBus);
+        }
 
         private void OnTackle(Systems_TackleMessage message)
         {

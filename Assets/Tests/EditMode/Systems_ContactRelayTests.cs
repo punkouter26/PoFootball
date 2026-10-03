@@ -27,14 +27,52 @@ namespace PoFootball.Tests
             }
         }
 
+        private sealed class StubGrindPublisher : IPublisher<Systems_GrindMessage>
+        {
+            public int Count { get; private set; }
+
+            public Systems_GrindMessage Last { get; private set; }
+
+            public void Publish(Systems_GrindMessage message)
+            {
+                Count++;
+                Last = message;
+            }
+        }
+
         private StubPublisher _publisher;
+        private StubGrindPublisher _grindPublisher;
         private Systems_ContactRelay _relay;
 
         [SetUp]
         public void SetUp()
         {
             _publisher = new StubPublisher();
-            _relay = new Systems_ContactRelay(_publisher);
+            _grindPublisher = new StubGrindPublisher();
+            _relay = new Systems_ContactRelay(_publisher, _grindPublisher);
+        }
+
+        [Test]
+        public void BodiesMovingTogether_AreNotAGrind()
+        {
+            _relay.ReportGrind(Vector2.zero, Systems_GrindMessage.AUDIBLE_SPEED * 0.5f);
+
+            Assert.That(_grindPublisher.Count, Is.EqualTo(0));
+        }
+
+        [Test]
+        public void ADrag_IsPublishedAsItWasReported_AndNotAsAContact()
+        {
+            Vector2 point = new Vector2(-2f, 11f);
+            float speed = Systems_GrindMessage.AUDIBLE_SPEED * 3f;
+
+            _relay.ReportGrind(point, speed);
+
+            Assert.That(_grindPublisher.Count, Is.EqualTo(1));
+            Assert.That(_grindPublisher.Last.Point, Is.EqualTo(point));
+            Assert.That(_grindPublisher.Last.RelativeSpeed, Is.EqualTo(speed));
+            Assert.That(_grindPublisher.Last.Strength, Is.InRange(0f, 1f));
+            Assert.That(_publisher.Count, Is.EqualTo(0));
         }
 
         [Test]

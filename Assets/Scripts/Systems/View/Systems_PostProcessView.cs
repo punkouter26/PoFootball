@@ -1,5 +1,6 @@
 using System;
 using MessagePipe;
+using PoFootball.Models;
 using PoFootball.Systems;
 using UnityEngine;
 using UnityEngine.Rendering;
@@ -23,7 +24,7 @@ namespace PoFootball.Views
     /// volume in the scene cannot be gated by a constructor argument. Building it
     /// here means the training scene simply never creates one.
     ///
-    /// THE FOUR EFFECTS, AND WHY EACH IS HERE:
+    /// THE EFFECTS, AND WHY EACH IS HERE:
     ///
     ///   Tonemapping — ACES. Without a tonemapper an HDR pipeline clips everything
     ///   above 1.0 to flat white, which is exactly where the carrier glow and the
@@ -46,6 +47,16 @@ namespace PoFootball.Views
     ///   Colour adjustments — a little contrast and saturation. The palette is a
     ///   dark green field under a cool ambient, which is flatter than a broadcast
     ///   picture; this is the grade a camera would have applied.
+    ///
+    ///   Lens distortion and chromatic aberration — at zero, always, except for a
+    ///   fifth of a second after a hit hard enough to strip the ball. Both are
+    ///   screen-space and need nothing the 2D renderer lacks; both report
+    ///   themselves inactive at zero intensity, so between pulses they cost
+    ///   nothing. The pulse is centred on the hit and sized by how far over
+    ///   Systems_SimConstants.FUMBLE_CLOSING_SPEED it was — the same threshold
+    ///   Systems_ImpactView's ring is drawn at, so the lens and the ring are one
+    ///   event. This is what the removed camera kick was for, done without
+    ///   moving the camera or writing Time.timeScale.
     ///
     /// NO DEPTH OF FIELD, NO MOTION BLUR, NO FILM GRAIN. The first two need a depth
     /// buffer and motion vectors that the 2D renderer does not produce, so they are
@@ -102,6 +113,20 @@ namespace PoFootball.Views
             + "DefaultVolumeProfile, which is otherwise blended in underneath it.")]
         [SerializeField] private float _volumePriority = 100f;
 
+        [Header("Hit pulse")]
+        [Tooltip(
+            "Lens distortion at the top of the pulse for the hardest hit the speed "
+            + "clamp permits. NEGATIVE, so the picture is pulled in toward the hit "
+            + "and every sample stays inside the frame; a positive value pushes the "
+            + "edges outward and shows whatever the renderer has past them. Zero "
+            + "switches the distortion off and leaves the fringe.")]
+        [Range(-0.5f, 0f)]
+        [SerializeField] private float _hitLensIntensity = -0.22f;
+
+        [Tooltip("Chromatic aberration at the top of the same pulse.")]
+        [Range(0f, 1f)]
+        [SerializeField] private float _hitFringeIntensity = 0.45f;
+
         /// <summary>
         /// Bloom intensity at the top of the touchdown pulse.
         ///
@@ -118,24 +143,53 @@ namespace PoFootball.Views
         /// </summary>
         private const float SCORE_PULSE_SECONDS = 0.3f;
 
+        /// <summary>
+        /// Real seconds, for the reason SCORE_PULSE_SECONDS is. About as long as
+        /// the impact flash on the two bodies, so the three read as one hit.
+        /// </summary>
+        private const float HIT_PULSE_SECONDS = 0.22f;
+
+        /// <summary>
+        /// The pulse for a hit that only just clears the fumble threshold, as a
+        /// fraction of the full one. Not zero: the ring is drawn at full size for
+        /// that hit, and a lens that did nothing would leave it unaccompanied.
+        /// </summary>
+        private const float HIT_PULSE_FLOOR = 0.45f;
+
         private Systems_PresentationBudget _budget;
+        private Systems_PlayerRegistry _registry;
         private ISubscriber<Systems_ScoreMessage> _scoreSubscriber;
+        private ISubscriber<Systems_TackleMessage> _tackleSubscriber;
         private IDisposable _scoreSubscription;
+        private IDisposable _tackleSubscription;
 
         private VolumeProfile _profile;
         private Volume _volume;
         private Bloom _bloom;
+        private LensDistortion _lens;
+        private ChromaticAberration _fringe;
+        private Camera _camera;
 
         /// <summary>Real seconds into the current pulse; negative when none is running.</summary>
         private float _pulseElapsed = -1f;
 
+        /// <summary>Real seconds into the current hit pulse; negative when none is running.</summary>
+        private float _hitElapsed = -1f;
+
+        /// <summary>How big the running hit pulse is, in [HIT_PULSE_FLOOR, 1].</summary>
+        private float _hitAmount;
+
         [Inject]
         public void Construct(
             Systems_PresentationBudget budget,
-            ISubscriber<Systems_ScoreMessage> scoreSubscriber)
+            Systems_PlayerRegistry registry,
+            ISubscriber<Systems_ScoreMessage> scoreSubscriber,
+            ISubscriber<Systems_TackleMessage> tackleSubscriber)
         {
             _budget = budget;
+            _registry = registry;
             _scoreSubscriber = scoreSubscriber;
+            _tackleSubscriber = tackleSubscriber;
         }
 
         private void Start()
@@ -151,14 +205,17 @@ namespace PoFootball.Views
             EnableOnCamera();
 
             _scoreSubscription = _scoreSubscriber?.Subscribe(OnScore);
+            _tackleSubscription = _tackleSubscriber?.Subscribe(OnTackle);
         }
 
         /// <summary>
-        /// Runs the pulse, and nothing else: one comparison on every frame there
-        /// is no touchdown to celebrate.
+        /// Runs the two pulses, and nothing else: two comparisons on every frame
+        /// there is no touchdown to celebrate and no big hit to mark.
         /// </summary>
         private void Update()
         {
+            TickHitPulse();
+
             if (_pulseElapsed < 0f)
             {
                 return;
@@ -191,6 +248,7 @@ namespace PoFootball.Views
         private void OnDisable()
         {
             RestoreBloom();
+            RestoreLens();
         }
 
         /// <summary>
@@ -204,7 +262,11 @@ namespace PoFootball.Views
             _scoreSubscription?.Dispose();
             _scoreSubscription = null;
 
+            _tackleSubscription?.Dispose();
+            _tackleSubscription = null;
+
             RestoreBloom();
+            RestoreLens();
 
             if (_profile != null)
             {
@@ -251,6 +313,20 @@ namespace PoFootball.Views
             grade.contrast.value = _postContrast;
             grade.saturation.overrideState = true;
             grade.saturation.value = _postSaturation;
+
+            // Overridden AT ZERO. Both effects answer IsActive() from their
+            // intensity, so this is two components the renderer skips until
+            // OnTackle gives them something to do — and an override that was
+            // only switched on for the pulse would be one more thing to restore.
+            _lens = _profile.Add<LensDistortion>(true);
+            _lens.intensity.overrideState = true;
+            _lens.intensity.value = 0f;
+            _lens.center.overrideState = true;
+            _lens.center.value = new Vector2(0.5f, 0.5f);
+
+            _fringe = _profile.Add<ChromaticAberration>(true);
+            _fringe.intensity.overrideState = true;
+            _fringe.intensity.value = 0f;
         }
 
         private void BuildVolume()
@@ -288,6 +364,10 @@ namespace PoFootball.Views
         {
             Camera camera = Camera.main;
 
+            // Kept for the hit pulse, which has to turn a point on the field into
+            // a point on the screen. Camera.main is a scene search; once is enough.
+            _camera = camera;
+
             if (camera == null)
             {
                 Debug.LogWarning(
@@ -315,6 +395,114 @@ namespace PoFootball.Views
             }
 
             _pulseElapsed = 0f;
+        }
+
+        /// <summary>
+        /// Starts the lens pulse for a hit hard enough to strip the ball, and for
+        /// no other. An ordinary tackle happens every play; a lens that moved on
+        /// each of them would be a tic, and it would stop saying which hit was the
+        /// one the fumble model is about to roll against.
+        /// </summary>
+        private void OnTackle(Systems_TackleMessage message)
+        {
+            if (_lens == null
+                || message.ClosingSpeed < Systems_SimConstants.FUMBLE_CLOSING_SPEED)
+            {
+                return;
+            }
+
+            float over = Mathf.InverseLerp(
+                Systems_SimConstants.FUMBLE_CLOSING_SPEED,
+                Systems_SimConstants.MAX_BODY_SPEED,
+                message.ClosingSpeed);
+
+            float amount = Mathf.Lerp(HIT_PULSE_FLOOR, 1f, over);
+
+            // A second hit inside a running pulse restarts it only if it is the
+            // bigger one, so a pile-up reads as its hardest collision.
+            if (_hitElapsed >= 0f && amount < _hitAmount)
+            {
+                return;
+            }
+
+            _hitAmount = amount;
+            _hitElapsed = 0f;
+            _lens.center.value = HitCentre(message.CarrierId);
+        }
+
+        /// <summary>
+        /// Where the hit is on the screen, in the 0..1 space the distortion is
+        /// centred in. The middle of the frame when the carrier or the camera
+        /// cannot be found — the broadcast camera is on the ball anyway.
+        /// </summary>
+        private Vector2 HitCentre(int carrierId)
+        {
+            Vector2 middle = new Vector2(0.5f, 0.5f);
+
+            if (_camera == null || _registry == null)
+            {
+                return middle;
+            }
+
+            Systems_IPlayerHandle carrier = _registry.FindById(carrierId);
+
+            if (carrier == null)
+            {
+                return middle;
+            }
+
+            Vector3 viewport = _camera.WorldToViewportPoint(carrier.Position);
+
+            return new Vector2(Mathf.Clamp01(viewport.x), Mathf.Clamp01(viewport.y));
+        }
+
+        /// <summary>
+        /// Full on the frame it starts and eased out from there — the shape of an
+        /// impact, for the reason Systems_PlayerAppearanceView gives for setting
+        /// its own flash hard and letting it fall.
+        /// </summary>
+        private void TickHitPulse()
+        {
+            if (_hitElapsed < 0f)
+            {
+                return;
+            }
+
+            _hitElapsed += Time.unscaledDeltaTime;
+
+            float progress = _hitElapsed / HIT_PULSE_SECONDS;
+
+            if (progress >= 1f)
+            {
+                RestoreLens();
+                return;
+            }
+
+            float remaining = 1f - progress;
+            float level = _hitAmount * remaining * remaining;
+
+            _lens.intensity.value = _hitLensIntensity * level;
+            _fringe.intensity.value = _hitFringeIntensity * level;
+        }
+
+        /// <summary>
+        /// Back to exactly zero, for the reason <see cref="RestoreBloom"/> exists:
+        /// a scene unloaded mid-pulse must not leave the picture bent.
+        /// </summary>
+        private void RestoreLens()
+        {
+            _hitElapsed = -1f;
+            _hitAmount = 0f;
+
+            if (_lens != null)
+            {
+                _lens.intensity.value = 0f;
+            }
+
+            if (_fringe != null)
+            {
+                _fringe.intensity.value = 0f;
+            }
         }
 
         private void RestoreBloom()

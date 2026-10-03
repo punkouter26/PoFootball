@@ -252,6 +252,44 @@ namespace PoFootball.Views
             });
         }
 
+        /// <summary>
+        /// Looping scrape for a defender who has hold of the carrier and is being
+        /// dragged: pads and cloth working against each other. The only field
+        /// sound that loops, because it is the only one that is a duration rather
+        /// than an instant — Systems_AudioView holds it at silence and opens it
+        /// with the relative speed of the two bodies.
+        ///
+        /// A BAND, NOT A THUD AND NOT A HISS. The block and the tackle own the low
+        /// end and the cut owns the top; this sits between them so a wrap-up under
+        /// way cannot be heard as either. Noise low-passed, with a slower low pass
+        /// of itself taken back out.
+        /// </summary>
+        public static AudioClip Grind()
+        {
+            System.Random random = new System.Random(20261006);
+            float upper = 0f;
+            float lower = 0f;
+
+            return Build("Grind", 2.4f, (t, duration) =>
+            {
+                float noise = (float)((random.NextDouble() * 2.0) - 1.0);
+
+                upper += (noise - upper) * 0.22f;
+                lower += (upper - lower) * 0.035f;
+
+                // Uneven on purpose. A scrape at a constant level is a hiss; two
+                // rates that never line up are what make it sound like friction
+                // catching and letting go.
+                float flutter = 0.7f + (0.2f * Mathf.Sin(2f * Mathf.PI * 11f * t))
+                    + (0.1f * Mathf.Sin(2f * Mathf.PI * 4.3f * t));
+
+                // The same seam the crowd bed uses, shorter because the loop is.
+                float seam = Mathf.Min(1f, Mathf.Min(t, duration - t) / 0.08f);
+
+                return (upper - lower) * 1.5f * flutter * seam;
+            });
+        }
+
         // --- Synthesis primitives -------------------------------------------
 
         private delegate float SampleSource(float time, float duration);
