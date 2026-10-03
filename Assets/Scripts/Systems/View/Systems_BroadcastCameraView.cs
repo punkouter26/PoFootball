@@ -11,9 +11,9 @@ namespace PoFootball.Views
     /// Turns the fixed overhead shot into a camera operator: it follows the ball,
     /// tightens on the snap, and pulls wide when a run breaks.
     ///
-    /// WHY NOT CINEMACHINE. The package is installed and PoFootball.Views already
-    /// references it, so this was a real choice rather than an omission. Both
-    /// behaviours here are bespoke — the zoom is a function of yards gained past
+    /// WHY NOT CINEMACHINE. The package was installed, so this was a real choice
+    /// rather than an omission — and since nothing ever referenced it, it has
+    /// since been removed from the manifest. Both behaviours here are bespoke — the zoom is a function of yards gained past
     /// the line of scrimmage, and the framing has to stay inside a 120-yard field
     /// on a 9:16 screen. Wiring that into CinemachineCamera plus a follow component
     /// is more moving parts than the sixty lines of damping it replaces.
@@ -81,21 +81,43 @@ namespace PoFootball.Views
         /// and the shot stops being able to follow the ball at all. Framing the
         /// sidelines was never worth that: both receivers are inside x = ±11 m at
         /// their widest split, and nothing important happens outside them.
+        ///
+        /// SERIALIZED RATHER THAN const, FOR TUNING, as Systems_PostProcessView does
+        /// for the grade: framing is judged against a live capture on a real aspect,
+        /// and a recompile per guess made that loop slow enough to skip.
         /// </summary>
-        private const float WIDE_SIZE = 30f;
+        [Header("Framing (metres of half-height)")]
+        [SerializeField] private float _wideSize = 30f;
 
         /// <summary>
         /// Tightest framing — about 48 yards of field, down from 61. Crops the outer
         /// few metres of each sideline, which is empty grass at every formation this
-        /// game lines up. See WIDE_SIZE for why it stops here and not tighter.
+        /// game lines up. See _wideSize for why it stops here and not tighter.
         /// </summary>
-        private const float TIGHT_SIZE = 22f;
+        [SerializeField] private float _tightSize = 22f;
+
+        /// <summary>
+        /// The least the shot opens up by between the snap and a breaking run.
+        ///
+        /// WITHOUT THIS THE ZOOM WAS DEAD ON EVERY TALL PHONE. TightSize grows with the
+        /// screen's aspect so the formation fits, and WideSize was only ever
+        /// max(_wideSize, TightSize): at 20:9 the formation needs (12.0 + 1.5) / 0.45
+        /// = 30.0, exactly _wideSize, and at 21:9 31.5, past it — so tight and wide
+        /// were the same number and "tighten on the snap, pull wide when a run breaks"
+        /// did nothing on the devices this ships to. Six metres is the travel the 9:16
+        /// design already had (24 -> 30), so a 9:16 screen gets exactly the shot it
+        /// was tuned with and a taller one gets the same pull-out on top of the
+        /// framing its width forces.
+        /// </summary>
+        [SerializeField] private float _minimumZoomTravel = 6f;
 
         /// <summary>Yards past the line of scrimmage at which the shot is fully wide.</summary>
-        private const float FULL_WIDE_YARDS = 22f;
+        [SerializeField] private float _fullWideYards = 22f;
 
-        private const float POSITION_DAMPING = 3.2f;
-        private const float ZOOM_DAMPING = 2.4f;
+        [Header("Damping (per second)")]
+        [SerializeField] private float _positionDamping = 3.2f;
+
+        [SerializeField] private float _zoomDamping = 2.4f;
 
         /// <summary>
         /// How much of the ball's lateral position the camera tracks. Full tracking
@@ -107,7 +129,8 @@ namespace PoFootball.Views
         /// across to keep it in frame. At 0.55 the carrier stays comfortably inside
         /// the tighter rectangle without the field reading as though it is on rails.
         /// </summary>
-        private const float LATERAL_TRACKING = 0.55f;
+        [Range(0f, 1f)]
+        [SerializeField] private float _lateralTracking = 0.55f;
 
         /// <summary>
         /// Clearance beyond the widest player, in metres, so a receiver on the
@@ -119,7 +142,7 @@ namespace PoFootball.Views
         /// <summary>
         /// The tight shot, sized so the whole formation actually fits THIS screen.
         ///
-        /// WHY THIS IS NOT A CONSTANT ANY MORE, AND WHAT IT WAS HIDING. TIGHT_SIZE
+        /// WHY THIS IS NOT A CONSTANT ANY MORE, AND WHAT IT WAS HIDING. _tightSize
         /// is a half-HEIGHT; what has to cover the formation is the half-WIDTH, and
         /// those differ by the aspect ratio. At the 9:16 this game is designed for,
         /// 22 x 0.5625 = 12.38 m against a formation that splits to
@@ -147,15 +170,16 @@ namespace PoFootball.Views
             float required =
                 (Systems_Formation.WidestSlotX + FORMATION_MARGIN) / Mathf.Max(_camera.aspect, 0.01f);
 
-            return Mathf.Max(TIGHT_SIZE, required);
+            return Mathf.Max(_tightSize, required);
         }
 
         /// <summary>
-        /// The wide shot, never allowed to be tighter than the snap shot.
+        /// The wide shot: the designed size, or the snap shot plus the minimum
+        /// travel, whichever is wider. See _minimumZoomTravel.
         /// </summary>
         private float WideSize()
         {
-            return Mathf.Max(WIDE_SIZE, TightSize());
+            return Mathf.Max(_wideSize, TightSize() + _minimumZoomTravel);
         }
 
         /// <summary>
@@ -316,8 +340,8 @@ namespace PoFootball.Views
             // Exponential smoothing rather than Lerp with a raw t. Lerp against
             // deltaTime is frame-rate dependent, and this game runs at 60 in the
             // editor and whatever the build gets.
-            float positionBlend = 1f - Mathf.Exp(-POSITION_DAMPING * deltaTime);
-            float zoomBlend = 1f - Mathf.Exp(-ZOOM_DAMPING * deltaTime);
+            float positionBlend = 1f - Mathf.Exp(-_positionDamping * deltaTime);
+            float zoomBlend = 1f - Mathf.Exp(-_zoomDamping * deltaTime);
 
             _camera.orthographicSize = Mathf.Lerp(
                 _camera.orthographicSize, targetSize, zoomBlend);
@@ -374,7 +398,7 @@ namespace PoFootball.Views
             float yardsFromScrimmage =
                 Mathf.Abs(_ball.Position.y - _play.LineOfScrimmageY) / Systems_FieldModel.YARD;
 
-            return Mathf.Clamp01(yardsFromScrimmage / FULL_WIDE_YARDS);
+            return Mathf.Clamp01(yardsFromScrimmage / _fullWideYards);
         }
 
         /// <summary>
@@ -442,7 +466,7 @@ namespace PoFootball.Views
 
             Vector2 target = _ball.IsInFlight && _passTarget != null
                 ? FlightTarget(ball)
-                : new Vector2(ball.x * LATERAL_TRACKING, ball.y + (size * DOWNFIELD_LEAD));
+                : new Vector2(ball.x * _lateralTracking, ball.y + (size * DOWNFIELD_LEAD));
 
             if (carrier != null)
             {

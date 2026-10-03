@@ -43,10 +43,10 @@ namespace PoFootball.Tests
         ///
         /// THIS USED TO BE FindObjectsByType&lt;UIDocument&gt;()[0], AND THAT WAS ONLY
         /// EVER CORRECT BY ACCIDENT. It worked while each scene had exactly one
-        /// document. SCN_GAME now has two — the HUD, and the diagnostic overlay on
-        /// its own panel (Systems_PerformanceOverlayView) — and FindObjectsByType
+        /// document. SCN_GAME grew a second — first a diagnostic overlay on its own
+        /// panel, now the status HUD and the replay controls — and FindObjectsByType
         /// makes no ordering guarantee, so `documents[0]` became a coin flip between
-        /// them and the HUD assertions failed roughly whenever the overlay won.
+        /// them and the HUD assertions failed roughly whenever another panel won.
         ///
         /// Asking for the screen by TYPE says what each test actually means, and it
         /// stays correct however many panels the scene grows. Every screen is a
@@ -294,6 +294,7 @@ namespace PoFootball.Tests
             Assert.That(HasButton(all, "QUIT"), Is.False, "QUIT is back on the field");
             Assert.That(HasButton(all, "REMATCH"), Is.True, "no rematch on the final overlay");
             Assert.That(HasButton(all, "MENU"), Is.True, "no menu button on the final overlay");
+            Assert.That(HasButton(all, "1×"), Is.True, "no speed control, or it did not start at 1x");
 
             // No status HUD exists in batch mode, by design, so there is nothing
             // to look for there.
@@ -306,6 +307,87 @@ namespace PoFootball.Tests
                         "MENU"),
                     Is.True,
                     "no way to leave a live game");
+            }
+        }
+
+        /// <summary>
+        /// CLAUDE.md section 3 and the zero-scroll rule: every player-facing screen
+        /// fits without scrolling, so none of them may contain a ScrollView at all.
+        /// Checked on whatever Game view the test runner has; the tall-phone case is
+        /// what Systems_ScreenView's safe-area inset and percentage layout are for.
+        /// </summary>
+        [UnityTest]
+        public IEnumerator NoPlayerFacingScreen_ContainsAScrollView()
+        {
+            yield return LoadAndSettle("SCN_MENU");
+            AssertNoScrollView(FindDocumentFor<Views.Systems_MenuView>(), "menu");
+
+            yield return LoadAndSettle("SCN_GAME");
+            AssertNoScrollView(FindDocumentFor<Views.Systems_HudView>(), "HUD");
+
+            if (!Application.isBatchMode)
+            {
+                AssertNoScrollView(FindDocumentFor<Views.Systems_StatusHudView>(), "status HUD");
+            }
+        }
+
+        /// <summary>
+        /// The whole state loop a player can drive, three times round: menu, a game
+        /// at 2x, back to the menu. Each pass must build both screens again and leave
+        /// time running at 1x — Systems_SimSpeedSystem is disposed with the game's
+        /// container, and that disposal is the only thing that resets the scale.
+        /// A stuck load guard or a leaked time scale shows up on the second lap.
+        /// </summary>
+        [UnityTest]
+        public IEnumerator MenuGameMenuLoop_RebuildsEachTimeAndLeavesTimeAtOneX()
+        {
+            for (int lap = 0; lap < 3; lap++)
+            {
+                Views.Systems_SceneRouter.LoadMenu();
+                yield return WaitForScene(Views.Systems_SceneRouter.MENU_SCENE);
+
+                Assert.That(Time.timeScale, Is.EqualTo(1f), $"lap {lap}: menu is not at 1x");
+                Assert.That(
+                    HasButton(Descendants(FindDocumentFor<Views.Systems_MenuView>().rootVisualElement), "PLAY"),
+                    Is.True, $"lap {lap}: the menu did not rebuild");
+
+                Views.Systems_SceneRouter.LoadGame();
+                yield return WaitForScene(Views.Systems_SceneRouter.GAME_SCENE);
+
+                Button speed = FindButton(
+                    Descendants(FindDocumentFor<Views.Systems_HudView>().rootVisualElement), "1×");
+
+                using (NavigationSubmitEvent submit = NavigationSubmitEvent.GetPooled())
+                {
+                    submit.target = speed;
+                    speed.SendEvent(submit);
+                }
+
+                yield return null;
+
+                Assert.That(Time.timeScale, Is.EqualTo(2f), $"lap {lap}: the speed chip did nothing");
+            }
+
+            Views.Systems_SceneRouter.LoadMenu();
+            yield return WaitForScene(Views.Systems_SceneRouter.MENU_SCENE);
+
+            Assert.That(Time.timeScale, Is.EqualTo(1f), "leaving a game at 2x left the menu running fast");
+        }
+
+        private static IEnumerator WaitForScene(string sceneName)
+        {
+            yield return new WaitUntil(() => SceneManager.GetActiveScene().name == sceneName);
+            yield return null;
+            yield return null;
+        }
+
+        private static void AssertNoScrollView(UIDocument document, string screen)
+        {
+            System.Collections.Generic.List<VisualElement> all = Descendants(document.rootVisualElement);
+
+            for (int index = 0; index < all.Count; index++)
+            {
+                Assert.That(all[index] is ScrollView, Is.False, $"the {screen} contains a ScrollView");
             }
         }
     }

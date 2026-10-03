@@ -1,4 +1,6 @@
+using System;
 using System.Collections.Generic;
+using MessagePipe;
 using PoFootball.Models;
 using PoFootball.Systems;
 using UnityEngine;
@@ -170,15 +172,64 @@ namespace PoFootball.Views
         private static readonly Bounds FieldBounds =
             new Bounds(Vector3.zero, new Vector3(240f, 240f, 1f));
 
+        /// <summary>
+        /// Radius of the landing ring at the release, in metres: twice
+        /// Systems_SimConstants.CATCH_RADIUS, so it starts visibly bigger than the
+        /// zone the ball can be taken in and closes past it as the ball arrives.
+        /// </summary>
+        private const float PASS_RING_RADIUS = Systems_SimConstants.CATCH_RADIUS * 2f;
+
+        private const float PASS_RING_WIDTH = 0.15f;
+        private const int PASS_RING_SEGMENTS = 32;
+
+        /// <summary>
+        /// The longest a pass can be in the air before it is ruled incomplete. The
+        /// ring never outlasts the ball.
+        /// </summary>
+        private const float MAX_FLIGHT_SECONDS =
+            Systems_SimConstants.MAX_FLIGHT_TICKS * Systems_GameRules.SECONDS_PER_TICK;
+
+        /// <summary>
+        /// Chevron length, as a fraction of the frame's half-height, so it is the
+        /// same size on screen whether the shot is tight or wide.
+        /// </summary>
+        private const float CHEVRON_SIZE = 0.05f;
+
+        private const float CHEVRON_WIDTH = 0.012f;
+
+        /// <summary>
+        /// Clearance from the side edges, as a fraction of the half-height.
+        /// </summary>
+        private const float CHEVRON_EDGE_MARGIN = 0.06f;
+
+        /// <summary>
+        /// Extra clearance at the top and bottom, as a fraction of the half-height:
+        /// the status strips and the scoreboard sit over those edges, and a chevron
+        /// under them is one nobody sees. An estimate of the strips at the 9:16
+        /// design size, not a measurement of them.
+        /// </summary>
+        private const float CHEVRON_HUD_CLEARANCE = 0.14f;
+
         private Systems_IIntentSource _intent;
         private Systems_PlayerRegistry _registry;
         private Systems_PlayModel _play;
         private Systems_BallModel _ball;
         private Systems_BallSystem _ballSystem;
         private Systems_PresentationBudget _budget;
+        private ISubscriber<Systems_PassThrownMessage> _thrownSubscriber;
+        private IDisposable _thrownSubscription;
+
+        private Camera _camera;
+        private Transform _cameraTransform;
 
         private Mesh _mesh;
         private MeshRenderer _meshRenderer;
+
+        // The pass in the air: where it was led to, how long it had to get there,
+        // and how long it has left. Zero remaining means there is no ring.
+        private Vector2 _passRingCentre;
+        private float _passRingDuration;
+        private float _passRingRemaining;
 
         private readonly List<Vector3> _vertices = new List<Vector3>(2048);
         private readonly List<Color32> _colors = new List<Color32>(2048);
@@ -196,7 +247,8 @@ namespace PoFootball.Views
             Systems_PlayModel play,
             Systems_BallModel ball,
             Systems_BallSystem ballSystem,
-            Systems_PresentationBudget budget)
+            Systems_PresentationBudget budget,
+            ISubscriber<Systems_PassThrownMessage> thrownSubscriber)
         {
             _intent = intent;
             _registry = registry;
@@ -204,6 +256,7 @@ namespace PoFootball.Views
             _ball = ball;
             _ballSystem = ballSystem;
             _budget = budget;
+            _thrownSubscriber = thrownSubscriber;
         }
 
         /// <summary>
@@ -230,10 +283,20 @@ namespace PoFootball.Views
 
             CollectBodies();
             BuildMesh(source);
+
+            // Cached once; Camera.main is a scene search. Null leaves the chevrons
+            // off and everything else drawing.
+            _camera = Camera.main;
+            _cameraTransform = _camera == null ? null : _camera.transform;
+
+            _thrownSubscription = _thrownSubscriber?.Subscribe(OnPassThrown);
         }
 
         private void OnDestroy()
         {
+            _thrownSubscription?.Dispose();
+            _thrownSubscription = null;
+
             if (_mesh != null)
             {
                 Destroy(_mesh);
@@ -338,9 +401,229 @@ namespace PoFootball.Views
             if (live)
             {
                 AppendQuarterbackRead();
+                AppendPassRing();
+            }
+            else
+            {
+                // The whistle clears the ring as well as the ball's state does.
+                _passRingRemaining = 0f;
+            }
+
+            if (_play != null && _play.Phase != Systems_PlayPhase.Dead)
+            {
+                AppendOffscreenChevrons();
             }
 
             Upload();
+        }
+
+        /// <summary>
+        /// Where the pass was led to, and how long the ball has to get there.
+        ///
+        /// THE LEAD POINT FROM Systems_BallSystem.LeadPoint, for the reason the
+        /// read line asks the ball system rather than copying its rule. It is the
+        /// point the quarterback READ, not the ball's own landing spot: the ball
+        /// carries the aim slack, the ring carries the decision — the same split
+        /// Systems_BallSystem.Throw draws between the overlay and the throw.
+        /// </summary>
+        private void OnPassThrown(Systems_PassThrownMessage message)
+        {
+            _passRingRemaining = 0f;
+
+            if (message.TargetId < 0 || message.Speed <= 0f || _ball == null)
+            {
+                return;
+            }
+
+            Systems_IPlayerHandle target = _registry.FindById(message.TargetId);
+
+            if (target == null)
+            {
+                return;
+            }
+
+            // The ball model is written before the message goes out, so this is
+            // the release point.
+            Vector2 origin = _ball.ThrowOrigin;
+            Vector2 lead = Systems_BallSystem.LeadPoint(origin, target, message.Speed);
+
+            _passRingCentre = lead;
+            _passRingDuration = Mathf.Min(
+                Vector2.Distance(origin, lead) / message.Speed, MAX_FLIGHT_SECONDS);
+            _passRingRemaining = _passRingDuration;
+        }
+
+        /// <summary>
+        /// A ring on the spot the pass was led to, closing to nothing as the ball
+        /// arrives — the countdown on a throw the way the pocket clock is the
+        /// countdown on holding it.
+        ///
+        /// GAME TIME, NOT REAL TIME. It is a measure of the ball's flight, which
+        /// runs on physics ticks, so at Sim Speed 8x it has to close eight times
+        /// as fast or it would describe a ball that had already landed.
+        ///
+        /// The ball leaving flight — caught by either side, or ruled incomplete —
+        /// clears it here; the whistle clears it in LateUpdate.
+        /// </summary>
+        private void AppendPassRing()
+        {
+            if (_passRingRemaining <= 0f)
+            {
+                return;
+            }
+
+            if (!_ball.IsInFlight)
+            {
+                _passRingRemaining = 0f;
+                return;
+            }
+
+            _passRingRemaining -= Time.deltaTime;
+
+            float fraction = _passRingDuration <= 0f
+                ? 0f
+                : Mathf.Clamp01(_passRingRemaining / _passRingDuration);
+
+            float radius = PASS_RING_RADIUS * fraction;
+
+            if (radius < 0.05f)
+            {
+                return;
+            }
+
+            Color color = Systems_UiTheme.Accent;
+            color.a = 0.85f;
+            Color32 packed = color;
+
+            float step = Mathf.PI * 2f / PASS_RING_SEGMENTS;
+            Vector2 from = _passRingCentre + new Vector2(radius, 0f);
+
+            for (int segment = 1; segment <= PASS_RING_SEGMENTS; segment++)
+            {
+                float angle = step * segment;
+
+                Vector2 to = _passRingCentre
+                    + (new Vector2(Mathf.Cos(angle), Mathf.Sin(angle)) * radius);
+
+                AppendTaperedQuad(from, to, PASS_RING_WIDTH, PASS_RING_WIDTH, packed, packed);
+
+                from = to;
+            }
+        }
+
+        /// <summary>
+        /// A chevron on the edge of the screen for every receiver and corner the
+        /// shot has cropped, pointing at him.
+        ///
+        /// THE CASE IT EXISTS FOR IS THE SNAP ON A TALL PHONE. The broadcast
+        /// camera's shot is sized as a half-HEIGHT, and on a portrait screen
+        /// taller than 9:16 the half-width that buys is narrower again — on 20:9
+        /// the split receivers and the corners across from them, every player the
+        /// pass game is about, can start the play out of frame. A chevron says
+        /// they exist and which way they are without the camera giving up the
+        /// shot it chose. It tests the frame, not the aspect, so it is equally
+        /// right for a route run off the top of the screen mid-play.
+        ///
+        /// It READS the camera and never moves it. This runs at execution order
+        /// -45 and the camera moves at -40, so the frame read here is the previous
+        /// one; the margin is far larger than one frame of camera damping, and the
+        /// difference is not visible.
+        ///
+        /// One pass over the roster per frame, as NearestOpponentDistance does, and
+        /// the chevrons are two quads each in the same mesh — no draw call.
+        /// </summary>
+        private void AppendOffscreenChevrons()
+        {
+            if (_camera == null || _registry == null)
+            {
+                return;
+            }
+
+            Vector3 cameraPosition = _cameraTransform.position;
+            Vector2 centre = new Vector2(cameraPosition.x, cameraPosition.y);
+
+            float halfHeight = _camera.orthographicSize;
+            float halfWidth = halfHeight * _camera.aspect;
+
+            float insetX = halfWidth - (halfHeight * CHEVRON_EDGE_MARGIN);
+            float insetY = halfHeight * (1f - CHEVRON_EDGE_MARGIN - CHEVRON_HUD_CLEARANCE);
+
+            if (insetX <= 0f || insetY <= 0f)
+            {
+                return;
+            }
+
+            float size = halfHeight * CHEVRON_SIZE;
+            float width = halfHeight * CHEVRON_WIDTH;
+
+            for (int slotIndex = 0;
+                 slotIndex < Systems_PlayerRegistry.CAPACITY;
+                 slotIndex++)
+            {
+                Systems_IPlayerHandle handle = _registry.Get(slotIndex);
+
+                if (handle == null
+                    || (handle.Role != Systems_PlayerRole.WideReceiver
+                        && handle.Role != Systems_PlayerRole.Cornerback))
+                {
+                    continue;
+                }
+
+                Vector2 offset = handle.Position - centre;
+
+                if (Mathf.Abs(offset.x) <= halfWidth && Mathf.Abs(offset.y) <= halfHeight)
+                {
+                    continue;
+                }
+
+                // Along the line from the middle of the screen to the player, out
+                // to whichever inset edge that line meets first.
+                float scaleX = Mathf.Abs(offset.x) > 1e-4f
+                    ? insetX / Mathf.Abs(offset.x)
+                    : float.PositiveInfinity;
+
+                float scaleY = Mathf.Abs(offset.y) > 1e-4f
+                    ? insetY / Mathf.Abs(offset.y)
+                    : float.PositiveInfinity;
+
+                float scale = Mathf.Min(scaleX, scaleY);
+
+                if (float.IsInfinity(scale))
+                {
+                    continue;
+                }
+
+                Vector2 direction = offset.normalized;
+                Vector2 at = centre + (offset * scale);
+
+                AppendChevron(at, direction, size, width, ChevronColor(handle));
+            }
+        }
+
+        /// <summary>
+        /// The body's own colour, so a chevron says whose man is out there — read
+        /// live for the reason ArrowColor reads it live.
+        /// </summary>
+        private Color32 ChevronColor(Systems_IPlayerHandle handle)
+        {
+            SpriteRenderer body = _bodies[handle.Id];
+            Color color = body == null ? Color.white : body.color;
+            color.a = 0.9f;
+            return color;
+        }
+
+        /// <summary>Two arms meeting at a point: an open "›" aimed along direction.</summary>
+        private void AppendChevron(
+            Vector2 centre, Vector2 direction, float size, float width, Color32 color)
+        {
+            Vector2 normal = new Vector2(-direction.y, direction.x);
+
+            Vector2 tip = centre + (direction * (size * 0.5f));
+            Vector2 back = centre - (direction * (size * 0.5f));
+            Vector2 flank = normal * (size * 0.6f);
+
+            AppendTaperedQuad(back + flank, tip, width, width, color, color);
+            AppendTaperedQuad(back - flank, tip, width, width, color, color);
         }
 
         private void AppendPlayerArrows(float chase, bool live)

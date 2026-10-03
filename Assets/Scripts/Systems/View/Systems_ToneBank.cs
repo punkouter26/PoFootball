@@ -104,6 +104,30 @@ namespace PoFootball.Views
         }
 
         /// <summary>
+        /// A cleat biting the turf on a hard cut: a short scrape of high-passed
+        /// noise with nothing under it. It is the only field sound with no low
+        /// end, and that is what keeps it apart from the block and the tackle — a
+        /// cut is a foot tearing grass, not two bodies meeting, so it must never
+        /// be heard as contact. The high pass is the noise minus a one-pole low
+        /// pass of itself, the same filter the others use turned inside out.
+        /// </summary>
+        public static AudioClip Cut()
+        {
+            System.Random random = new System.Random(20261005);
+            float lowPassState = 0f;
+
+            return Build("Cut", 0.09f, (t, duration) =>
+            {
+                float envelope = Attack(t, 0.003f) * Release(t, duration, 0.08f);
+
+                float noise = (float)((random.NextDouble() * 2.0) - 1.0);
+                lowPassState += (noise - lowPassState) * 0.2f;
+
+                return envelope * 0.45f * (noise - lowPassState);
+            });
+        }
+
+        /// <summary>
         /// The ball leaving the hand: a short breath of noise whose brightness
         /// rises as it goes. A filter opening rather than a pitch climbing, because
         /// a thrown ball is air moving and has no note — the same reason the impact

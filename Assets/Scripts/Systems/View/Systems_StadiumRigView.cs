@@ -1,4 +1,6 @@
+using System;
 using System.Collections.Generic;
+using MessagePipe;
 using PoFootball.Models;
 using PoFootball.Systems;
 using UnityEngine;
@@ -223,8 +225,28 @@ namespace PoFootball.Views
         /// <summary>Change in shown leverage below which the lights are left alone.</summary>
         private const float LEVERAGE_EPSILON = 0.004f;
 
+        /// <summary>
+        /// How much brighter the key goes at the top of the touchdown flash, as a
+        /// fraction of its configured intensity.
+        ///
+        /// THE ONE EXCEPTION TO "MOODIER, NEVER BRIGHTER" ABOVE, AND IT IS BOUNDED
+        /// BY TIME RATHER THAN BY LEVEL. The bloom margin that rule protects is
+        /// there so the carrier's glow keeps meaning something during a play; a
+        /// touchdown is the moment the play is over and the scorer is the one body
+        /// worth lighting. Only the key moves — it is the single casting light, so
+        /// the shadows deepen with it and the flash reads as a flashbulb rather
+        /// than as the stadium brightening — and it is back to exactly its
+        /// configured value in under half a second.
+        /// </summary>
+        private const float SCORE_FLASH_GAIN = 0.4f;
+
+        /// <summary>Real seconds, up and back. Presentation, so Sim Speed must not shorten it.</summary>
+        private const float SCORE_FLASH_SECONDS = 0.4f;
+
         private Systems_PresentationBudget _budget;
         private Systems_PlayerRegistry _registry;
+        private ISubscriber<Systems_ScoreMessage> _scoreSubscriber;
+        private IDisposable _scoreSubscription;
 
         /// <summary>
         /// Read for Systems_Leverage and nothing else. A Game-mode registration:
@@ -239,18 +261,27 @@ namespace PoFootball.Views
         // The four banks and the key: everything the leverage tint is applied to.
         private readonly List<Behaviour> _banks = new List<Behaviour>(5);
 
+        // The key on its own, for the touchdown flash. Behaviour for the same
+        // reason as the two lists above.
+        private Behaviour _key;
+
         private float _shownLeverage;
         private float _appliedLeverage;
+
+        /// <summary>Real seconds into the current flash; negative when none is running.</summary>
+        private float _flashElapsed = -1f;
 
         [Inject]
         public void Construct(
             Systems_PresentationBudget budget,
             Systems_PlayerRegistry registry,
-            Systems_GameModel game)
+            Systems_GameModel game,
+            ISubscriber<Systems_ScoreMessage> scoreSubscriber)
         {
             _budget = budget;
             _registry = registry;
             _game = game;
+            _scoreSubscriber = scoreSubscriber;
         }
 
         /// <summary>
@@ -274,6 +305,23 @@ namespace PoFootball.Views
             {
                 AttachShadowCasters();
             }
+
+            _scoreSubscription = _scoreSubscriber?.Subscribe(OnScore);
+        }
+
+        /// <summary>
+        /// Puts the key back exactly if the flash is cut short, so a scene unloaded
+        /// mid-flash cannot carry a brighter rig into the next one.
+        /// </summary>
+        private void OnDisable()
+        {
+            RestoreKey();
+        }
+
+        private void OnDestroy()
+        {
+            _scoreSubscription?.Dispose();
+            _scoreSubscription = null;
         }
 
         /// <summary>
@@ -287,6 +335,8 @@ namespace PoFootball.Views
         /// </summary>
         private void Update()
         {
+            TickScoreFlash();
+
             if (_game == null)
             {
                 return;
@@ -317,6 +367,52 @@ namespace PoFootball.Views
             for (int index = 0; index < _banks.Count; index++)
             {
                 ((Light2D)_banks[index]).color = bankColor;
+            }
+        }
+
+        private void OnScore(Systems_ScoreMessage message)
+        {
+            if (_key == null)
+            {
+                return;
+            }
+
+            _flashElapsed = 0f;
+        }
+
+        /// <summary>
+        /// Eased up and back down on a half sine. Writes the light only while a
+        /// flash is running; leverage touches colour, never intensity, so the two
+        /// cannot fight over the key.
+        /// </summary>
+        private void TickScoreFlash()
+        {
+            if (_flashElapsed < 0f)
+            {
+                return;
+            }
+
+            _flashElapsed += Time.unscaledDeltaTime;
+
+            float progress = _flashElapsed / SCORE_FLASH_SECONDS;
+
+            if (progress >= 1f)
+            {
+                RestoreKey();
+                return;
+            }
+
+            ((Light2D)_key).intensity =
+                _keyIntensity * (1f + (SCORE_FLASH_GAIN * Mathf.Sin(Mathf.PI * progress)));
+        }
+
+        private void RestoreKey()
+        {
+            _flashElapsed = -1f;
+
+            if (_key != null)
+            {
+                ((Light2D)_key).intensity = _keyIntensity;
             }
         }
 
@@ -401,6 +497,8 @@ namespace PoFootball.Views
             CreatePointLight(
                 "Key", keyPosition, _keyIntensity, _keyInnerRadius, _keyOuterRadius,
                 castsShadows: true);
+
+            _key = _banks[_banks.Count - 1];
         }
 
         private void CreateBank(string bankName, Vector3 position)
@@ -508,7 +606,7 @@ namespace PoFootball.Views
                 attached++;
             }
 
-            Debug.Log(
+            Systems_Log.Info(
                 $"[PoFootball] Stadium rig: 4 banks and a key, 1 casting, {attached} shadow casters.");
         }
     }

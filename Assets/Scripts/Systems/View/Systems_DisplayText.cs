@@ -158,6 +158,12 @@ namespace PoFootball.Views
         /// Named the way a broadcast graphic would name them rather than the way
         /// the enum does: a viewer knows what a keeper and a dive are, and nobody
         /// outside this codebase has heard of a HandoffFullback.
+        ///
+        /// FG, NOT "FIELD GOAL", ON THE CHIP. It was the one call twice the width of
+        /// the others, and the scoreboard reserved that width on both sides of the
+        /// down-and-distance pill on every play of the game to fit a call made a
+        /// few times a game. The banner after the kick still spells it out
+        /// (PlayCallLabel), where there is room.
         /// </summary>
         public static string PlayCall(Systems_PlayCall call)
         {
@@ -168,9 +174,37 @@ namespace PoFootball.Views
                 case Systems_PlayCall.HandoffHalfback: return "HB RUN";
                 case Systems_PlayCall.Pass: return "PASS";
                 case Systems_PlayCall.Punt: return "PUNT";
-                case Systems_PlayCall.FieldGoal: return "FIELD GOAL";
+                case Systems_PlayCall.FieldGoal: return "FG";
                 default: return string.Empty;
             }
+        }
+
+        /// <summary>The position abbreviation a broadcast uses, for the carrier chip.</summary>
+        public static string RoleTag(Systems_PlayerRole role)
+        {
+            switch (role)
+            {
+                case Systems_PlayerRole.Quarterback: return "QB";
+                case Systems_PlayerRole.RunningBack: return "HB";
+                case Systems_PlayerRole.Fullback: return "FB";
+                case Systems_PlayerRole.WideReceiver: return "WR";
+                case Systems_PlayerRole.TightEnd: return "TE";
+                case Systems_PlayerRole.OffensiveLine: return "OL";
+                case Systems_PlayerRole.DefensiveLine: return "DL";
+                case Systems_PlayerRole.Linebacker: return "LB";
+                case Systems_PlayerRole.Cornerback: return "CB";
+                case Systems_PlayerRole.Safety: return "S";
+                default: return string.Empty;
+            }
+        }
+
+        /// <summary>
+        /// "DRIVE  7 plays, 54 yd". Allocates; called once per resolved down.
+        /// </summary>
+        public static string DriveSummary(int plays, float yards)
+        {
+            string unit = plays == 1 ? "play" : "plays";
+            return $"DRIVE  {plays} {unit}, {Mathf.RoundToInt(yards)} yd";
         }
 
         /// <summary>Signed yardage the way a caption reads it: "+7 yd", "-2 yd", "no gain".</summary>

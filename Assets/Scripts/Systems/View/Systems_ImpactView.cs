@@ -88,6 +88,46 @@ namespace PoFootball.Views
         private static readonly Color FlashColor = new Color(1f, 1f, 1f, 0.5f);
 
         /// <summary>
+        /// The momentum range a tackle's spark COUNT is sized over: the lightest
+        /// body at the slowest closing speed that counts as a tackle, up to the
+        /// heaviest at the hardest the speed clamp permits. Ends of the same range
+        /// the count always covered, so MIN_SPARKS and MAX_SPARKS still mean what
+        /// they meant. Systems_AudioView reads the same two masses for its pitch.
+        /// </summary>
+        private static readonly float LightestMass =
+            Systems_RoleTable.MassOf(Systems_PlayerRole.Cornerback);
+
+        private static readonly float HeaviestMass =
+            Systems_RoleTable.MassOf(Systems_PlayerRole.DefensiveLine);
+
+        private static readonly float MomentumFloor =
+            Systems_SimConstants.TACKLE_CLOSING_SPEED * LightestMass;
+
+        private static readonly float MomentumCeiling =
+            Systems_SimConstants.MAX_BODY_SPEED * HeaviestMass;
+
+        /// <summary>
+        /// Motes in the ring a fumble-strength hit throws out. Enough that the ring
+        /// reads as a ring at the radius it ends at, few enough that a pile-up of
+        /// them stays inside MAX_PARTICLES.
+        /// </summary>
+        private const int RING_PARTICLES = 28;
+
+        /// <summary>
+        /// Where the ring starts, in metres from the contact point — just outside
+        /// the two bodies. Spread by where it starts for the reason DUST_SEAM
+        /// gives: the shared velocity limit pulls every particle to about 1.5 m/s
+        /// within a few frames, so a ring launched from the point never leaves it.
+        /// </summary>
+        private const float RING_RADIUS = 0.95f;
+
+        private const float RING_SPEED = 6f;
+        private const float RING_LIFETIME = 0.36f;
+        private const float RING_SIZE = 0.16f;
+
+        private static readonly Color RingColor = new Color(1f, 0.949f, 0.804f, 0.8f);
+
+        /// <summary>
         /// The longest pass the simulation can throw, in yards: top speed for the
         /// whole of the flight cap. The range a catch is sized over, derived rather
         /// than typed so it moves with either constant.
@@ -351,8 +391,29 @@ namespace PoFootball.Views
                 closing = closing.normalized;
             }
 
+            // THE COUNT CARRIES THE MASS; THE FLASH AND THE SPARK SPEED DO NOT. A
+            // 140 kg lineman and a 92 kg corner closing at the same speed are the
+            // same number to the tackle rule and the fumble model, so the flash —
+            // which is that number — stays sized by closing speed. What differs is
+            // how much the hit delivers, and the honest measure of that is
+            // momentum. Without a resolvable tackler it falls back to the speed.
+            float weight = tackler == null
+                ? force
+                : Mathf.InverseLerp(
+                    MomentumFloor,
+                    MomentumCeiling,
+                    message.ClosingSpeed * Systems_RoleTable.MassOf(tackler.Role));
+
             EmitFlash(point, force, FlashColor);
-            EmitSparks(point, closing, force, SparkColor);
+            EmitSparks(point, closing, force, weight, SparkColor);
+
+            // A hit hard enough to strip the ball gets a ring as well, so the
+            // viewer sees the fumble roll coming. Same buffer, no extra draw call,
+            // and nothing touches the camera.
+            if (message.ClosingSpeed >= Systems_SimConstants.FUMBLE_CLOSING_SPEED)
+            {
+                EmitRing(point);
+            }
         }
 
         /// <summary>
@@ -380,7 +441,7 @@ namespace PoFootball.Views
             flash.a = CATCH_FLASH_ALPHA;
 
             EmitFlash(catcher.Position, reach, flash);
-            EmitSparks(catcher.Position, Vector2.zero, reach, color);
+            EmitSparks(catcher.Position, Vector2.zero, reach, reach, color);
         }
 
         /// <summary>
@@ -449,10 +510,14 @@ namespace PoFootball.Views
         /// single batched emit would fire every spark in one direction at one
         /// speed. The loop runs at most eighteen times and only when a tackle is
         /// published — a handful of times a play, not per frame.
+        ///
+        /// <paramref name="weight"/> sets how many; <paramref name="force"/> sets
+        /// how fast and how big. See OnTackle for why those are different numbers.
         /// </summary>
-        private void EmitSparks(Vector2 point, Vector2 closing, float force, Color color)
+        private void EmitSparks(
+            Vector2 point, Vector2 closing, float force, float weight, Color color)
         {
-            int count = Mathf.RoundToInt(Mathf.Lerp(MIN_SPARKS, MAX_SPARKS, force));
+            int count = Mathf.RoundToInt(Mathf.Lerp(MIN_SPARKS, MAX_SPARKS, weight));
 
             for (int spark = 0; spark < count; spark++)
             {
@@ -475,6 +540,34 @@ namespace PoFootball.Views
                 _emit.startLifetime = SPARK_LIFETIME * (0.7f + (NextFloat() * 0.6f));
                 _emit.startSize = SPARK_SIZE * (0.6f + (force * 0.8f));
                 _emit.startColor = color;
+
+                _particles.Emit(_emit, 1);
+            }
+        }
+
+        /// <summary>
+        /// A thin ring of motes leaving the contact point evenly in every
+        /// direction. Evenly spaced rather than random, because a random scatter
+        /// is what the sparks already are and the ring has to read as a different
+        /// shape. Only the starting angle is drawn, so two rings are not stamped
+        /// identically.
+        /// </summary>
+        private void EmitRing(Vector2 point)
+        {
+            float step = Mathf.PI * 2f / RING_PARTICLES;
+            float phase = NextFloat() * step;
+
+            for (int mote = 0; mote < RING_PARTICLES; mote++)
+            {
+                float angle = phase + (step * mote);
+                Vector2 radial = new Vector2(Mathf.Cos(angle), Mathf.Sin(angle));
+
+                _emit = default;
+                _emit.position = point + (radial * RING_RADIUS);
+                _emit.velocity = radial * RING_SPEED;
+                _emit.startLifetime = RING_LIFETIME;
+                _emit.startSize = RING_SIZE;
+                _emit.startColor = RingColor;
 
                 _particles.Emit(_emit, 1);
             }

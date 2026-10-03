@@ -124,6 +124,7 @@ namespace PoFootball.Systems
             builder.RegisterMessageBroker<Systems_PassThrownMessage>(messagePipeOptions);
             builder.RegisterMessageBroker<Systems_PassCaughtMessage>(messagePipeOptions);
             builder.RegisterMessageBroker<Systems_ContactMessage>(messagePipeOptions);
+            builder.RegisterMessageBroker<Systems_TurfCutMessage>(messagePipeOptions);
 
             // Registered in both modes so a view can subscribe without caring which
             // one it is in. In training nothing ever publishes them.
@@ -197,6 +198,11 @@ namespace PoFootball.Systems
                 .AsSelf();
 
             builder.RegisterEntryPoint<Systems_StatsSystem>();
+
+            // The viewer's 1x/2x/4x. Game only: a trainer's speed is time_scale in
+            // the config, and nothing in training may touch Time.timeScale. The
+            // container disposes it on unload, which is what resets the scale.
+            builder.Register<Systems_SimSpeedSystem>(Lifetime.Singleton);
         }
 
         /// <summary>
@@ -250,7 +256,7 @@ namespace PoFootball.Systems
                 }
             }
 
-            Debug.Log($"[PoFootball] LifetimeScope injected {injected} scene behaviours.");
+            Systems_Log.Info($"[PoFootball] LifetimeScope injected {injected} scene behaviours.");
         }
     }
 }

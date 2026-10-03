@@ -1,3 +1,4 @@
+using MessagePipe;
 using PoFootball.Models;
 using PoFootball.Systems;
 using UnityEngine;
@@ -88,6 +89,13 @@ namespace PoFootball.Views
         private Systems_PlayerRegistry _registry;
         private Systems_PresentationBudget _budget;
 
+        /// <summary>
+        /// Tells Systems_AudioView a cut happened. Published from the spray itself,
+        /// so the sound inherits SPRAY_INTERVAL and this view's one-player watch —
+        /// the audio view never has to look for a cut on its own.
+        /// </summary>
+        private IPublisher<Systems_TurfCutMessage> _cutPublisher;
+
         private ParticleSystem _particles;
         private ParticleSystem.EmitParams _emit;
 
@@ -109,11 +117,13 @@ namespace PoFootball.Views
         public void Construct(
             Systems_BallModel ball,
             Systems_PlayerRegistry registry,
-            Systems_PresentationBudget budget)
+            Systems_PresentationBudget budget,
+            IPublisher<Systems_TurfCutMessage> cutPublisher)
         {
             _ball = ball;
             _registry = registry;
             _budget = budget;
+            _cutPublisher = cutPublisher;
         }
 
         private void Start()
@@ -303,6 +313,8 @@ namespace PoFootball.Views
             // Thrown backwards, away from where he is now going. Turf leaves the
             // cleat opposite to the direction the foot drove.
             EmitClods(_carrier.Position, -heading, force);
+
+            _cutPublisher?.Publish(new Systems_TurfCutMessage(_carrier.Position, force));
         }
 
         private void EmitClods(Vector2 point, Vector2 away, float force)

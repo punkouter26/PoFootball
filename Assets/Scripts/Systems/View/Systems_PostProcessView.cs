@@ -1,3 +1,5 @@
+using System;
+using MessagePipe;
 using PoFootball.Systems;
 using UnityEngine;
 using UnityEngine.Rendering;
@@ -100,15 +102,40 @@ namespace PoFootball.Views
             + "DefaultVolumeProfile, which is otherwise blended in underneath it.")]
         [SerializeField] private float _volumePriority = 100f;
 
+        /// <summary>
+        /// Bloom intensity at the top of the touchdown pulse.
+        ///
+        /// THE ONE MOMENT THE BLOOM IS ALLOWED TO SAY SOMETHING OTHER THAN "CARRIER
+        /// OR HIT". The threshold is untouched, so the pulse still only lights what
+        /// was already over it — the scorer's rim — and it is back to the
+        /// configured value inside a third of a second, before the field resets.
+        /// </summary>
+        private const float SCORE_PULSE_INTENSITY = 1.4f;
+
+        /// <summary>
+        /// Up and back, in real seconds: it is presentation, and at Sim Speed 8x a
+        /// game-time pulse would be a single frame.
+        /// </summary>
+        private const float SCORE_PULSE_SECONDS = 0.3f;
+
         private Systems_PresentationBudget _budget;
+        private ISubscriber<Systems_ScoreMessage> _scoreSubscriber;
+        private IDisposable _scoreSubscription;
 
         private VolumeProfile _profile;
         private Volume _volume;
+        private Bloom _bloom;
+
+        /// <summary>Real seconds into the current pulse; negative when none is running.</summary>
+        private float _pulseElapsed = -1f;
 
         [Inject]
-        public void Construct(Systems_PresentationBudget budget)
+        public void Construct(
+            Systems_PresentationBudget budget,
+            ISubscriber<Systems_ScoreMessage> scoreSubscriber)
         {
             _budget = budget;
+            _scoreSubscriber = scoreSubscriber;
         }
 
         private void Start()
@@ -122,6 +149,48 @@ namespace PoFootball.Views
             BuildProfile();
             BuildVolume();
             EnableOnCamera();
+
+            _scoreSubscription = _scoreSubscriber?.Subscribe(OnScore);
+        }
+
+        /// <summary>
+        /// Runs the pulse, and nothing else: one comparison on every frame there
+        /// is no touchdown to celebrate.
+        /// </summary>
+        private void Update()
+        {
+            if (_pulseElapsed < 0f)
+            {
+                return;
+            }
+
+            _pulseElapsed += Time.unscaledDeltaTime;
+
+            float progress = _pulseElapsed / SCORE_PULSE_SECONDS;
+
+            if (progress >= 1f)
+            {
+                RestoreBloom();
+                return;
+            }
+
+            // Never below the configured value, even if it was tuned past 1.4 in
+            // the Inspector — a celebration that dimmed the picture would be worse
+            // than none.
+            float peak = Mathf.Max(SCORE_PULSE_INTENSITY, _bloomIntensity);
+
+            _bloom.intensity.value = Mathf.Lerp(
+                _bloomIntensity, peak, Mathf.Sin(Mathf.PI * progress));
+        }
+
+        /// <summary>
+        /// Puts the configured intensity back exactly, so a scene unloaded
+        /// mid-pulse cannot leave the grade brighter than it was tuned — the same
+        /// failure that got Time.timeScale taken away from presentation.
+        /// </summary>
+        private void OnDisable()
+        {
+            RestoreBloom();
         }
 
         /// <summary>
@@ -132,6 +201,11 @@ namespace PoFootball.Views
         /// </summary>
         private void OnDestroy()
         {
+            _scoreSubscription?.Dispose();
+            _scoreSubscription = null;
+
+            RestoreBloom();
+
             if (_profile != null)
             {
                 Destroy(_profile);
@@ -153,6 +227,7 @@ namespace PoFootball.Views
             tonemapping.mode.value = TonemappingMode.ACES;
 
             Bloom bloom = _profile.Add<Bloom>(true);
+            _bloom = bloom;
             bloom.threshold.overrideState = true;
             bloom.threshold.value = _bloomThreshold;
             bloom.intensity.overrideState = true;
@@ -230,6 +305,26 @@ namespace PoFootball.Views
             }
 
             cameraData.renderPostProcessing = true;
+        }
+
+        private void OnScore(Systems_ScoreMessage message)
+        {
+            if (_bloom == null)
+            {
+                return;
+            }
+
+            _pulseElapsed = 0f;
+        }
+
+        private void RestoreBloom()
+        {
+            _pulseElapsed = -1f;
+
+            if (_bloom != null)
+            {
+                _bloom.intensity.value = _bloomIntensity;
+            }
         }
     }
 }

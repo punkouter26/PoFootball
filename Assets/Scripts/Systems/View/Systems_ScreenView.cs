@@ -44,7 +44,9 @@ namespace PoFootball.Views
         /// docs/ASSETS.md records that Asset Store audio "cannot be fetched without
         /// a signed-in human clicking Add to My Assets" — an argument about sounds
         /// the repository does not have. These six .ogg files were already in it,
-        /// under Assets/Art/Kenney/UIPack/Sounds, unreferenced by any script. There
+        /// under Assets/Art/Kenney/UIPack/Sounds (CC0), unreferenced by any script,
+        /// and now live in Resources/Audio/Ui; the rest of that pack, 400-odd
+        /// sprites nothing ever named, has since been deleted. There
         /// is no case for synthesising a click when a good one is sitting in the
         /// project unused.
         /// </summary>

@@ -239,7 +239,7 @@ GameObject:
   - component: {fileID: 209590695}
   - component: {fileID: 209590694}
   - component: {fileID: 209590697}
-  m_Layer: 0
+  m_Layer: 8
   m_Name: WR_Z
   m_TagString: Offense
   m_Icon: {fileID: 0}
@@ -485,7 +485,7 @@ GameObject:
   m_Component:
   - component: {fileID: 209661577}
   - component: {fileID: 209661579}
-  m_Layer: 0
+  m_Layer: 9
   m_Name: Wall_West
   m_TagString: Untagged
   m_Icon: {fileID: 0}
@@ -569,7 +569,7 @@ GameObject:
   - component: {fileID: 211979834}
   - component: {fileID: 211979833}
   - component: {fileID: 211979836}
-  m_Layer: 0
+  m_Layer: 8
   m_Name: TE_Y
   m_TagString: Offense
   m_Icon: {fileID: 0}
@@ -821,7 +821,7 @@ GameObject:
   - component: {fileID: 250943504}
   - component: {fileID: 250943503}
   - component: {fileID: 250943506}
-  m_Layer: 0
+  m_Layer: 8
   m_Name: DL_LE
   m_TagString: Defense
   m_Icon: {fileID: 0}
@@ -1073,7 +1073,7 @@ GameObject:
   - component: {fileID: 255429567}
   - component: {fileID: 255429566}
   - component: {fileID: 255429569}
-  m_Layer: 0
+  m_Layer: 8
   m_Name: QB
   m_TagString: Offense
   m_Icon: {fileID: 0}
@@ -1451,7 +1451,7 @@ GameObject:
   - component: {fileID: 373461440}
   - component: {fileID: 373461439}
   - component: {fileID: 373461442}
-  m_Layer: 0
+  m_Layer: 8
   m_Name: S_FS
   m_TagString: Defense
   m_Icon: {fileID: 0}
@@ -1703,7 +1703,7 @@ GameObject:
   - component: {fileID: 385819417}
   - component: {fileID: 385819416}
   - component: {fileID: 385819419}
-  m_Layer: 0
+  m_Layer: 8
   m_Name: CB_L
   m_TagString: Defense
   m_Icon: {fileID: 0}
@@ -1955,7 +1955,7 @@ GameObject:
   - component: {fileID: 403710106}
   - component: {fileID: 403710105}
   - component: {fileID: 403710108}
-  m_Layer: 0
+  m_Layer: 8
   m_Name: OL_RG
   m_TagString: Offense
   m_Icon: {fileID: 0}
@@ -2207,7 +2207,7 @@ GameObject:
   - component: {fileID: 424981334}
   - component: {fileID: 424981333}
   - component: {fileID: 424981336}
-  m_Layer: 0
+  m_Layer: 8
   m_Name: OL_LG
   m_TagString: Offense
   m_Icon: {fileID: 0}
@@ -2737,7 +2737,7 @@ GameObject:
   - component: {fileID: 583981123}
   - component: {fileID: 583981122}
   - component: {fileID: 583981125}
-  m_Layer: 0
+  m_Layer: 8
   m_Name: LB_W
   m_TagString: Defense
   m_Icon: {fileID: 0}
@@ -2989,7 +2989,7 @@ GameObject:
   - component: {fileID: 587571608}
   - component: {fileID: 587571607}
   - component: {fileID: 587571610}
-  m_Layer: 0
+  m_Layer: 8
   m_Name: DL_RT
   m_TagString: Defense
   m_Icon: {fileID: 0}
@@ -3639,7 +3639,7 @@ GameObject:
   m_Component:
   - component: {fileID: 862461043}
   - component: {fileID: 862461045}
-  m_Layer: 0
+  m_Layer: 9
   m_Name: Wall_South
   m_TagString: Untagged
   m_Icon: {fileID: 0}
@@ -3799,76 +3799,6 @@ SpriteRenderer:
   m_WasSpriteAssigned: 1
   m_SpriteSortPoint: 0
   m_BlendShapeWeights: []
---- !u!1 &873028339
-GameObject:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  serializedVersion: 6
-  m_Component:
-  - component: {fileID: 873028342}
-  - component: {fileID: 873028341}
-  - component: {fileID: 873028340}
-  m_Layer: 0
-  m_Name: Diagnostics
-  m_TagString: Untagged
-  m_Icon: {fileID: 0}
-  m_NavMeshLayer: 0
-  m_StaticEditorFlags: 0
-  m_IsActive: 1
---- !u!114 &873028340
-MonoBehaviour:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 873028339}
-  m_Enabled: 1
-  m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: 9187019689de50445bb648811e0c7a67, type: 3}
-  m_Name: 
-  m_EditorClassIdentifier: PoFootball.Views::PoFootball.Views.Systems_PerformanceOverlayView
-  _enableOverlay: 1
-  _startExpanded: 0
---- !u!114 &873028341
-MonoBehaviour:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 873028339}
-  m_Enabled: 1
-  m_EditorHideFlags: 0
-  m_Script: {fileID: 19102, guid: 0000000000000000e000000000000000, type: 0}
-  m_Name: 
-  m_EditorClassIdentifier: UnityEngine.dll::UnityEngine.UIElements.UIDocument
-  m_PanelSettings: {fileID: 0}
-  m_ParentUI: {fileID: 0}
-  sourceAsset: {fileID: 0}
-  m_SortingOrder: 0
-  m_Position: 0
-  m_WorldSpaceSizeMode: 1
-  m_WorldSpaceWidth: 1920
-  m_WorldSpaceHeight: 1080
-  m_PivotReferenceSize: 0
-  m_Pivot: 0
-  m_WorldSpaceCollider: {fileID: 0}
---- !u!4 &873028342
-Transform:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 873028339}
-  serializedVersion: 2
-  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
-  m_LocalPosition: {x: 0, y: 0, z: 0}
-  m_LocalScale: {x: 1, y: 1, z: 1}
-  m_ConstrainProportionsScale: 0
-  m_Children: []
-  m_Father: {fileID: 0}
-  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
 --- !u!1 &906291407
 GameObject:
   m_ObjectHideFlags: 0
@@ -4175,7 +4105,7 @@ GameObject:
   - component: {fileID: 1033005610}
   - component: {fileID: 1033005609}
   - component: {fileID: 1033005612}
-  m_Layer: 0
+  m_Layer: 8
   m_Name: LB_S
   m_TagString: Defense
   m_Icon: {fileID: 0}
@@ -4516,6 +4446,13 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: c9d435d8cdbda084d8580452b526db27, type: 3}
   m_Name: 
   m_EditorClassIdentifier: PoFootball.Views::PoFootball.Views.Systems_BroadcastCameraView
+  _wideSize: 30
+  _tightSize: 22
+  _minimumZoomTravel: 6
+  _fullWideYards: 22
+  _positionDamping: 3.2
+  _zoomDamping: 2.4
+  _lateralTracking: 0.55
 --- !u!1 &1112850541
 GameObject:
   m_ObjectHideFlags: 0
@@ -4634,7 +4571,7 @@ GameObject:
   - component: {fileID: 1287706352}
   - component: {fileID: 1287706351}
   - component: {fileID: 1287706354}
-  m_Layer: 0
+  m_Layer: 8
   m_Name: WR_X
   m_TagString: Offense
   m_Icon: {fileID: 0}
@@ -4886,7 +4823,7 @@ GameObject:
   - component: {fileID: 1310113878}
   - component: {fileID: 1310113877}
   - component: {fileID: 1310113880}
-  m_Layer: 0
+  m_Layer: 8
   m_Name: DL_LT
   m_TagString: Defense
   m_Icon: {fileID: 0}
@@ -5138,7 +5075,7 @@ GameObject:
   - component: {fileID: 1331384577}
   - component: {fileID: 1331384576}
   - component: {fileID: 1331384579}
-  m_Layer: 0
+  m_Layer: 8
   m_Name: RB
   m_TagString: Offense
   m_Icon: {fileID: 0}
@@ -5390,7 +5327,7 @@ GameObject:
   - component: {fileID: 1335870109}
   - component: {fileID: 1335870108}
   - component: {fileID: 1335870111}
-  m_Layer: 0
+  m_Layer: 8
   m_Name: FB
   m_TagString: Offense
   m_Icon: {fileID: 0}
@@ -5642,7 +5579,7 @@ GameObject:
   - component: {fileID: 1373653274}
   - component: {fileID: 1373653273}
   - component: {fileID: 1373653276}
-  m_Layer: 0
+  m_Layer: 8
   m_Name: S_SS
   m_TagString: Defense
   m_Icon: {fileID: 0}
@@ -5894,7 +5831,7 @@ GameObject:
   - component: {fileID: 1444739691}
   - component: {fileID: 1444739690}
   - component: {fileID: 1444739693}
-  m_Layer: 0
+  m_Layer: 8
   m_Name: CB_R
   m_TagString: Defense
   m_Icon: {fileID: 0}
@@ -6146,7 +6083,7 @@ GameObject:
   - component: {fileID: 1481509221}
   - component: {fileID: 1481509220}
   - component: {fileID: 1481509223}
-  m_Layer: 0
+  m_Layer: 8
   m_Name: OL_RT
   m_TagString: Offense
   m_Icon: {fileID: 0}
@@ -6398,7 +6335,7 @@ GameObject:
   - component: {fileID: 1492318408}
   - component: {fileID: 1492318407}
   - component: {fileID: 1492318410}
-  m_Layer: 0
+  m_Layer: 8
   m_Name: OL_C
   m_TagString: Offense
   m_Icon: {fileID: 0}
@@ -6650,7 +6587,7 @@ GameObject:
   - component: {fileID: 1496386704}
   - component: {fileID: 1496386703}
   - component: {fileID: 1496386706}
-  m_Layer: 0
+  m_Layer: 8
   m_Name: OL_LT
   m_TagString: Offense
   m_Icon: {fileID: 0}
@@ -6896,7 +6833,7 @@ GameObject:
   m_Component:
   - component: {fileID: 1505534081}
   - component: {fileID: 1505534083}
-  m_Layer: 0
+  m_Layer: 9
   m_Name: Wall_East
   m_TagString: Untagged
   m_Icon: {fileID: 0}
@@ -7532,7 +7469,7 @@ GameObject:
   - component: {fileID: 1651290265}
   - component: {fileID: 1651290264}
   - component: {fileID: 1651290267}
-  m_Layer: 0
+  m_Layer: 8
   m_Name: LB_M
   m_TagString: Defense
   m_Icon: {fileID: 0}
@@ -7784,7 +7721,7 @@ GameObject:
   - component: {fileID: 1655138818}
   - component: {fileID: 1655138817}
   - component: {fileID: 1655138820}
-  m_Layer: 0
+  m_Layer: 8
   m_Name: DL_RE
   m_TagString: Defense
   m_Icon: {fileID: 0}
@@ -8020,6 +7957,74 @@ MonoBehaviour:
   m_UseBatchedRaycasts: 0
   rayHitColor: {r: 1, g: 0, b: 0, a: 1}
   rayMissColor: {r: 1, g: 1, b: 1, a: 1}
+--- !u!1 &1657238374
+GameObject:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  serializedVersion: 6
+  m_Component:
+  - component: {fileID: 1657238377}
+  - component: {fileID: 1657238376}
+  - component: {fileID: 1657238375}
+  m_Layer: 0
+  m_Name: Replay
+  m_TagString: Untagged
+  m_Icon: {fileID: 0}
+  m_NavMeshLayer: 0
+  m_StaticEditorFlags: 0
+  m_IsActive: 1
+--- !u!114 &1657238375
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1657238374}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 0b5a2bc9cab268c44b1c502dcd6085ae, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: PoFootball.Views::PoFootball.Views.Systems_ReplayView
+--- !u!114 &1657238376
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1657238374}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 19102, guid: 0000000000000000e000000000000000, type: 0}
+  m_Name: 
+  m_EditorClassIdentifier: UnityEngine.dll::UnityEngine.UIElements.UIDocument
+  m_PanelSettings: {fileID: 0}
+  m_ParentUI: {fileID: 0}
+  sourceAsset: {fileID: 0}
+  m_SortingOrder: 0
+  m_Position: 0
+  m_WorldSpaceSizeMode: 1
+  m_WorldSpaceWidth: 1920
+  m_WorldSpaceHeight: 1080
+  m_PivotReferenceSize: 0
+  m_Pivot: 0
+  m_WorldSpaceCollider: {fileID: 0}
+--- !u!4 &1657238377
+Transform:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1657238374}
+  serializedVersion: 2
+  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
+  m_LocalPosition: {x: 0, y: 0, z: 0}
+  m_LocalScale: {x: 1, y: 1, z: 1}
+  m_ConstrainProportionsScale: 0
+  m_Children: []
+  m_Father: {fileID: 0}
+  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
 --- !u!1 &1678018807
 GameObject:
   m_ObjectHideFlags: 0
@@ -8030,7 +8035,7 @@ GameObject:
   m_Component:
   - component: {fileID: 1678018808}
   - component: {fileID: 1678018810}
-  m_Layer: 0
+  m_Layer: 9
   m_Name: Wall_North
   m_TagString: Untagged
   m_Icon: {fileID: 0}
@@ -9130,13 +9135,17 @@ MonoBehaviour:
   _ambientIntensity: 0.62
   _ambientColor: {r: 0.72, g: 0.79, b: 0.92, a: 1}
   _bankColor: {r: 1, g: 0.96, b: 0.88, a: 1}
-  _bankIntensity: 1.25
   _fillIntensity: 0.65
   _bankSidelineOffset: 14
   _bankLengthwiseOffset: 29.260798
   _bankOuterRadius: 85
   _bankInnerRadius: 8
   _bankFalloff: 0.35
+  _keyIntensity: 0.4
+  _keySidelineOffset: 36
+  _keyLengthwiseOffset: 95
+  _keyInnerRadius: 150
+  _keyOuterRadius: 230
   _shadowIntensity: 0.82
   _shadowSoftness: 0.55
   _castPlayerShadows: 1
@@ -9165,4 +9174,4 @@ SceneRoots:
   - {fileID: 173269326}
   - {fileID: 2008628099}
   - {fileID: 1123014537}
-  - {fileID: 873028342}
+  - {fileID: 1657238377}

@@ -81,6 +81,11 @@ namespace PoFootball.Views
     ///   frame looking for something to sound; this is pushed, by the physics
     ///   callback that fired anyway, and it is rate limited to one voice at a time
     ///   so seven linemen engaging on the same tick are one crunch, not seven.
+    ///
+    ///   SO CAN THE CUT, AND IT IS STILL NOT THE CLEAT SCUFF. Systems_TurfScuffView
+    ///   watches the carrier alone and already decides when he cut; it publishes
+    ///   Systems_TurfCutMessage and this plays it, one voice at a time. Nothing
+    ///   here looks at a player to find one.
     /// </summary>
     [DisallowMultipleComponent]
     public sealed class Systems_AudioView : MonoBehaviour, Systems_IInjectableView
@@ -156,6 +161,36 @@ namespace PoFootball.Views
         /// </summary>
         private const float CONTACT_INTERVAL = 0.1f;
 
+        /// <summary>
+        /// Least time between two cut sounds, in real seconds, for the reason
+        /// CONTACT_INTERVAL is in real seconds. Longer than the clip, so at most
+        /// one cut is ever sounding: a back weaving through a sustained cut sprays
+        /// every 0.09 s of game time, and each of those as a voice would be a
+        /// rattle that took the pool from the tackle it is running into.
+        /// </summary>
+        private const float CUT_INTERVAL = 0.2f;
+
+        /// <summary>
+        /// How far the tackle's pitch moves with the tackler's mass, either way: a
+        /// 92 kg corner plays it this much higher, a 140 kg lineman this much
+        /// lower. Modest because it multiplies the closing-speed sweep already on
+        /// the pitch, and together they stay inside about fifteen per cent — past
+        /// that the one synthesised pop starts to sound like two different cues.
+        /// </summary>
+        private const float TACKLER_MASS_PITCH = 0.08f;
+
+        /// <summary>
+        /// The two ends of the mass range, the same two Systems_ImpactView sizes
+        /// its spark count over, so the heaviest hit is the deepest AND the
+        /// densest — the sight and the sound cannot disagree about which hit was
+        /// bigger.
+        /// </summary>
+        private static readonly float LightestMass =
+            Systems_RoleTable.MassOf(Systems_PlayerRole.Cornerback);
+
+        private static readonly float HeaviestMass =
+            Systems_RoleTable.MassOf(Systems_PlayerRole.DefensiveLine);
+
         [Header("Optional overrides")]
         [Tooltip("Leave empty to use the synthesised fallback in Systems_ToneBank.")]
         [SerializeField] private AudioClip _whistleOverride;
@@ -171,6 +206,7 @@ namespace PoFootball.Views
         private ISubscriber<Systems_PassThrownMessage> _thrownSubscriber;
         private ISubscriber<Systems_PassCaughtMessage> _caughtSubscriber;
         private ISubscriber<Systems_ContactMessage> _contactSubscriber;
+        private ISubscriber<Systems_TurfCutMessage> _cutSubscriber;
 
         private IDisposable _resolvedSubscription;
         private IDisposable _tackleSubscription;
@@ -179,6 +215,7 @@ namespace PoFootball.Views
         private IDisposable _thrownSubscription;
         private IDisposable _caughtSubscription;
         private IDisposable _contactSubscription;
+        private IDisposable _cutSubscription;
 
         private Systems_PlayerRegistry _registry;
         private Systems_BallModel _ball;
@@ -218,6 +255,9 @@ namespace PoFootball.Views
         /// <summary>Real seconds until another block sound may play.</summary>
         private float _contactCooldown;
 
+        /// <summary>Real seconds until another cut sound may play.</summary>
+        private float _cutCooldown;
+
         // Cues. Built once at Start, never reallocated.
         private AudioClip _whistle;
         private AudioClip _impact;
@@ -227,6 +267,7 @@ namespace PoFootball.Views
         private AudioClip _throw;
         private AudioClip _catch;
         private AudioClip _block;
+        private AudioClip _cut;
 
         [Inject]
         public void Construct(
@@ -237,6 +278,7 @@ namespace PoFootball.Views
             ISubscriber<Systems_PassThrownMessage> thrownSubscriber,
             ISubscriber<Systems_PassCaughtMessage> caughtSubscriber,
             ISubscriber<Systems_ContactMessage> contactSubscriber,
+            ISubscriber<Systems_TurfCutMessage> cutSubscriber,
             Systems_PlayerRegistry registry,
             Systems_BallModel ball,
             Systems_GameModel game,
@@ -249,6 +291,7 @@ namespace PoFootball.Views
             _thrownSubscriber = thrownSubscriber;
             _caughtSubscriber = caughtSubscriber;
             _contactSubscriber = contactSubscriber;
+            _cutSubscriber = cutSubscriber;
             _registry = registry;
             _ball = ball;
             _game = game;
@@ -278,10 +321,12 @@ namespace PoFootball.Views
             _thrownSubscription = _thrownSubscriber?.Subscribe(OnPassThrown);
             _caughtSubscription = _caughtSubscriber?.Subscribe(OnPassCaught);
             _contactSubscription = _contactSubscriber?.Subscribe(OnContact);
+            _cutSubscription = _cutSubscriber?.Subscribe(OnTurfCut);
         }
 
         private void OnDestroy()
         {
+            _cutSubscription?.Dispose();
             _resolvedSubscription?.Dispose();
             _tackleSubscription?.Dispose();
             _endedSubscription?.Dispose();
@@ -309,6 +354,11 @@ namespace PoFootball.Views
         private void Update()
         {
             FlushContact();
+
+            if (_cutCooldown > 0f)
+            {
+                _cutCooldown -= Time.unscaledDeltaTime;
+            }
 
             if (_crowd == null)
             {
@@ -364,6 +414,7 @@ namespace PoFootball.Views
             _throw = Systems_ToneBank.Throw();
             _catch = Systems_ToneBank.Catch();
             _block = Systems_ToneBank.Block();
+            _cut = Systems_ToneBank.Cut();
         }
 
         /// <summary>
@@ -438,7 +489,55 @@ namespace PoFootball.Views
 
             Vector3 at = ContactPoint(message.CarrierId);
 
-            PlayAt(_impact, 0.45f + (0.55f * force), 0.94f + (0.12f * force), at);
+            float pitch = (0.94f + (0.12f * force)) * TacklerPitch(message.TacklerId);
+
+            PlayAt(_impact, 0.45f + (0.55f * force), pitch, at);
+        }
+
+        /// <summary>
+        /// Lower for a heavier tackler. The closing speed says how hard the two
+        /// met; it cannot say a lineman landed rather than a corner, and that is
+        /// a difference an ear hears as depth. 1 when the tackler cannot be
+        /// resolved, so a missing handle changes nothing.
+        /// </summary>
+        private float TacklerPitch(int tacklerId)
+        {
+            Systems_IPlayerHandle tackler = _registry == null ? null : _registry.FindById(tacklerId);
+
+            if (tackler == null)
+            {
+                return 1f;
+            }
+
+            float heaviness = Mathf.InverseLerp(
+                LightestMass, HeaviestMass, Systems_RoleTable.MassOf(tackler.Role));
+
+            return Mathf.Lerp(1f + TACKLER_MASS_PITCH, 1f - TACKLER_MASS_PITCH, heaviness);
+        }
+
+        /// <summary>
+        /// The carrier's cleat biting on a cut. Played straight from the handler,
+        /// unlike the block: this arrives from the scuff view's Update, not from
+        /// the physics step, already rate limited by its spray interval — so there
+        /// is no burst to fold into one, and holding it back for the hardest would
+        /// only make the sound land after the turf it belongs to.
+        ///
+        /// UNDER THE BED, for the block's reason: a weaving run cuts several times.
+        /// </summary>
+        private void OnTurfCut(Systems_TurfCutMessage message)
+        {
+            if (_cutCooldown > 0f)
+            {
+                return;
+            }
+
+            _cutCooldown = CUT_INTERVAL;
+
+            float strength = message.Strength;
+
+            PlayAtUnderTheBed(
+                _cut, 0.12f + (0.25f * strength), 0.95f + (0.15f * strength),
+                new Vector3(message.Point.x, message.Point.y, 0f));
         }
 
         private void OnPassThrown(Systems_PassThrownMessage message)

@@ -64,10 +64,34 @@ namespace PoFootball.Views
         /// and clock on its left, the play call on its right. Equal on purpose —
         /// the pill is then centred however wide either neighbour's text is, and
         /// neither the clock ticking nor the call chip appearing at the snap can
-        /// move it. Sized for the widest of the two: "14:22" at TEXT_TITLE needs
-        /// about 110 panel units and the "FIELD GOAL" chip 141.
+        /// move it.
+        ///
+        /// WAS 160, SIZED FOR A "FIELD GOAL" CHIP MEASURED AT 141 UNITS. The chip
+        /// now says FG (Systems_DisplayText.PlayCall), so the widest chip is
+        /// "QB KEEP" and the widest clock is "5:00" — a quarter is five minutes, so
+        /// the "14:22" this was once sized for cannot occur. The 80 units freed
+        /// across both flanks go to the pill, the one thing on the bar that changes
+        /// every play. 120 is estimated from the 141-unit measurement by glyph
+        /// count; check it against a capture if the font changes.
         /// </summary>
-        private const int FLANK_WIDTH = 160;
+        private const int FLANK_WIDTH = 120;
+
+        /// <summary>Metres per second to the miles per hour a broadcast graphic shows.</summary>
+        private const float MPS_TO_MPH = 2.23694f;
+
+        /// <summary>
+        /// Top of the speed range the carrier chip has a label for. Comfortably above
+        /// Systems_SimConstants.MAX_BODY_SPEED (12 m/s, 27 mph).
+        /// </summary>
+        private const int MAX_DISPLAY_MPH = 40;
+
+        /// <summary>
+        /// "0 MPH" to "40 MPH", built once. The chip changes as often as the carrier
+        /// speeds up or slows down by a whole mile an hour, which on a breaking run is
+        /// several times a second; formatting a string each time would be the only
+        /// steady allocation on the HUD.
+        /// </summary>
+        private static readonly string[] MphLabels = BuildMphLabels();
 
         /// <summary>
         /// Distance from the bottom of the status bar to the top of the result
@@ -89,6 +113,10 @@ namespace PoFootball.Views
         /// a policy's output, and it lives on the play.
         /// </summary>
         private Systems_PlayModel _play;
+
+        private Systems_BallModel _ball;
+        private Systems_PlayerRegistry _registry;
+        private Systems_SimSpeedSystem _simSpeed;
 
         private Systems_BoxScore _boxScore;
         private ISubscriber<Systems_DownResolvedMessage> _resolvedSubscriber;
@@ -153,10 +181,35 @@ namespace PoFootball.Views
         /// </summary>
         private Systems_PlayCall _lastCall = (Systems_PlayCall)(-1);
 
+        // The carrier chip: who has the ball, how fast, how tired. Each guarded on
+        // its own last value, so a frame in which nothing visibly changed writes
+        // nothing.
+        private VisualElement _carrierChip;
+        private Label _carrierRole;
+        private Label _carrierSpeed;
+        private VisualElement _carrierFatigueFill;
+        private int _lastCarrierId = -1;
+        private int _lastMph = -1;
+        private int _lastFatiguePercent = -1;
+
+        // The drive in progress, for the line under the result banner. Keyed on the
+        // game's drive index captured at the SNAP, because by the time a scoring
+        // down is resolved the index may already belong to the next possession.
+        private Label _bannerDrive;
+        private int _snapDriveIndex = -1;
+        private int _countedDriveIndex = -1;
+        private int _drivePlays;
+        private float _driveYards;
+
+        private Button _speedButton;
+
         [Inject]
         public void Construct(
             Systems_GameModel game,
             Systems_PlayModel play,
+            Systems_BallModel ball,
+            Systems_PlayerRegistry registry,
+            Systems_SimSpeedSystem simSpeed,
             Systems_BoxScore boxScore,
             ISubscriber<Systems_DownResolvedMessage> resolvedSubscriber,
             ISubscriber<Systems_GameOverMessage> gameOverSubscriber,
@@ -164,6 +217,9 @@ namespace PoFootball.Views
         {
             _game = game;
             _play = play;
+            _ball = ball;
+            _registry = registry;
+            _simSpeed = simSpeed;
             _boxScore = boxScore;
             _resolvedSubscriber = resolvedSubscriber;
             _gameOverSubscriber = gameOverSubscriber;
@@ -203,10 +259,13 @@ namespace PoFootball.Views
 
             layer.Add(BuildScoreboard());
 
-            // ORDER IS Z-ORDER. The banner sits over the field and the final
-            // overlay sits over the banner. Nothing else is on this layer: the way
-            // out of a live game is the status HUD's MENU chip, on its own panel
-            // above all of this.
+            // ORDER IS Z-ORDER. The carrier chip and the speed control sit over the
+            // field, the banner over them, and the final overlay over everything.
+            // The way out of a live game is the status HUD's MENU chip, on its own
+            // panel above all of this.
+            layer.Add(BuildCarrierChip());
+            layer.Add(BuildSpeedControl());
+
             _bannerOverlay = BuildBanner();
             layer.Add(_bannerOverlay.Root);
 
@@ -458,6 +517,222 @@ namespace PoFootball.Views
             return block;
         }
 
+        // --- Carrier chip and speed control ------------------------------------
+
+        /// <summary>
+        /// Who has the ball, how fast he is going and how much he has left, while
+        /// the ball is live.
+        ///
+        /// WHY THESE THREE. The carrier's rim glow says who; nothing on screen said
+        /// how fast, and on a ten-pixel shape a back at full speed and one jogging
+        /// look alike. Fatigue is a real input to the simulation — it scales every
+        /// force the carrier applies (Agent_FootballPlayer.OnActionReceived) — and
+        /// the only trace of it was a shader tint too subtle to read on a phone.
+        ///
+        /// ONE CHIP, NOT TWENTY-TWO. A bar over every player would bury the shapes
+        /// it is labelling. The carrier is the one player a viewer is watching.
+        ///
+        /// IT SHARES THE BANNER'S PLACE, AND NEVER ITS TIME. The chip is up only while
+        /// the ball is live and the result banner only while it is dead, so the
+        /// space directly under the scoreboard is used by both without overlap.
+        /// </summary>
+        private VisualElement BuildCarrierChip()
+        {
+            VisualElement strip = Systems_UiTheme.Row();
+            strip.style.position = Position.Absolute;
+            strip.style.left = 0;
+            strip.style.right = 0;
+            strip.style.top = Systems_UiTheme.STATUS_BAR_HEIGHT + BANNER_CLEARANCE;
+            strip.style.justifyContent = Justify.Center;
+            strip.pickingMode = PickingMode.Ignore;
+
+            VisualElement chip = Systems_UiTheme.Row();
+            chip.style.backgroundColor = Systems_UiTheme.SurfaceOverField;
+            chip.pickingMode = PickingMode.Ignore;
+            Systems_UiTheme.SetPadding(chip, Systems_UiTheme.SPACE_XS, Systems_UiTheme.SPACE_M);
+            Systems_UiTheme.SetRadius(chip, Systems_UiTheme.RADIUS);
+            Systems_UiTheme.ApplyElevation(chip);
+
+            _carrierRole = Systems_UiTheme.Text(
+                string.Empty, Systems_UiTheme.TEXT_BODY,
+                Systems_UiTheme.TextPrimary, FontStyle.Bold);
+
+            _carrierSpeed = Systems_UiTheme.Text(
+                MphLabels[0], Systems_UiTheme.TEXT_BODY, Systems_UiTheme.TextPrimary);
+            _carrierSpeed.style.marginLeft = Systems_UiTheme.SPACE_M;
+
+            // A track and a fill rather than a number: "how tired" is a gauge, and a
+            // percentage beside a speed reads as a second speed.
+            VisualElement track = new VisualElement();
+            track.style.width = 96;
+            track.style.height = Systems_UiTheme.SPACE_S;
+            track.style.marginLeft = Systems_UiTheme.SPACE_M;
+            track.style.backgroundColor = new Color(
+                Systems_UiTheme.TextMuted.r, Systems_UiTheme.TextMuted.g,
+                Systems_UiTheme.TextMuted.b, 0.3f);
+            track.pickingMode = PickingMode.Ignore;
+            Systems_UiTheme.SetRadius(track, Systems_UiTheme.SPACE_S / 2);
+
+            _carrierFatigueFill = new VisualElement();
+            _carrierFatigueFill.style.height = Length.Percent(100f);
+            _carrierFatigueFill.style.width = Length.Percent(0f);
+            _carrierFatigueFill.style.backgroundColor = Systems_UiTheme.Negative;
+            _carrierFatigueFill.pickingMode = PickingMode.Ignore;
+            Systems_UiTheme.SetRadius(_carrierFatigueFill, Systems_UiTheme.SPACE_S / 2);
+            track.Add(_carrierFatigueFill);
+
+            chip.Add(_carrierRole);
+            chip.Add(_carrierSpeed);
+            chip.Add(track);
+            strip.Add(chip);
+
+            strip.style.visibility = Visibility.Hidden;
+            _carrierChip = strip;
+            return strip;
+        }
+
+        /// <summary>
+        /// The viewer's playback speed, 1x / 2x / 4x, one tap to cycle.
+        ///
+        /// Bottom centre, above the status footer: the thumb's natural reach on a
+        /// portrait phone, and the one edge of the screen the status HUD leaves
+        /// free between its two bottom corners. Systems_SimSpeedSystem owns the
+        /// time scale and its reset; this only asks it to move.
+        /// </summary>
+        private VisualElement BuildSpeedControl()
+        {
+            VisualElement strip = Systems_UiTheme.Row();
+            strip.style.position = Position.Absolute;
+            strip.style.left = 0;
+            strip.style.right = 0;
+            strip.style.bottom = Systems_UiTheme.STATUS_FOOTER_HEIGHT + Systems_UiTheme.SPACE_M;
+            strip.style.justifyContent = Justify.Center;
+            strip.pickingMode = PickingMode.Ignore;
+
+            _speedButton = Systems_UiTheme.Button(
+                SpeedLabel(_simSpeed == null ? 1f : _simSpeed.Speed),
+                Systems_UiTheme.SurfaceRaised,
+                OnSpeedTapped);
+
+            _speedButton.style.color = Systems_UiTheme.TextPrimary;
+            _speedButton.style.minWidth = Systems_UiTheme.TAP_TARGET * 1.5f;
+            _speedButton.style.height = Systems_UiTheme.TAP_TARGET;
+            _speedButton.style.fontSize = Systems_UiTheme.TEXT_TITLE;
+            _speedButton.style.opacity = 0.85f;
+
+            strip.Add(_speedButton);
+            return strip;
+        }
+
+        private void OnSpeedTapped()
+        {
+            if (_simSpeed == null)
+            {
+                return;
+            }
+
+            _simSpeed.Cycle();
+            _speedButton.text = SpeedLabel(_simSpeed.Speed);
+        }
+
+        private static string SpeedLabel(float speed)
+        {
+            if (speed >= 4f)
+            {
+                return "4×";
+            }
+
+            return speed >= 2f ? "2×" : "1×";
+        }
+
+        /// <summary>
+        /// The player holding the ball while the play is live, or null. Same test as
+        /// Systems_BroadcastCameraView.LiveCarrier: a carrier after the whistle is
+        /// just whoever was tackled, coasting.
+        /// </summary>
+        private Systems_IPlayerHandle LiveCarrier()
+        {
+            if (_play == null || _ball == null || _registry == null
+                || _play.Phase != Systems_PlayPhase.Live || !_ball.IsHeld)
+            {
+                return null;
+            }
+
+            int carrierId = _ball.CarrierId;
+
+            if (carrierId < 0 || carrierId >= Systems_PlayerRegistry.CAPACITY)
+            {
+                return null;
+            }
+
+            return _registry.Get(carrierId);
+        }
+
+        private void RefreshCarrier()
+        {
+            if (_carrierChip == null)
+            {
+                return;
+            }
+
+            Systems_IPlayerHandle carrier = _finalOverlay.IsVisible ? null : LiveCarrier();
+
+            if (carrier == null)
+            {
+                if (_lastCarrierId != -1)
+                {
+                    _lastCarrierId = -1;
+                    _carrierChip.style.visibility = Visibility.Hidden;
+                }
+
+                return;
+            }
+
+            if (carrier.Id != _lastCarrierId)
+            {
+                _lastCarrierId = carrier.Id;
+                _carrierRole.text = Systems_DisplayText.RoleTag(carrier.Role);
+
+                // After a turnover the man with the ball is on the team that was
+                // defending; his tag takes his own team's colour, as on the field.
+                Systems_TeamId team = carrier.Side == Systems_TeamSide.Offense
+                    ? _game.Possession
+                    : _game.Possession.Opponent();
+
+                _carrierRole.style.color = Systems_UiTheme.ColorOf(team);
+                _carrierChip.style.visibility = Visibility.Visible;
+            }
+
+            int mph = Mathf.Clamp(
+                Mathf.RoundToInt(carrier.Velocity.magnitude * MPS_TO_MPH), 0, MAX_DISPLAY_MPH);
+
+            if (mph != _lastMph)
+            {
+                _lastMph = mph;
+                _carrierSpeed.text = MphLabels[mph];
+            }
+
+            int fatiguePercent = Mathf.RoundToInt(Mathf.Clamp01(carrier.Fatigue) * 100f);
+
+            if (fatiguePercent != _lastFatiguePercent)
+            {
+                _lastFatiguePercent = fatiguePercent;
+                _carrierFatigueFill.style.width = Length.Percent(fatiguePercent);
+            }
+        }
+
+        private static string[] BuildMphLabels()
+        {
+            string[] labels = new string[MAX_DISPLAY_MPH + 1];
+
+            for (int mph = 0; mph <= MAX_DISPLAY_MPH; mph++)
+            {
+                labels[mph] = mph + " MPH";
+            }
+
+            return labels;
+        }
+
         // --- Overlays ----------------------------------------------------------
 
         private Systems_UiOverlay BuildBanner()
@@ -487,8 +762,15 @@ namespace PoFootball.Views
             _bannerDetail = Systems_UiTheme.Text(
                 string.Empty, Systems_UiTheme.TEXT_BODY, Systems_UiTheme.TextMuted);
 
+            // The drive so far — the broadcast's "7 plays, 54 yards" — under the
+            // play that just ended. It is what makes a punt read as the end of a
+            // stalled drive rather than an isolated event.
+            _bannerDrive = Systems_UiTheme.Caption(string.Empty);
+            _bannerDrive.style.marginTop = Systems_UiTheme.SPACE_XS;
+
             overlay.Content.Add(_bannerHeadline);
             overlay.Content.Add(_bannerDetail);
+            overlay.Content.Add(_bannerDrive);
             return overlay;
         }
 
@@ -562,6 +844,7 @@ namespace PoFootball.Views
             RefreshClock();
             RefreshScoreboard(false);
             RefreshCall();
+            RefreshCarrier();
         }
 
         private void RefreshClock()
@@ -681,6 +964,7 @@ namespace PoFootball.Views
             }
 
             _bannerOverlay.Hide();
+            _snapDriveIndex = _game.DriveIndex;
         }
 
         private void OnDownResolved(Systems_DownResolvedMessage message)
@@ -689,6 +973,17 @@ namespace PoFootball.Views
             {
                 return;
             }
+
+            if (_snapDriveIndex != _countedDriveIndex)
+            {
+                _countedDriveIndex = _snapDriveIndex;
+                _drivePlays = 0;
+                _driveYards = 0f;
+            }
+
+            _drivePlays++;
+            _driveYards += message.YardsGained;
+            _bannerDrive.text = Systems_DisplayText.DriveSummary(_drivePlays, _driveYards);
 
             _bannerHeadline.text =
                 Systems_DisplayText.ResultBanner(message.Result, message.Outcome);

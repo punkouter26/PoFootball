@@ -58,14 +58,11 @@ namespace PoFootball.Views
         }
 
         /// <summary>
-        /// Whether this scene gets a status HUD. Public to the assembly because
-        /// <see cref="Systems_PerformanceOverlayView"/> has to answer the same
-        /// question to know whether to stand down, and it must get the same answer
-        /// — the alternative is a scene scan looking for the HUD, which is both a
-        /// FindObjectOfType and a race with whichever component happens to run
-        /// first.
+        /// Whether this scene gets a status HUD. Was internal so the old
+        /// Systems_PerformanceOverlayView could ask it whether to stand down; that
+        /// overlay stood down in every scene this says yes to, and has been deleted.
         /// </summary>
-        internal static bool WantsStatusHud(Scene scene)
+        private static bool WantsStatusHud(Scene scene)
         {
             if (!scene.IsValid())
             {

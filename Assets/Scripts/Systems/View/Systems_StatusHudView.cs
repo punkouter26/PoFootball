@@ -29,8 +29,9 @@ namespace PoFootball.Views
     /// of these per player-facing scene load, so there is one authority for where
     /// the five corners are and no scene edit can disagree with it.
     ///
-    /// IT REPLACES THE CORNER HALF OF Systems_PerformanceOverlayView, which stands
-    /// down rather than fight it for the bottom-left corner. See that class.
+    /// IT REPLACED Systems_PerformanceOverlayView, which stood down in every scene
+    /// this HUD is spawned in and has since been deleted along with its SCN_GAME
+    /// object; the frame timing and draw-call readings it carried live here.
     ///
     /// THE DEBUG SHEET IS WRITTEN IN ENGLISH, WORST FIRST. The old panel printed
     /// four rows of instrument readings — "FRAME 16.8 ms p50 41.2 ms p99" — which
@@ -188,7 +189,7 @@ namespace PoFootball.Views
         /// appears", and Editor_BuildAndroid says this sheet "is gated on
         /// Debug.isDebugBuild, which is exactly right — a retail install has no
         /// business quoting heap sizes at a player". Both were describing
-        /// Systems_PerformanceOverlayView, which did carry the check. When this
+        /// the old Systems_PerformanceOverlayView, which did carry the check. When this
         /// class superseded that one the check did not come with it, so the signed
         /// Play bundle would have shipped a DEBUG button one tap from the device
         /// model, the heap size and the first logged error.
@@ -672,13 +673,17 @@ namespace PoFootball.Views
                     + "trained on. Do not ship this build.");
             }
 
+            // Severity 15, not 40, since the HUD's own speed chip (Systems_SimSpeedSystem)
+            // is a legitimate writer. This sheet cannot tell a chosen 2x from a stray
+            // one, so it says which two things may set it and leaves the reader to
+            // know whether they tapped the chip.
             if (!Mathf.Approximately(Time.timeScale, 1f))
             {
-                Add(ref count, 40,
+                Add(ref count, 15,
                     "Time is scaled to x" + Fixed(Time.timeScale, 2)
-                    + ", so the game is not running at real speed. Tools > PoFootball"
-                    + " > Sim Speed sets this in the Editor and resets on exit; in a "
-                    + "player nothing should be setting it at all.");
+                    + ". Expected if the game's speed chip or Tools > PoFootball > Sim "
+                    + "Speed is set; the per-frame numbers below are then per real "
+                    + "second, not per game second. Anything else setting it is a bug.");
             }
 
             if (monoHeap > 256L * 1024L * 1024L)
