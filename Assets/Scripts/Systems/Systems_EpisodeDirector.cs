@@ -105,7 +105,7 @@ namespace PoFootball.Systems
                 }
             }
 
-            Debug.Log(
+            Systems_Log.Info(
                 $"[PoFootball] EpisodeDirector.Start — registry has "
                 + $"{_registry.RegisteredCount}/{Systems_PlayerRegistry.CAPACITY} slots.");
 

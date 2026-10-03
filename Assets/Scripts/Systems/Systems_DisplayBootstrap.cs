@@ -1,5 +1,6 @@
 using UnityEngine;
 using UnityEngine.SceneManagement;
+using PoFootball.Models;
 
 namespace PoFootball.Systems
 {
@@ -80,7 +81,7 @@ namespace PoFootball.Systems
                 // and "not capped" is invisible in the Editor, whose own loop runs
                 // at roughly 60 either way, so without this the only way to tell
                 // whether the exclusion fired is to make a build.
-                Debug.Log(
+                Systems_Log.Info(
                     "[PoFootball] Display: training scene — frame rate uncapped "
                     + $"(targetFrameRate={Application.targetFrameRate}), vSync "
                     + $"{QualitySettings.vSyncCount}.");
@@ -102,7 +103,7 @@ namespace PoFootball.Systems
             // fit in 1080 units of height. Ignored on desktop, which cannot rotate.
             Screen.orientation = ScreenOrientation.Portrait;
 
-            Debug.Log(
+            Systems_Log.Info(
                 $"[PoFootball] Display: {Application.targetFrameRate} FPS, "
                 + $"vSync {QualitySettings.vSyncCount}, portrait locked.");
         }

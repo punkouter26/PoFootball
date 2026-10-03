@@ -587,10 +587,20 @@ namespace PoFootball.Tests
         /// Runs whatever period is currently on the clock down to 0:00 with the ball
         /// live. Sized off SecondsRemaining rather than QUARTER_SECONDS so it works
         /// for an overtime period too.
+        ///
+        /// ASKS THE FLOW FOR THE SNAP, AS THE DIRECTOR DOES. This used to begin the
+        /// episode on the play model directly, which skipped NextSituation — the one
+        /// call that ends Halftime and restarts a stopped clock. So every test that
+        /// burned past the second quarter sat in Halftime with FixedTick refusing to
+        /// run the clock, and seven tests failed on "clock should have reached 0:00"
+        /// against a game model that was behaving exactly as designed.
         /// </summary>
         private void BurnClockToZero()
         {
-            _play.BeginEpisode(_game.LineOfScrimmageY, _game.LineOfScrimmageY, 1, Systems_GameRules.YARDS_TO_GAIN);
+            Systems_PlaySituation situation = _flow.NextSituation();
+            _play.BeginEpisode(
+                situation.LineOfScrimmageY, situation.LineOfScrimmageY,
+                situation.Down, situation.YardsToGo);
             _play.Snap();
 
             int guard = 0;

@@ -68,7 +68,7 @@ namespace PoFootball.Agents
                 return;
             }
 
-            Debug.Log(
+            Systems_Log.Info(
                 "[PoFootball] Brain table matches contract revision "
                 + $"{Agent_ActionContract.CONTRACT_REVISION}.");
         }

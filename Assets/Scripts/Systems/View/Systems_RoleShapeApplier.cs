@@ -187,7 +187,7 @@ namespace PoFootball.Views
                 painted++;
             }
 
-            Debug.Log($"[PoFootball] Role shapes applied to {painted} players.");
+            Systems_Log.Info($"[PoFootball] Role shapes applied to {painted} players.");
         }
 
         private void Paint(

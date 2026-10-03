@@ -93,7 +93,7 @@ namespace PoFootball.Systems
             // this compiles to a branch that is never taken there.
             if (Debug.isDebugBuild)
             {
-                Debug.Log($"[PoFootball] Formation: {Offense} vs {Defense}");
+                Systems_Log.Info($"[PoFootball] Formation: {Offense} vs {Defense}");
             }
         }
 

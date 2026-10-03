@@ -106,7 +106,7 @@ namespace PoFootball.Agents
             }
 
             _registered = true;
-            Debug.Log($"[PoFootball] MA-POCA groups registered {registered} agents.");
+            Systems_Log.Info($"[PoFootball] MA-POCA groups registered {registered} agents.");
         }
 
         private SimpleMultiAgentGroup GroupFor(Systems_BrainGroup group)

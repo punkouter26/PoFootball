@@ -316,7 +316,7 @@ namespace PoFootball.Systems
             // sitting through forty minutes of it to reach the final whistle.
             if (_game.PlaysRun % PLAYS_PER_TALLY == 0)
             {
-                Debug.Log(
+                Systems_Log.Info(
                     $"[PoFootball] After {_game.PlaysRun} plays / {_game.DriveIndex} drives"
                     + $" — outcomes: {Tally<Systems_PlayOutcome>(_outcomeCounts)}"
                     + $" | results: {Tally<Systems_DownResult>(_resultCounts)}");
@@ -361,8 +361,8 @@ namespace PoFootball.Systems
                     + $" | TD/drive {touchdownsPerDrive:F2}"
                     + $" | scrimmage plays {_scrimmagePlays}");
 
-                Debug.Log($"[PoFootball] Down results: {Tally<Systems_DownResult>(_resultCounts)}");
-                Debug.Log($"[PoFootball] Play outcomes: {Tally<Systems_PlayOutcome>(_outcomeCounts)}");
+                Systems_Log.Info($"[PoFootball] Down results: {Tally<Systems_DownResult>(_resultCounts)}");
+                Systems_Log.Info($"[PoFootball] Play outcomes: {Tally<Systems_PlayOutcome>(_outcomeCounts)}");
             }
         }
 

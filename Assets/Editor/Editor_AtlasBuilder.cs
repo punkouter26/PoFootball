@@ -18,7 +18,8 @@ namespace PoFootball.EditorTools
     /// straightforward finding until you check which sprites the game actually
     /// draws, and then two facts land:
     ///
-    ///   402 OF THOSE PNGs ARE REFERENCED BY NOTHING. The whole Kenney SportsPack
+    ///   402 OF THOSE PNGs WERE REFERENCED BY NOTHING (and have since been deleted,
+    ///   with the rest of Assets/Art/Kenney). The whole Kenney SportsPack
     ///   and UIPack are unused — no scene, no ScriptableObject and no script names
     ///   any of their GUIDs. Atlasing them would not save a draw call, because they
     ///   never produce one; it would pack megabytes of dead art into an atlas

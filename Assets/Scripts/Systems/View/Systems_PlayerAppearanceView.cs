@@ -227,7 +227,7 @@ namespace PoFootball.Views
                 return;
             }
 
-            Debug.Log($"[PoFootball] Player shader applied to {_count} players.");
+            Systems_Log.Info($"[PoFootball] Player shader applied to {_count} players.");
         }
 
         /// <summary>
