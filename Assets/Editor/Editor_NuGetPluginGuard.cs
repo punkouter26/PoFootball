@@ -6,8 +6,8 @@ using UnityEngine;
 namespace PoFootball.EditorTools
 {
     /// <summary>
-    /// Pins everything under Assets/Plugins/NuGet to the Editor, and Roslyn off
-    /// entirely. Asserted at build time — see WHERE THIS IS ENFORCED.
+    /// Pins everything under Assets/Plugins/NuGet to the Editor. Asserted at build
+    /// time — see WHERE THIS IS ENFORCED.
     ///
     /// WHY THIS EXISTS AT ALL. Those assemblies are the MCP bridge's dependency
     /// closure — SignalR, ASP.NET Core connection plumbing, Microsoft.Extensions.*,
@@ -38,14 +38,24 @@ namespace PoFootball.EditorTools
     /// otherwise available from the menu. A build cannot ship the wrong thing even
     /// if the resolver ran five seconds earlier.
     ///
-    /// WHY ROSLYN IS OFF RATHER THAN EDITOR-ONLY. com.unity.pipeline carries its own
-    /// Microsoft.CodeAnalysis under Runtime/Plugins/CodeAnalysis. With a second copy
-    /// loaded beside it every Roslyn type fails to initialise —
+    /// ROSLYN IS EDITOR-ONLY LIKE THE REST, AND IT USED TO BE OFF. Through
+    /// com.unity.pipeline 0.4.0 that package carried its own Microsoft.CodeAnalysis
+    /// under Runtime/Plugins/CodeAnalysis, and with a second copy loaded beside it
+    /// every Roslyn type failed to initialise —
     ///
     ///     TypeLoadException: ... has invalid vtable method slot N with method none
     ///
-    /// — which takes out `unity eval` and the Device Simulator window. Editor-only
-    /// is not enough for these two; they must not load.
+    /// — which took out `unity eval` and the Device Simulator window. So the two
+    /// here were switched off entirely, and the MCP bridge's Editor assembly, which
+    /// names both in its precompiledReferences, quietly compiled against pipeline's.
+    ///
+    /// Pipeline 0.8.0 renamed its copy to UnityPipeline.Microsoft.CodeAnalysis.*,
+    /// assembly name and namespaces both, precisely so it cannot collide. That
+    /// inverts the rule: nothing else in the project supplies
+    /// Microsoft.CodeAnalysis.CSharp any more, so with these two off the bridge
+    /// fails with CS0234, the Editor cannot reload, and BuildPlayer refuses to
+    /// start. Found on 2026-10-02, the day of the upgrade, with `unity eval`
+    /// confirmed working beside both copies.
     ///
     /// Driving it through PluginImporter rather than editing .meta by hand is
     /// deliberate: UNITY_RULES forbids hand-edited .meta files, and this is the one
@@ -56,8 +66,8 @@ namespace PoFootball.EditorTools
         private const string PLUGIN_ROOT = "Assets/Plugins/NuGet";
 
         /// <summary>
-        /// The two that must not load in the Editor either, because
-        /// com.unity.pipeline already has them. See the class summary.
+        /// The two that stay Editor-only even for a Standalone build. Only the MCP
+        /// bridge's Editor assembly references them; its Runtime assembly does not.
         /// </summary>
         private static readonly HashSet<string> RoslynAssemblies = new()
         {
@@ -174,11 +184,9 @@ namespace PoFootball.EditorTools
         /// comment in Editor_BuildMenu.Build for why the define route needs two
         /// Editor invocations and cannot be a menu item.
         ///
-        /// ROSLYN STAYS OFF. Those two are not an Editor-only question: a second
-        /// Microsoft.CodeAnalysis loaded beside com.unity.pipeline's own copy makes
-        /// every Roslyn type fail to initialise, which is why the class summary
-        /// singles them out. Letting them back in here would break `unity eval` and
-        /// the Device Simulator to save nothing.
+        /// ROSLYN STAYS EDITOR-ONLY. com.IvanMurzak.Unity.MCP.Runtime does not
+        /// reference it, so the env compiles without it, and letting 12 MB of
+        /// compiler into a player would save nothing.
         /// </summary>
         internal static void AllowInStandalonePlayer()
         {
@@ -258,16 +266,14 @@ namespace PoFootball.EditorTools
                     continue;
                 }
 
-                bool wantEditor = !RoslynAssemblies.Contains(Path.GetFileName(path));
-
                 if (!importer.GetCompatibleWithAnyPlatform()
-                    && importer.GetCompatibleWithEditor() == wantEditor)
+                    && importer.GetCompatibleWithEditor())
                 {
                     continue;
                 }
 
                 importer.SetCompatibleWithAnyPlatform(false);
-                importer.SetCompatibleWithEditor(wantEditor);
+                importer.SetCompatibleWithEditor(true);
                 importer.SaveAndReimport();
                 repinned++;
             }

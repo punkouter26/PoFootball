@@ -25,7 +25,7 @@
         "com.unity.nuget.newtonsoft-json": "3.0.2",
         "com.unity.test-framework": "1.1.31"
       },
-      "hash": "c21bf496bca87d54e75bad048563c3adb1782081"
+      "hash": "91eb0f4ac4c63d9d68c4ce09ee489034205950d0"
     },
     "com.cysharp.messagepipe": {
       "version": "https://github.com/Cysharp/MessagePipe.git?path=src/MessagePipe.Unity/Assets/Plugins/MessagePipe",
@@ -56,7 +56,7 @@
       "url": "https://package.openupm.com"
     },
     "com.ivanmurzak.unity.mcp": {
-      "version": "0.90.0",
+      "version": "0.93.2",
       "depth": 0,
       "source": "registry",
       "dependencies": {
@@ -376,7 +376,7 @@
       "url": "https://packages.unity.com"
     },
     "com.unity.pipeline": {
-      "version": "0.4.0-exp.1",
+      "version": "0.8.0-exp.1",
       "depth": 0,
       "source": "registry",
       "dependencies": {
