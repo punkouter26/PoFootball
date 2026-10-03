@@ -133,26 +133,6 @@ namespace PoFootball.Agents
 
 
         /// <summary>
-        /// Throw error at zero range, in degrees. See ScatterAim — the total spread
-        /// is this plus a term that grows with the length of the throw.
-        /// </summary>
-        /// NUDGED FROM 1.8, NOT DOUBLED. Measured games completed about 84% of
-        /// throws with almost no interceptions, against real football's 65% and a
-        /// 2-3% pick rate, so the quarterback was too accurate for coverage to
-        /// matter. But 3.0 with a doubled per-metre term WAS MEASURED AND WAS WORSE:
-        /// throws stopped arriving at all, the quarterback held the ball, and 38% of
-        /// scrimmage plays ran to the tick cap with nobody having resolved anything.
-        /// Accuracy is a small dial with a large blast radius.
-        private const float THROW_SCATTER_BASE_DEGREES = 2.2f;
-
-        /// <summary>
-        /// Extra degrees of throw error per metre of flight. At the 1.2 m
-        /// CATCH_RADIUS this puts a fifteen-metre pass comfortably inside the
-        /// receiver and a thirty-metre one outside him about as often as not.
-        /// </summary>
-        private const float THROW_SCATTER_DEGREES_PER_METRE = 0.10f;
-
-        /// <summary>
         /// Ticks of jitter either side of the scripted release. Small — it varies
         /// how a play unfolds without moving the throw outside the window
         /// OnActionReceived enforces.
@@ -2018,37 +1998,12 @@ namespace PoFootball.Agents
                 return Vector2.up;
             }
 
-            return ScatterAim(aim.normalized, aim.magnitude);
+            // The exact lead, deliberately. The throw's error used to be added
+            // here; since revision 13 Systems_BallSystem.Throw applies it to the
+            // ball, for every quarterback (THROW_SCATTER_BASE_DEGREES).
+            return aim.normalized;
         }
 
-        /// <summary>
-        /// Rotates a throw off its perfect lead by a small random angle.
-        ///
-        /// WHY A PERFECT THROW IS THE WRONG DEFAULT. LeadAim solves the intercept
-        /// exactly — three Newton iterations against the receiver's current velocity
-        /// — so with a deterministic play call and deterministic routes, the same
-        /// down produced the same throw to the same receiver at the same tick, every
-        /// game. That is most of why a played game looked like it was repeating
-        /// itself: not that the calls repeated, but that each call unfolded
-        /// identically. It also made accuracy a step function — a pass was catchable
-        /// or it was not, with nothing in between and no notion of a hard throw.
-        ///
-        /// THE ERROR GROWS WITH DISTANCE, WHICH IS WHAT MAKES IT FOOTBALL. A miss is
-        /// an ANGLE, so the lateral error it produces is the angle times the throw
-        /// length: the same wobble that is harmless on a five-yard out is two metres
-        /// off on a forty-yard shot. Against a CATCH_RADIUS of 1.2 m that lands a
-        /// short pass inside the receiver almost always and a deep one outside him
-        /// often, so the completion rate falls off with depth on its own rather than
-        /// being tuned in per route.
-        ///
-        /// TRIANGULAR, NOT UNIFORM. Averaging two draws clusters the error near zero
-        /// and puts the badly missed throw in the tail, which is how a real
-        /// quarterback is distributed. A uniform draw would make every pass equally
-        /// likely to be terrible.
-        ///
-        /// The draw comes from the heuristic's own seeded stream, so a training run
-        /// with a pinned seed still replays exactly — see HeuristicRng.
-        /// </summary>
         /// <summary>
         /// This play's release-timing offset, drawn once and held for the play.
         ///
@@ -2070,23 +2025,6 @@ namespace PoFootball.Agents
             }
 
             return _releaseJitterTicks;
-        }
-
-        private Vector2 ScatterAim(Vector2 aim, float throwDistance)
-        {
-            float spreadDegrees = THROW_SCATTER_BASE_DEGREES
-                + (throwDistance * THROW_SCATTER_DEGREES_PER_METRE);
-
-            // Two draws averaged: triangular on [-1, 1], peaked at 0.
-            float unit = (NextHeuristicUnit() + NextHeuristicUnit()) - 1f;
-            float radians = unit * spreadDegrees * Mathf.Deg2Rad;
-
-            float cos = Mathf.Cos(radians);
-            float sin = Mathf.Sin(radians);
-
-            return new Vector2(
-                (aim.x * cos) - (aim.y * sin),
-                (aim.x * sin) + (aim.y * cos));
         }
 
         /// <summary>

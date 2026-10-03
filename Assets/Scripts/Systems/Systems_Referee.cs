@@ -27,6 +27,7 @@ namespace PoFootball.Systems
         private readonly Systems_PlayerRegistry _registry;
         private readonly Systems_IKickModel _kickModel;
         private readonly Systems_IFumbleModel _fumbleModel;
+        private readonly Systems_ISkillModel _skill;
         private readonly IPublisher<Systems_PlayEndedMessage> _endedPublisher;
         private readonly IPublisher<Systems_TackleMessage> _tacklePublisher;
         private readonly IPublisher<Systems_ScoreMessage> _scorePublisher;
@@ -40,6 +41,14 @@ namespace PoFootball.Systems
         /// </summary>
         private int _lastCarrierMovingTick;
         private int _contactRunTicks;
+
+        /// <summary>
+        /// Whether any BODY has touched the carrier during the current wrap-up run.
+        /// False means it has all been reach — see CountPursuitReach — and a
+        /// wrap-up finished on reach alone is an arm tackle, which breaks more
+        /// easily (Systems_SimConstants.ARM_TACKLE_BREAK_MULTIPLIER).
+        /// </summary>
+        private bool _bodyContactInRun;
 
         /// <summary>
         /// Formation slots of every opponent in contact with the carrier on
@@ -57,6 +66,7 @@ namespace PoFootball.Systems
             Systems_PlayerRegistry registry,
             Systems_IKickModel kickModel,
             Systems_IFumbleModel fumbleModel,
+            Systems_ISkillModel skill,
             IPublisher<Systems_PlayEndedMessage> endedPublisher,
             IPublisher<Systems_TackleMessage> tacklePublisher,
             IPublisher<Systems_ScoreMessage> scorePublisher)
@@ -68,6 +78,7 @@ namespace PoFootball.Systems
             _registry = registry;
             _kickModel = kickModel;
             _fumbleModel = fumbleModel;
+            _skill = skill;
             _endedPublisher = endedPublisher;
             _tacklePublisher = tacklePublisher;
             _scorePublisher = scorePublisher;
@@ -79,6 +90,7 @@ namespace PoFootball.Systems
             _lastContactTick = -1;
             _lastCarrierMovingTick = 0;
             _contactRunTicks = 0;
+            _bodyContactInRun = false;
             _contactMask = 0u;
         }
 
@@ -278,9 +290,11 @@ namespace PoFootball.Systems
         /// the hole. So only an opponent outside REACH_TACKLE_FRONT_COS of the
         /// carrier's direction of travel counts here.
         ///
-        /// It feeds ReportSustainedContact unchanged, so the role's own wrap-up time,
-        /// the gang-tackle discount and the grace window all apply exactly as to a
-        /// physical contact. One pass over the roster, no allocation.
+        /// It feeds the same count ReportSustainedContact does, so the role's own
+        /// wrap-up time, the gang-tackle discount and the grace window all apply
+        /// exactly as to a physical contact — except that it does not mark the run
+        /// as having a body on him, so a wrap-up finished on reach alone is the arm
+        /// tackle it looks like. One pass over the roster, no allocation.
         /// </summary>
         private void CountPursuitReach(Systems_IPlayerHandle carrier)
         {
@@ -324,8 +338,8 @@ namespace PoFootball.Systems
                     continue;
                 }
 
-                ReportSustainedContact(
-                    other.Id, (other.Velocity - velocity).magnitude);
+                CountWrapUpTick(
+                    other.Id, (other.Velocity - velocity).magnitude, false);
 
                 if (_play.Phase != Systems_PlayPhase.Live)
                 {
@@ -352,6 +366,20 @@ namespace PoFootball.Systems
             }
 
             if (closingSpeed <= Systems_SimConstants.TACKLE_CLOSING_SPEED)
+            {
+                return;
+            }
+
+            // A HIT CAN MISS (revision 13). It used to end the down every time, so
+            // arriving fast was the whole of tackling. A carrier who slips one is
+            // still in contact with the man who hit him, and that contact counts
+            // toward the wrap-up as it always did — a miss costs the defense a
+            // moment, not the play. One collision is one call here, so one roll.
+            Systems_IPlayerHandle carrier = CurrentCarrier();
+
+            if (carrier != null
+                && !_skill.IsHitTackleMade(
+                    carrier.Role, FatigueOf(tacklerId), carrier.Fatigue))
             {
                 return;
             }
@@ -389,6 +417,16 @@ namespace PoFootball.Systems
         /// </summary>
         public void ReportSustainedContact(int tacklerId, float closingSpeed)
         {
+            CountWrapUpTick(tacklerId, closingSpeed, true);
+        }
+
+        /// <summary>
+        /// One opponent's tick of wrap-up, from a body (ReportSustainedContact) or
+        /// from reach (CountPursuitReach). Everything the summary above describes
+        /// happens here.
+        /// </summary>
+        private void CountWrapUpTick(int tacklerId, float closingSpeed, bool isBodyContact)
+        {
             if (!CanBeTackled())
             {
                 return;
@@ -406,7 +444,14 @@ namespace PoFootball.Systems
                 _contactRunTicks = continues ? _contactRunTicks + 1 : 1;
                 _lastContactTick = tick;
                 _contactMask = 0u;
+
+                if (!continues)
+                {
+                    _bodyContactInRun = false;
+                }
             }
+
+            _bodyContactInRun |= isBodyContact;
 
             if (tacklerId >= 0 && tacklerId < Systems_PlayerRegistry.CAPACITY)
             {
@@ -445,7 +490,34 @@ namespace PoFootball.Systems
                 return;
             }
 
+            // AND A WRAP-UP CAN BE BROKEN (revision 13). The count restarts from
+            // zero, so the defense has to wrap him up all over again; a second
+            // tackler reporting on this same tick finds the count short and is not
+            // rolled, so a wrap-up is one roll however many men are in it.
+            if (carrier != null
+                && !_skill.IsWrapUpHeld(
+                    carrier.Role, tacklers, !_bodyContactInRun,
+                    FatigueOf(tacklerId), carrier.Fatigue))
+            {
+                _contactRunTicks = 0;
+                _bodyContactInRun = false;
+                return;
+            }
+
             CompleteTackle(tacklerId, closingSpeed);
+        }
+
+        /// <summary>Fatigue of the player in this slot; a fresh body if there is none.</summary>
+        private float FatigueOf(int slotIndex)
+        {
+            if (slotIndex < 0 || slotIndex >= Systems_PlayerRegistry.CAPACITY)
+            {
+                return 0f;
+            }
+
+            Systems_IPlayerHandle player = _registry.Get(slotIndex);
+
+            return player == null ? 0f : player.Fatigue;
         }
 
         /// <summary>

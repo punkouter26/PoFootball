@@ -1,0 +1,156 @@
+# PoFootball -- the first config against CONTRACT_REVISION 13.
+#
+# Pairs 1:1 with run-id `football_base15` (UNITY_RULES section 1).
+#
+# Launch (CUDA_VISIBLE_DEVICES=-1 is MANDATORY on this machine -- see CLAUDE.md):
+#   $env:CUDA_VISIBLE_DEVICES = "-1"
+#   mlagents-learn Config/FootballBase15.yaml --run-id=football_base15 `
+#     --env=Builds/FootballEnv/PoFootball.exe --no-graphics `
+#     --base-port=5400 --num-envs=4
+#
+# REBUILD Builds/FootballEnv FIRST (Tools > PoFootball > Build Training Env).
+# Revision 13 keeps every shape identical (36 floats, the same action specs), so a
+# revision 12 env is NOT refused by the handshake. That rebuild is on you.
+#
+# WHY THIS EXISTS: through revision 12 nobody could be bad at anything. Being in
+# position was the whole of every skill -- a ball inside the catch radius was
+# caught, a defender inside the break-up radius broke it up, a hit over the closing
+# speed was a tackle, a wrap-up held for its tick count was a tackle -- and
+# football_base14 completed 91-97% of its passes from its first summary to its
+# last. Revision 13 makes execution fallible (Systems_ISkillModel, drawn from its
+# own seeded stream, identically in training and in a played game):
+#
+#   Throw            scattered by an angle that grows with distance and fatigue,
+#                    for every passer, applied to the BALL
+#   Open catch       can be dropped
+#   Contested catch  broken up with a chance that rises as the defender closes
+#   Interception     held 60% of the time
+#   Hit              can miss; the contact still counts toward the wrap-up
+#   Wrap-up          can be broken, which restarts the count
+#
+# Agent_ActionContract (revision 13) and Systems_SimConstants ("Skill error")
+# carry the detail and the chances.
+#
+# WHAT TO READ IN THIS RUN, against football_base14:
+#   Pass/CompletionPerAttempt   0.91-0.97 there. Should now sit well below it even
+#                               while the defense is still not covering.
+#   Play/InterceptionRate       should stay low: 40% of them are now batted down.
+#   Play/TackleRate, NetYards   a broken tackle is extra yards; watch NetYards
+#                               against the 4.5-6.5 band.
+#   Control/Drive/<defense>     0.27-0.28 for all four defensive roles at the end
+#                               of base14, the random-twitch floor. This run does
+#                               not address that and it is the first thing to check.
+#
+# THE TRAINER SETTINGS ARE FootballBase14's, UNCHANGED, with its original budget
+# put back. base14 was cut to 1.2M / 30k steps by request and resumed part-way,
+# which sent it straight from RedZone to FullGame and restarted the quarterback
+# from zero; its header (Config/archive/FootballBase14.yaml) has that story. The
+# one thing kept from the shortened run is the quarterback's checkpoint_interval:
+# at 100000 a stop before its first 100k steps lost the whole brain.
+#
+# AFTER IT FINISHES:
+#   .venv\Scripts\python.exe Tools\promote_brain.py --run football_base15 `
+#     --version 03 --num-envs 4
+#   then Unity: Tools > PoFootball > Build Brain Table, Evaluate Realism (3 games),
+#   and promote_brain.py --version 03 --check-realism <report>.
+
+behaviors:
+  # MA-POCA for the two ten- and eleven-man groups; see archive/FootballBase11.yaml
+  # for why, and Systems_BrainGroup for why there are three behaviours, not six.
+  Offense: &football_brain
+    trainer_type: poca
+
+    hyperparameters:
+      batch_size: 1024
+      buffer_size: 20480
+      learning_rate: 3.0e-4
+      beta: 5.0e-3
+      epsilon: 0.2
+      lambd: 0.95
+      num_epoch: 3
+      learning_rate_schedule: constant
+      beta_schedule: constant
+      epsilon_schedule: constant
+
+    network_settings:
+      normalize: false            # Sensor_FootballState emits [-1, 1] already;
+                                  # Systems_ContractTests asserts this stays off.
+      hidden_units: 256
+      num_layers: 2
+      vis_encode_type: simple
+
+    reward_signals:
+      extrinsic:
+        gamma: 0.99
+        strength: 1.0
+
+    keep_checkpoints: 20
+    checkpoint_interval: 100000
+    max_steps: 7000000
+
+    # One whole play: MAX_PHYSICS_TICKS 600 / DECISION_PERIOD 5. Pinned by
+    # Systems_ContractTests.
+    time_horizon: 120
+
+    summary_freq: 50000
+    threaded: false               # deterministic ordering (UNITY_RULES section 2)
+
+  Defense:
+    <<: *football_brain
+
+  Quarterback:
+    <<: *football_brain
+    trainer_type: ppo
+    max_steps: 700000
+    checkpoint_interval: 10000      # the QB steps 10x slower; see the header
+    hyperparameters:
+      batch_size: 256
+      buffer_size: 2048
+      learning_rate: 3.0e-4
+      beta: 5.0e-2                # ten times the movement brains; see Base11
+      epsilon: 0.2
+      lambd: 0.95
+      num_epoch: 5
+      learning_rate_schedule: constant
+      beta_schedule: constant
+      epsilon_schedule: constant
+
+environment_parameters:
+  spot_lesson:
+    curriculum:
+      - name: RedZone
+        completion_criteria:
+          measure: progress
+          behavior: Offense
+          signal_smoothing: false
+          min_lesson_length: 0
+          threshold: 0.2
+        value: 0.0
+      - name: OpenFieldEarlyDowns
+        completion_criteria:
+          measure: progress
+          behavior: Offense
+          signal_smoothing: false
+          min_lesson_length: 0
+          threshold: 0.45
+        value: 1.0
+      - name: FullGame
+        value: 2.0
+
+env_settings:
+  # --env, --num-envs and --base-port go on the command line (see the header).
+  # Record --num-envs in the run's MANIFEST.md; promote_brain.py does it for you.
+  seed: 1
+
+engine_settings:
+  time_scale: 20                  # physics stays at dt=0.02; this only speeds the clock
+  quality_level: 0
+  target_frame_rate: -1
+  capture_frame_rate: 60
+
+torch_settings:
+  device: cpu                     # Not sufficient alone: launch with
+                                  # CUDA_VISIBLE_DEVICES=-1 (see CLAUDE.md).
+
+checkpoint_settings:
+  results_dir: results

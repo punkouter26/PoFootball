@@ -132,10 +132,11 @@ namespace PoFootball.Models
         public const float REACH_TACKLE_FRONT_COS = 0.5f;
 
         /// <summary>
-        /// Metres from the ball within which a defender breaks up a catch the
-        /// receiver would otherwise make (Systems_BallSystem.IsContestedByDefense).
+        /// Metres from the ball within which a defender can break up a catch the
+        /// receiver would otherwise make (Systems_BallSystem.IsCatchMade).
         /// A little beyond CATCH_RADIUS: the receiver needs the ball in his hands,
-        /// the defender only needs a hand on it. Revision 11.
+        /// the defender only needs a hand on it. Revision 11; since revision 13 it
+        /// is a chance that rises toward the ball, not a certainty inside it.
         /// </summary>
         public const float PASS_BREAKUP_RADIUS = 1.5f;
 
@@ -212,6 +213,104 @@ namespace PoFootball.Models
         /// hit with help, which is where fumbles actually come from.
         /// </summary>
         public const float FUMBLE_BASE_CHANCE = 0.012f;
+
+        // --- Skill error (revision 13) ---------------------------------------
+        //
+        // The chances Systems_SeededSkillModel draws against. NONE OF THESE HAS
+        // BEEN TUNED AGAINST A MEASURED GAME YET: they are first values, chosen
+        // small, and the REALISM line over the four fixed seeds is what judges
+        // them (CLAUDE.md, "Judging whether the SIMULATION is football"). Four
+        // balance changes were reasoned about confidently during revision 8 and
+        // two made the game measurably worse.
+
+        /// <summary>
+        /// Throw error at zero range, in degrees; the spread is this plus a term
+        /// that grows with the length of the throw.
+        ///
+        /// MOVED HERE FROM Agent_FootballPlayer IN REVISION 13, where it rotated
+        /// the scripted quarterback's AIM. Systems_BallSystem.Throw then blended
+        /// the ball 85% back toward the perfect lead (PASS_AIM_SLACK), so what
+        /// reached the ball was about a seventh of this, and a trained quarterback
+        /// got none of it. It is now applied to the ball itself, for everyone —
+        /// which is roughly SEVEN TIMES the error the scripted game was measured
+        /// with, at unchanged numbers.
+        ///
+        /// History of the dial, from when it was the heuristic's: nudged from 1.8,
+        /// not doubled. 3.0 with a doubled per-metre term was measured and was
+        /// worse — throws stopped arriving at all and 38% of scrimmage plays ran to
+        /// the tick cap. Accuracy is a small dial with a large blast radius.
+        /// </summary>
+        public const float THROW_SCATTER_BASE_DEGREES = 2.2f;
+
+        /// <summary>
+        /// Extra degrees of throw error per metre of flight. At the 1.2 m
+        /// CATCH_RADIUS a fifteen-metre pass cannot miss by angle alone, a
+        /// twenty-metre one does so about one time in thirty, and a forty-metre
+        /// one about half the time.
+        /// </summary>
+        public const float THROW_SCATTER_DEGREES_PER_METRE = 0.10f;
+
+        /// <summary>
+        /// Chance an uncontested ball in the receiver's hands is dropped, before
+        /// distance and fatigue. Real receivers drop roughly one catchable ball in
+        /// twenty.
+        /// </summary>
+        public const float DROP_BASE_CHANCE = 0.04f;
+
+        /// <summary>Added drop chance per metre the ball flew: 8% at twenty metres.</summary>
+        public const float DROP_CHANCE_PER_METRE = 0.002f;
+
+        /// <summary>
+        /// Chance a defender at the very edge of PASS_BREAKUP_RADIUS gets a hand on
+        /// the ball. Through revision 12 this was 1 at every distance inside it.
+        /// </summary>
+        public const float PASS_BREAKUP_CHANCE_AT_EDGE = 0.45f;
+
+        /// <summary>The same chance with the defender on the ball.</summary>
+        public const float PASS_BREAKUP_CHANCE_AT_BALL = 0.95f;
+
+        /// <summary>
+        /// Chance a defender who is nearest the ball catches it rather than batting
+        /// it down. Defenders drop most of the interceptions they get their hands
+        /// on; through revision 12 they held every one.
+        /// </summary>
+        public const float INTERCEPTION_HOLD_CHANCE = 0.6f;
+
+        /// <summary>
+        /// Chance a hit over TACKLE_CLOSING_SPEED fails to bring the carrier down,
+        /// before his role and the two bodies' fatigue scale it. The contact that
+        /// follows a miss still counts toward the wrap-up, so a missed hit costs
+        /// the defense a fraction of a second, not the down.
+        /// </summary>
+        public const float MISSED_HIT_CHANCE = 0.12f;
+
+        /// <summary>
+        /// Chance the carrier breaks a completed wrap-up, before role, help and
+        /// fatigue. The count restarts from zero, so breaking one buys him the
+        /// whole of his TackleTicksOf again — a fifth to two fifths of a second.
+        /// </summary>
+        public const float BROKEN_WRAP_CHANCE = 0.10f;
+
+        /// <summary>
+        /// How much likelier a wrap-up is to be broken when no body ever touched
+        /// the carrier during it — it was all reach, a dive at his ankles
+        /// (Systems_Referee.CountPursuitReach) rather than a man on him.
+        /// </summary>
+        public const float ARM_TACKLE_BREAK_MULTIPLIER = 2f;
+
+        /// <summary>
+        /// Fraction by which full fatigue worsens a skill: a spent quarterback
+        /// sprays 50% wider, a spent receiver drops half as many again, a spent
+        /// tackler misses half as many again and a spent carrier escapes half as
+        /// often.
+        /// </summary>
+        public const float SKILL_FATIGUE_GAIN = 0.5f;
+
+        /// <summary>
+        /// No stacked multiplier takes a drop, a missed hit or a broken wrap-up
+        /// past a coin flip.
+        /// </summary>
+        public const float SKILL_FAILURE_CEILING = 0.5f;
 
         // --- Body dynamics ---------------------------------------------------
         /// <summary>

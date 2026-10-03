@@ -241,9 +241,36 @@ namespace PoFootball.Agents
         /// The reward moved alongside, and as ever is not part of the contract: a
         /// play that runs out the clock is priced as a tackle, reaching the line to
         /// gain pays FIRST_DOWN_REWARD, and COMPLETION_REWARD fell 0.6 -> 0.45.
-        /// Config/FootballBase14.yaml is the config for revision 12.
+        /// Config/FootballBase14.yaml (now archived) was the config for revision 12.
+        ///
+        /// Revision 13 makes EXECUTION fallible, with every shape identical. Through
+        /// revision 12 being in position was the whole of every skill: a ball inside
+        /// CATCH_RADIUS was caught, a defender inside PASS_BREAKUP_RADIUS broke it
+        /// up, a hit over TACKLE_CLOSING_SPEED was a tackle, a wrap-up held for its
+        /// tick count was a tackle, and the only throw error in the game was the
+        /// scripted quarterback's, most of which PASS_AIM_SLACK discarded.
+        /// football_base14 completed 91-97% of its passes from start to finish.
+        /// Systems_ISkillModel now draws, from its own seeded stream and identically
+        /// in training and in a played game:
+        ///
+        ///     Throw           rotated off its line by a triangular error that
+        ///                     grows with distance and fatigue, for EVERY passer
+        ///     Open catch      can be dropped; likelier on a long throw
+        ///     Contested catch broken up with a chance that rises as the defender
+        ///                     closes, 0.45 at the edge of his reach to 0.95
+        ///     Interception    held 60% of the time, batted down otherwise
+        ///     Hit             can miss; the contact still counts to the wrap-up
+        ///     Wrap-up         can be broken, restarting the count; likelier for a
+        ///                     power back, against one man, and when it was all
+        ///                     reach and no body (an arm tackle)
+        ///
+        /// A revision 12 brain would be steering a game where its throws land
+        /// somewhere else and its tackles do not always finish, with no shape check
+        /// noticing. Assets/Agents/Football_v02 (football_base14) is fitted against
+        /// revision 12 and must not load here; every player runs Heuristic until a
+        /// revision 13 run is promoted. Config/FootballBase15.yaml is its config.
         /// </summary>
-        public const int CONTRACT_REVISION = 12;
+        public const int CONTRACT_REVISION = 13;
 
         /// <summary>Continuous outputs every brain has: drive and steer.</summary>
         public const int BASE_CONTINUOUS_ACTIONS = 2;

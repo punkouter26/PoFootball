@@ -65,6 +65,13 @@
 #   then Unity: Tools > PoFootball > Build Brain Table, Evaluate Realism (3 games),
 #   and promote_brain.py --version 02 --check-realism <report>.
 
+# SHORTENED 2026-10-03, by request, to about an hour. Stopped at Offense 900k /
+# Defense ~1.0M and resumed with these budgets. The Quarterback restarted from
+# ZERO: its first checkpoint was due at 100k steps, it was at ~85k when the run was
+# force-stopped, and the trainer ignores Ctrl+C, so nothing of it had been saved.
+# The curriculum thresholds are fractions of max_steps, so on resume Offense is at
+# 0.75 and the run goes straight to FullGame.
+
 behaviors:
   # MA-POCA for the two ten- and eleven-man groups; see FootballBase11.yaml for
   # why, and Systems_BrainGroup for why there are three behaviours, not six.
@@ -97,7 +104,7 @@ behaviors:
 
     keep_checkpoints: 20
     checkpoint_interval: 100000
-    max_steps: 7000000
+    max_steps: 1200000              # was 7000000; see SHORTENED below
 
     # One whole play: MAX_PHYSICS_TICKS 600 / DECISION_PERIOD 5. Pinned by
     # Systems_ContractTests.
@@ -112,7 +119,8 @@ behaviors:
   Quarterback:
     <<: *football_brain
     trainer_type: ppo
-    max_steps: 700000
+    max_steps: 30000                # was 700000; see SHORTENED below
+    checkpoint_interval: 10000      # the QB steps 10x slower; at 100000 a stop before 100k lost it all
     hyperparameters:
       batch_size: 256
       buffer_size: 2048

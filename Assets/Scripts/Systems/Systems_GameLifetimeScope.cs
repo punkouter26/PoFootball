@@ -145,6 +145,12 @@ namespace PoFootball.Systems
             builder.RegisterMessageBroker<Systems_DownResolvedMessage>(messagePipeOptions);
             builder.RegisterMessageBroker<Systems_GameOverMessage>(messagePipeOptions);
 
+            // The same seeded draw in both modes, unlike the kick and fumble models
+            // below: a brain fitted against tackles that never miss would meet
+            // different dynamics in a played game. See Systems_ISkillModel.
+            builder.Register<Systems_ISkillModel, Systems_SeededSkillModel>(
+                Lifetime.Singleton);
+
             if (_simMode == Systems_SimMode.Game)
             {
                 ConfigureGameLayer(builder);

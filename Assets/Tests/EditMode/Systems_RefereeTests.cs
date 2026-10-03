@@ -58,6 +58,51 @@ namespace PoFootball.Tests
             }
         }
 
+        /// <summary>
+        /// Every skill succeeds unless a test says otherwise, so the suite still
+        /// pins the RULES — where a catch, a break-up and a tackle are possible —
+        /// and the tests at the bottom pin what happens when one is not made.
+        /// Systems_SeededSkillModel's curves are pinned without sampling them.
+        /// </summary>
+        private sealed class StubSkill : Systems_ISkillModel
+        {
+            public bool CatchHeld = true;
+
+            public bool BrokenUp = true;
+
+            public bool InterceptionHeld = true;
+
+            public bool HitMade = true;
+
+            /// <summary>How many wrap-ups the carrier breaks before one holds.</summary>
+            public int WrapUpsToBreak;
+
+            public int WrapUpRolls { get; private set; }
+
+            public bool LastWrapUpWasArmOnly { get; private set; }
+
+            public float ThrowErrorRadians(float throwMetres, float throwerFatigue) => 0f;
+
+            public bool IsCatchHeld(float airMetres, float catcherFatigue) => CatchHeld;
+
+            public bool IsPassBrokenUp(float defenderMetres) => BrokenUp;
+
+            public bool IsInterceptionHeld() => InterceptionHeld;
+
+            public bool IsHitTackleMade(
+                Systems_PlayerRole carrier, float tacklerFatigue, float carrierFatigue) => HitMade;
+
+            public bool IsWrapUpHeld(
+                Systems_PlayerRole carrier, int tacklerCount, bool armOnly,
+                float tacklerFatigue, float carrierFatigue)
+            {
+                WrapUpRolls++;
+                LastWrapUpWasArmOnly = armOnly;
+                return WrapUpRolls > WrapUpsToBreak;
+            }
+        }
+
+        private StubSkill _skill;
         private Systems_PlayModel _play;
         private Systems_BallModel _ball;
         private Systems_BallSystem _ballSystem;
@@ -98,7 +143,9 @@ namespace PoFootball.Tests
 
             _thrown = new StubPublisher<Systems_PassThrownMessage>();
             _caught = new StubPublisher<Systems_PassCaughtMessage>();
-            _ballSystem = new Systems_BallSystem(_ball, _play, _registry, _thrown, _caught);
+            _skill = new StubSkill();
+            _ballSystem = new Systems_BallSystem(
+                _ball, _play, _registry, _skill, _thrown, _caught);
             _ended = new StubPublisher<Systems_PlayEndedMessage>();
             _tackled = new StubPublisher<Systems_TackleMessage>();
             _scored = new StubPublisher<Systems_ScoreMessage>();
@@ -114,6 +161,7 @@ namespace PoFootball.Tests
                 _play, _ball, _ballSystem, new Systems_FieldModel(), _registry,
                 new Systems_DeterministicKickModel(),
                 new Systems_DeterministicFumbleModel(),
+                _skill,
                 _ended, _tackled, _scored);
 
             _play.BeginEpisode(0f, _quarterback.Position.y, 1, Systems_GameRules.YARDS_TO_GAIN);
@@ -640,6 +688,272 @@ namespace PoFootball.Tests
             _referee.FixedTick();
 
             Assert.That(_play.PhysicsTick, Is.EqualTo(ticksAtWhistle));
+        }
+
+        // --- Skill error (revision 13) ---------------------------------------
+        //
+        // Being in position used to be the whole of every skill. These pin what
+        // happens when the man in position does not make the play.
+
+        [Test]
+        public void AMissedHit_DoesNotEndThePlay()
+        {
+            _skill.HitMade = false;
+
+            _referee.ReportContactWithCarrier(
+                11, Systems_SimConstants.TACKLE_CLOSING_SPEED + 0.5f);
+
+            Assert.That(_play.Phase, Is.EqualTo(Systems_PlayPhase.Live));
+            Assert.That(_tackled.Count, Is.EqualTo(0));
+        }
+
+        [Test]
+        public void ABrokenWrapUp_HasToBeMadeAllOverAgain()
+        {
+            int needed = Systems_RoleTable.TackleTicksOf(_quarterback.Role);
+            _skill.WrapUpsToBreak = 1;
+
+            for (int tick = 0; tick < needed; tick++)
+            {
+                _referee.FixedTick();
+                _referee.ReportSustainedContact(11, 0f);
+            }
+
+            Assert.That(_skill.WrapUpRolls, Is.EqualTo(1));
+            Assert.That(
+                _play.Phase, Is.EqualTo(Systems_PlayPhase.Live), "he broke the first one");
+
+            for (int tick = 0; tick < needed - 1; tick++)
+            {
+                _referee.FixedTick();
+                _referee.ReportSustainedContact(11, 0f);
+            }
+
+            Assert.That(
+                _play.Phase, Is.EqualTo(Systems_PlayPhase.Live),
+                "a broken wrap-up must restart the count, not resume it");
+
+            _referee.FixedTick();
+            _referee.ReportSustainedContact(11, 0f);
+
+            Assert.That(_play.Outcome, Is.EqualTo(Systems_PlayOutcome.Tackle));
+            Assert.That(_skill.WrapUpRolls, Is.EqualTo(2), "one roll per wrap-up, not per tick");
+        }
+
+        [Test]
+        public void AWrapUpWithABodyOnHim_IsNotAnArmTackle()
+        {
+            int needed = Systems_RoleTable.TackleTicksOf(_quarterback.Role);
+
+            for (int tick = 0; tick < needed; tick++)
+            {
+                _referee.FixedTick();
+                _referee.ReportSustainedContact(11, 0f);
+            }
+
+            Assert.That(_skill.WrapUpRolls, Is.EqualTo(1));
+            Assert.That(_skill.LastWrapUpWasArmOnly, Is.False);
+        }
+
+        /// <summary>
+        /// A defender within reach who never touches the carrier — the dive at his
+        /// ankles. It still brings him down, and it is rolled as the weaker tackle.
+        /// </summary>
+        [Test]
+        public void AWrapUpOnReachAlone_IsAnArmTackle()
+        {
+            MoveEveryoneFarAway();
+
+            StubPlayer defender = (StubPlayer)_registry.Get(11);
+            defender.Position = _quarterback.Position
+                + new Vector2(Systems_SimConstants.REACH_TACKLE_RANGE * 0.5f, 0f);
+
+            for (int tick = 0;
+                 tick < Systems_SimConstants.STALL_TICKS && _play.Phase != Systems_PlayPhase.Dead;
+                 tick++)
+            {
+                _referee.FixedTick();
+            }
+
+            Assert.That(_play.Outcome, Is.EqualTo(Systems_PlayOutcome.Tackle));
+            Assert.That(_skill.LastWrapUpWasArmOnly, Is.True);
+        }
+
+        [Test]
+        public void ADroppedPass_IsIncomplete()
+        {
+            _skill.CatchHeld = false;
+            _quarterback.Position = Vector2.zero;
+            MoveEveryoneFarAway();
+
+            StubPlayer receiver = (StubPlayer)_registry.Get(6);
+            receiver.Position = new Vector2(0f, 8f);
+
+            _ballSystem.Throw(_quarterback, Vector2.up, 0f);
+            RunUntilTheBallIsDown();
+
+            Assert.That(_play.Outcome, Is.EqualTo(Systems_PlayOutcome.Incompletion));
+            Assert.That(receiver.IsCarrier, Is.False);
+            Assert.That(_caught.Count, Is.EqualTo(0));
+        }
+
+        [Test]
+        public void ADroppedInterception_IsIncomplete()
+        {
+            _skill.InterceptionHeld = false;
+            _quarterback.Position = Vector2.zero;
+            MoveEveryoneFarAway();
+
+            StubPlayer receiver = (StubPlayer)_registry.Get(6);
+            receiver.Position = new Vector2(0f, 20f);
+
+            StubPlayer safety = (StubPlayer)_registry.Get(20);
+            safety.Position = new Vector2(0f, 6f);
+
+            _ballSystem.Throw(_quarterback, Vector2.up, 0f);
+            RunUntilTheBallIsDown();
+
+            Assert.That(_play.Outcome, Is.EqualTo(Systems_PlayOutcome.Incompletion));
+        }
+
+        /// <summary>
+        /// The revision 11 rule, kept: a defender beside the ball, not close enough
+        /// to catch it himself, takes it away from a receiver who is.
+        /// </summary>
+        [Test]
+        public void ACoveredCatch_IsBrokenUp_WhenTheDefenderGetsAHandOnIt()
+        {
+            ThrowAtACoveredReceiver();
+            RunUntilTheBallIsDown();
+
+            Assert.That(_play.Outcome, Is.EqualTo(Systems_PlayOutcome.Incompletion));
+        }
+
+        [Test]
+        public void ACoveredCatch_IsMade_WhenTheDefenderDoesNot()
+        {
+            _skill.BrokenUp = false;
+
+            ThrowAtACoveredReceiver();
+            RunUntilTheBallIsDown();
+
+            Assert.That(_ball.IsHeld, Is.True);
+            Assert.That(_ball.CarrierId, Is.EqualTo(6));
+        }
+
+        // --- The curves Systems_SeededSkillModel draws against ----------------
+
+        [Test]
+        public void ThrowError_GrowsWithDistanceAndFatigue_AndStaysInsideItsSpread()
+        {
+            float near = Systems_SeededSkillModel.ThrowSpreadDegrees(5f, 0f);
+            float far = Systems_SeededSkillModel.ThrowSpreadDegrees(35f, 0f);
+            float tired = Systems_SeededSkillModel.ThrowSpreadDegrees(35f, 1f);
+
+            Assert.That(far, Is.GreaterThan(near));
+            Assert.That(tired, Is.GreaterThan(far));
+
+            Systems_SeededSkillModel model = new Systems_SeededSkillModel();
+            float limit = far * Mathf.Deg2Rad;
+            bool anyError = false;
+
+            for (int draw = 0; draw < 500; draw++)
+            {
+                float error = model.ThrowErrorRadians(35f, 0f);
+
+                Assert.That(Mathf.Abs(error), Is.LessThanOrEqualTo(limit + 1e-5f));
+                anyError |= Mathf.Abs(error) > 1e-4f;
+            }
+
+            Assert.That(anyError, Is.True, "a throw that never misses is the defect this fixes");
+        }
+
+        [Test]
+        public void ADefenderOnTheBall_BreaksUpMoreThanOneAtArmsLength()
+        {
+            float onTheBall = Systems_SeededSkillModel.BreakUpChance(0f);
+            float atTheEdge = Systems_SeededSkillModel.BreakUpChance(
+                Systems_SimConstants.PASS_BREAKUP_RADIUS);
+
+            Assert.That(
+                onTheBall,
+                Is.EqualTo(Systems_SimConstants.PASS_BREAKUP_CHANCE_AT_BALL).Within(1e-4f));
+            Assert.That(
+                atTheEdge,
+                Is.EqualTo(Systems_SimConstants.PASS_BREAKUP_CHANCE_AT_EDGE).Within(1e-4f));
+            Assert.That(onTheBall, Is.GreaterThan(atTheEdge));
+        }
+
+        [Test]
+        public void NoSkill_FailsMoreOftenThanItsCeiling()
+        {
+            float ceiling = Systems_SimConstants.SKILL_FAILURE_CEILING;
+
+            Assert.That(
+                Systems_SeededSkillModel.DropChance(500f, 1f), Is.LessThanOrEqualTo(ceiling));
+            Assert.That(
+                Systems_SeededSkillModel.MissedHitChance(
+                    Systems_PlayerRole.RunningBack, 1f, 0f),
+                Is.LessThanOrEqualTo(ceiling));
+            Assert.That(
+                Systems_SeededSkillModel.BrokenWrapChance(
+                    Systems_PlayerRole.Fullback, 1, true, 1f, 0f),
+                Is.LessThanOrEqualTo(ceiling));
+        }
+
+        [Test]
+        public void AnArmTackle_BreaksMoreEasily_AndHelpMakesAnyWrapUpHarderToBreak()
+        {
+            Systems_PlayerRole back = Systems_PlayerRole.RunningBack;
+
+            float body = Systems_SeededSkillModel.BrokenWrapChance(back, 1, false, 0f, 0f);
+            float arm = Systems_SeededSkillModel.BrokenWrapChance(back, 1, true, 0f, 0f);
+            float gang = Systems_SeededSkillModel.BrokenWrapChance(back, 3, false, 0f, 0f);
+
+            Assert.That(arm, Is.GreaterThan(body));
+            Assert.That(gang, Is.LessThan(body));
+        }
+
+        [Test]
+        public void ATiredCarrier_EscapesLess_AndATiredTacklerMissesMore()
+        {
+            Systems_PlayerRole back = Systems_PlayerRole.RunningBack;
+            float fresh = Systems_SeededSkillModel.MissedHitChance(back, 0f, 0f);
+
+            Assert.That(
+                Systems_SeededSkillModel.MissedHitChance(back, 0f, 1f), Is.LessThan(fresh));
+            Assert.That(
+                Systems_SeededSkillModel.MissedHitChance(back, 1f, 0f), Is.GreaterThan(fresh));
+        }
+
+        /// <summary>
+        /// Receiver 6 straight downfield with safety 20 beside the ball's path:
+        /// outside CATCH_RADIUS when it arrives, inside PASS_BREAKUP_RADIUS.
+        /// </summary>
+        private void ThrowAtACoveredReceiver()
+        {
+            _quarterback.Position = Vector2.zero;
+            MoveEveryoneFarAway();
+
+            StubPlayer receiver = (StubPlayer)_registry.Get(6);
+            receiver.Position = new Vector2(0f, 8f);
+
+            StubPlayer safety = (StubPlayer)_registry.Get(20);
+            safety.Position = new Vector2(1.3f, 7f);
+
+            _ballSystem.Throw(_quarterback, Vector2.up, 0f);
+        }
+
+        private void RunUntilTheBallIsDown()
+        {
+            for (int tick = 0;
+                 tick <= Systems_SimConstants.MAX_FLIGHT_TICKS + 2
+                 && _play.Phase != Systems_PlayPhase.Dead
+                 && !_ball.IsHeld;
+                 tick++)
+            {
+                _referee.FixedTick();
+            }
         }
 
         /// <summary>Parks everyone well clear so catch resolution is unambiguous.</summary>

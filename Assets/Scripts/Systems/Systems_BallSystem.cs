@@ -23,6 +23,7 @@ namespace PoFootball.Systems
         private readonly Systems_BallModel _ball;
         private readonly Systems_PlayModel _play;
         private readonly Systems_PlayerRegistry _registry;
+        private readonly Systems_ISkillModel _skill;
         private readonly IPublisher<Systems_PassThrownMessage> _thrownPublisher;
         private readonly IPublisher<Systems_PassCaughtMessage> _caughtPublisher;
 
@@ -30,12 +31,14 @@ namespace PoFootball.Systems
             Systems_BallModel ball,
             Systems_PlayModel play,
             Systems_PlayerRegistry registry,
+            Systems_ISkillModel skill,
             IPublisher<Systems_PassThrownMessage> thrownPublisher,
             IPublisher<Systems_PassCaughtMessage> caughtPublisher)
         {
             _ball = ball;
             _play = play;
             _registry = registry;
+            _skill = skill;
             _thrownPublisher = thrownPublisher;
             _caughtPublisher = caughtPublisher;
         }
@@ -118,31 +121,25 @@ namespace PoFootball.Systems
 
             Systems_IPlayerHandle catcher = FindCatcher();
 
-            // A CATCH WITH A DEFENDER ON THE BALL IS BROKEN UP (revision 11).
-            //
-            // FindCatcher hands the ball to whoever is nearest inside CATCH_RADIUS,
-            // so a receiver a step closer than his defender always made the catch:
-            // the trained offense completed 97% of its passes, against roughly 65% in
-            // real football. A defender within PASS_BREAKUP_RADIUS of the ball as it
-            // arrives now gets a hand on it and the pass falls incomplete. It is a
-            // rule, not a roll, so a policy can learn exactly what "covered" means;
-            // a defender who is nearest still intercepts, as before.
-            if (catcher != null
-                && catcher.Side == Systems_TeamSide.Offense
-                && IsContestedByDefense())
-            {
-                _ball.MarkIncomplete();
-                return Systems_PlayOutcome.Incompletion;
-            }
-
             if (catcher != null)
             {
                 bool intercepted = catcher.Side == Systems_TeamSide.Defense;
 
                 // Measured before the ball is attached: AttachTo moves it onto the
                 // catcher, and the throw's length is to where it was actually met.
-                float airYards =
-                    Vector2.Distance(_ball.ThrowOrigin, _ball.Position) / Systems_FieldModel.YARD;
+                float airMetres = Vector2.Distance(_ball.ThrowOrigin, _ball.Position);
+                float airYards = airMetres / Systems_FieldModel.YARD;
+
+                // BEING THERE IS NOT THE SAME AS MAKING THE PLAY (revision 13).
+                // Whoever FindCatcher names has the ball in his hands; whether he
+                // keeps it is Systems_ISkillModel's. Every branch below ends the
+                // flight on this tick, so each arrival is rolled exactly once
+                // rather than once per tick the ball spends inside the radius.
+                if (!IsCatchMade(catcher, intercepted, airMetres))
+                {
+                    _ball.MarkIncomplete();
+                    return Systems_PlayOutcome.Incompletion;
+                }
 
                 catcher.SetCarrier(true);
                 _ball.AttachTo(catcher.Id, catcher.Position);
@@ -172,13 +169,48 @@ namespace PoFootball.Systems
         }
 
         /// <summary>
-        /// Whether a defender who could catch the ball — anyone but the defensive
-        /// line, as in FindCatcher — is within PASS_BREAKUP_RADIUS of it now.
+        /// Whether the man FindCatcher named comes up with the ball.
+        ///
+        /// A DEFENDER ON THE BALL BREAKS UP A CATCH (revision 11): FindCatcher
+        /// hands the ball to whoever is nearest inside CATCH_RADIUS, so a receiver
+        /// a step closer than his defender always made the catch and the trained
+        /// offense completed 97% of its passes, against roughly 65% in real
+        /// football. That was a rule with one answer inside PASS_BREAKUP_RADIUS; it
+        /// is now a chance that rises as the defender closes
+        /// (Systems_SeededSkillModel.BreakUpChance), so tight coverage is still
+        /// something a policy can see and earn, and loose coverage is no longer as
+        /// good as tight.
+        ///
+        /// An open receiver can drop it, and a defender who is nearest can fail to
+        /// hold the interception — both fall incomplete.
         /// </summary>
-        private bool IsContestedByDefense()
+        private bool IsCatchMade(
+            Systems_IPlayerHandle catcher, bool intercepted, float airMetres)
         {
-            float radiusSquared =
-                Systems_SimConstants.PASS_BREAKUP_RADIUS * Systems_SimConstants.PASS_BREAKUP_RADIUS;
+            if (intercepted)
+            {
+                return _skill.IsInterceptionHeld();
+            }
+
+            float coverageMetres = Mathf.Sqrt(NearestCoverageSquared());
+
+            if (coverageMetres <= Systems_SimConstants.PASS_BREAKUP_RADIUS
+                && _skill.IsPassBrokenUp(coverageMetres))
+            {
+                return false;
+            }
+
+            return _skill.IsCatchHeld(airMetres, catcher.Fatigue);
+        }
+
+        /// <summary>
+        /// Squared distance from the ball to the nearest defender who could catch
+        /// it — anyone but the defensive line, as in FindCatcher. Infinity when
+        /// there is none.
+        /// </summary>
+        private float NearestCoverageSquared()
+        {
+            float nearestSquared = float.PositiveInfinity;
 
             for (int slotIndex = 0; slotIndex < Systems_PlayerRegistry.CAPACITY; slotIndex++)
             {
@@ -191,13 +223,15 @@ namespace PoFootball.Systems
                     continue;
                 }
 
-                if ((candidate.Position - _ball.Position).sqrMagnitude <= radiusSquared)
+                float distanceSquared = (candidate.Position - _ball.Position).sqrMagnitude;
+
+                if (distanceSquared < nearestSquared)
                 {
-                    return true;
+                    nearestSquared = distanceSquared;
                 }
             }
 
-            return false;
+            return nearestSquared;
         }
 
         /// <summary>
@@ -316,11 +350,41 @@ namespace PoFootball.Systems
             // every caller of that method means.
             direction = ApplyAimSlack(direction, aim);
 
+            // AND THEN IT MISSES BY A LITTLE (revision 13). The slack above is the
+            // quarterback's DECISION being sloppy; this is his arm. It is applied
+            // here, to the ball, so it reaches a trained quarterback and a scripted
+            // one alike — it used to be applied to the scripted aim, upstream of
+            // the slack, which threw 85% of it away. See THROW_SCATTER_BASE_DEGREES.
+            float throwMetres = target == null
+                ? UNTARGETED_THROW_METRES
+                : Vector2.Distance(
+                    thrower.Position, LeadPoint(thrower.Position, target, speed));
+
+            direction = Rotate(
+                direction, _skill.ThrowErrorRadians(throwMetres, thrower.Fatigue));
+
             thrower.SetCarrier(false);
             _ball.Throw(thrower.Id, thrower.Position, direction * speed);
 
             _thrownPublisher.Publish(new Systems_PassThrownMessage(
                 thrower.Id, target == null ? -1 : target.Id, speed));
+        }
+
+        /// <summary>
+        /// The length a throw at nobody is treated as having, for its error. Only
+        /// reachable with no eligible receiver on the field, which no formation
+        /// here lines up.
+        /// </summary>
+        private const float UNTARGETED_THROW_METRES = 15f;
+
+        private static Vector2 Rotate(Vector2 direction, float radians)
+        {
+            float cos = Mathf.Cos(radians);
+            float sin = Mathf.Sin(radians);
+
+            return new Vector2(
+                (direction.x * cos) - (direction.y * sin),
+                (direction.x * sin) + (direction.y * cos));
         }
 
         /// <summary>
