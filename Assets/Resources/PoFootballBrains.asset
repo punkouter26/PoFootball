@@ -12,11 +12,11 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 5264aba841c6ed54ebbca638d25f13d7, type: 3}
   m_Name: PoFootballBrains
   m_EditorClassIdentifier: PoFootball.Agents::PoFootball.Agents.Agent_BrainTable
-  _contractRevision: 10
+  _contractRevision: 12
   _entries:
   - _group: 0
-    _model: {fileID: 5022602860645237092, guid: 39e4db0efe5f9a64880956acd5a68114, type: 3}
+    _model: {fileID: 5022602860645237092, guid: 636b40df43450dd48a7f2572656fba62, type: 3}
   - _group: 1
-    _model: {fileID: 5022602860645237092, guid: 1c8547e552d54f341ac929c10dbc9572, type: 3}
+    _model: {fileID: 5022602860645237092, guid: aab9ed6f1d8f8ef4cbad8b4994a02497, type: 3}
   - _group: 2
-    _model: {fileID: 5022602860645237092, guid: e74c5a7605d025044a11b5fee7cf42bc, type: 3}
+    _model: {fileID: 5022602860645237092, guid: f0d7fd9c2448cba4e97ef26afc0de380, type: 3}
