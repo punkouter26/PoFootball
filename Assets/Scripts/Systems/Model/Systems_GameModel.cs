@@ -117,6 +117,17 @@ namespace PoFootball.Models
             RecomputeMarker();
         }
 
+        /// <summary>
+        /// Same series, SAME down, from a new spot: a penalty walked off before the
+        /// snap. The chains do not move, so the distance is whatever is now left.
+        /// </summary>
+        public void ReplayDownFrom(float lineOfScrimmageY)
+        {
+            LineOfScrimmageY = lineOfScrimmageY;
+            YardsToGo = Mathf.Max(
+                (FirstDownMarkerY - lineOfScrimmageY) / Systems_FieldModel.YARD, 0.1f);
+        }
+
         public void GiveBallTo(Systems_TeamId team, float lineOfScrimmageY)
         {
             Possession = team;

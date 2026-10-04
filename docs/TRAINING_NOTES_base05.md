@@ -1,5 +1,14 @@
 # football_base05 — overnight run, 2026-08-11
 
+> **Correction, 2026-10-04.** The claim below that "ML-Agents self-play does not
+> model two different behaviors playing each other" is wrong. `GhostTrainer`
+> supports one behavior per team (its docstring says so), and the official
+> `config/poca/StrikersVsGoalie.yaml` at release_22 trains two behaviors, one team
+> id each, with `self_play` on both. What stalled base04 was more likely several
+> same-team trainers each toggling the learning team on their own `team_change`
+> clock. `Config/FootballSelf01.yaml` has the corrected setup; the rest of this
+> note is left as it was written.
+
 Started 00:11 EDT. Watchdog holds it until 08:17 EDT, then stops watching and
 leaves training running.
 

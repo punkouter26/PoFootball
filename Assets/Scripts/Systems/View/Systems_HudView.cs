@@ -183,6 +183,16 @@ namespace PoFootball.Views
         private ISubscriber<Systems_GameOverMessage> _gameOverSubscriber;
         private ISubscriber<Systems_PlaySnappedMessage> _snappedSubscriber;
         private ISubscriber<Systems_HighlightPlaybackMessage> _highlightSubscriber;
+        private ISubscriber<Systems_PenaltyMessage> _penaltySubscriber;
+
+        private IDisposable _penaltySubscription;
+
+        /// <summary>
+        /// A flag is thrown as the teams line up, a moment before the snap that
+        /// would otherwise take its banner straight back down. Set by OnPenalty,
+        /// spent by the next OnSnapped.
+        /// </summary>
+        private bool _holdBannerThroughSnap;
 
         private IDisposable _resolvedSubscription;
         private IDisposable _gameOverSubscription;
@@ -335,8 +345,10 @@ namespace PoFootball.Views
             ISubscriber<Systems_DownResolvedMessage> resolvedSubscriber,
             ISubscriber<Systems_GameOverMessage> gameOverSubscriber,
             ISubscriber<Systems_PlaySnappedMessage> snappedSubscriber,
-            ISubscriber<Systems_HighlightPlaybackMessage> highlightSubscriber)
+            ISubscriber<Systems_HighlightPlaybackMessage> highlightSubscriber,
+            ISubscriber<Systems_PenaltyMessage> penaltySubscriber)
         {
+            _penaltySubscriber = penaltySubscriber;
             _game = game;
             _play = play;
             _ball = ball;
@@ -364,6 +376,7 @@ namespace PoFootball.Views
             _gameOverSubscription = _gameOverSubscriber?.Subscribe(OnGameOver);
             _snappedSubscription = _snappedSubscriber?.Subscribe(OnSnapped);
             _highlightSubscription = _highlightSubscriber?.Subscribe(OnHighlightPlayback);
+            _penaltySubscription = _penaltySubscriber?.Subscribe(OnPenalty);
         }
 
         private void OnDestroy()
@@ -372,6 +385,7 @@ namespace PoFootball.Views
             _gameOverSubscription?.Dispose();
             _snappedSubscription?.Dispose();
             _highlightSubscription?.Dispose();
+            _penaltySubscription?.Dispose();
         }
 
         protected override void BuildUi()
@@ -1769,8 +1783,34 @@ namespace PoFootball.Views
                 return;
             }
 
-            _bannerOverlay.Hide();
+            if (_holdBannerThroughSnap)
+            {
+                // The flag's banner stays up over the replayed down and comes
+                // down on its own timer.
+                _holdBannerThroughSnap = false;
+            }
+            else
+            {
+                _bannerOverlay.Hide();
+            }
+
             _snapDriveIndex = _game.DriveIndex;
+        }
+
+        private void OnPenalty(Systems_PenaltyMessage message)
+        {
+            if (!IsBuilt)
+            {
+                return;
+            }
+
+            _bannerHeadline.text = Systems_DisplayText.FoulBanner(message.Foul);
+            _bannerHeadline.style.color = Systems_UiTheme.Negative;
+            _bannerDetail.text = Systems_DisplayText.FoulDetail(message.Team, message.Yards);
+
+            _holdBannerThroughSnap = true;
+            _bannerOverlay.ShowFor(BANNER_SECONDS);
+            RefreshSituation();
         }
 
         private void OnDownResolved(Systems_DownResolvedMessage message)

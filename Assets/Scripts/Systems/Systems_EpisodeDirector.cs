@@ -42,6 +42,7 @@ namespace PoFootball.Systems
         private readonly Systems_Referee _referee;
         private readonly Systems_ISpotProvider _spotProvider;
         private readonly Systems_FormationSelection _formations;
+        private readonly Systems_Roster _roster;
         private readonly Systems_ITrainingEpisodeBoundary _episodeBoundary;
         private readonly IPublisher<Systems_PlaySnappedMessage> _snappedPublisher;
         private readonly ISubscriber<Systems_PlayEndedMessage> _endedSubscriber;
@@ -57,6 +58,12 @@ namespace PoFootball.Systems
         /// </summary>
         private int _deadBallTicksRemaining;
 
+        /// <summary>
+        /// Ticks left for the defense to call its front before the ball is snapped
+        /// anyway. Positive only between BeginEpisode and the snap.
+        /// </summary>
+        private int _preSnapTicksRemaining;
+
         public Systems_EpisodeDirector(
             Systems_PlayModel play,
             Systems_BallModel ball,
@@ -64,6 +71,7 @@ namespace PoFootball.Systems
             Systems_Referee referee,
             Systems_ISpotProvider spotProvider,
             Systems_FormationSelection formations,
+            Systems_Roster roster,
             Systems_ITrainingEpisodeBoundary episodeBoundary,
             IPublisher<Systems_PlaySnappedMessage> snappedPublisher,
             ISubscriber<Systems_PlayEndedMessage> endedSubscriber)
@@ -74,6 +82,7 @@ namespace PoFootball.Systems
             _referee = referee;
             _spotProvider = spotProvider;
             _formations = formations;
+            _roster = roster;
             _episodeBoundary = episodeBoundary;
             _snappedPublisher = snappedPublisher;
             _endedSubscriber = endedSubscriber;
@@ -133,6 +142,18 @@ namespace PoFootball.Systems
             if (_resetPending)
             {
                 ResolveWhistle();
+                return;
+            }
+
+            if (_preSnapTicksRemaining > 0)
+            {
+                _preSnapTicksRemaining--;
+
+                if (_play.DefenseIsCalled || _preSnapTicksRemaining == 0)
+                {
+                    Snap();
+                }
+
                 return;
             }
 
@@ -226,6 +247,10 @@ namespace PoFootball.Systems
             // formation sequence and the invariant is untouched.
             _formations.DrawNext();
 
+            // Who is on the field. A new twenty-two in training, the same ones all
+            // game otherwise; applied by ResetTo below. See Systems_Roster.
+            _roster.NextPlay();
+
             for (int slotIndex = 0; slotIndex < Systems_PlayerRegistry.CAPACITY; slotIndex++)
             {
                 Systems_FormationSlot slot = _formations.GetSlot(slotIndex);
@@ -250,10 +275,42 @@ namespace PoFootball.Systems
             _play.BeginEpisode(
                 lineOfScrimmageY, quarterback.Position.y,
                 situation.Down, situation.YardsToGo);
+
+            // NOT SNAPPED YET (revision 14). The play is PreSnap, nobody is driven,
+            // and the defense has until this runs out to call its front; FixedTick
+            // snaps on the tick after it does. See Systems_PlayModel.CallDefense.
+            _preSnapTicksRemaining = Systems_SimConstants.PRE_SNAP_MAX_TICKS;
+        }
+
+        /// <summary>
+        /// Lines the defense up in the front it called, if it called a different
+        /// one from the draw, and snaps the ball.
+        /// </summary>
+        private void Snap()
+        {
+            _preSnapTicksRemaining = 0;
+
+            if (_play.DefenseIsCalled
+                && _play.DefenseCallIndex != (int)_formations.Defense
+                && _play.DefenseCallIndex < Systems_FormationBook.DefensiveFormationCount)
+            {
+                _formations.CallDefense((Systems_DefensiveFormation)_play.DefenseCallIndex);
+
+                for (int slotIndex = Systems_FormationBook.SLOTS_PER_SIDE;
+                    slotIndex < Systems_PlayerRegistry.CAPACITY;
+                    slotIndex++)
+                {
+                    Systems_FormationSlot slot = _formations.GetSlot(slotIndex);
+
+                    _registry.Get(slotIndex).ResetTo(
+                        new Vector2(slot.OffsetX, _play.LineOfScrimmageY + slot.OffsetY));
+                }
+            }
+
             _play.Snap();
 
             _snappedPublisher.Publish(
-                new Systems_PlaySnappedMessage(lineOfScrimmageY, _play.EpisodeIndex));
+                new Systems_PlaySnappedMessage(_play.LineOfScrimmageY, _play.EpisodeIndex));
         }
 
         public void Dispose()

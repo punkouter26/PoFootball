@@ -126,6 +126,7 @@ namespace PoFootball.Agents
             stats.Add("Call/HandoffFullback", CallRate(message.Call, Systems_PlayCall.HandoffFullback));
             stats.Add("Call/HandoffHalfback", CallRate(message.Call, Systems_PlayCall.HandoffHalfback));
             stats.Add("Call/Pass", CallRate(message.Call, Systems_PlayCall.Pass));
+            stats.Add("Call/PassDeep", CallRate(message.Call, Systems_PlayCall.PassDeep));
 
             // The two calls contract revision 6 exists to introduce. Without these
             // a thirty-hour run produces no evidence at all about whether the
@@ -152,7 +153,7 @@ namespace PoFootball.Agents
         /// </summary>
         private static void RecordPassing(StatsRecorder stats, Systems_PlayEndedMessage message)
         {
-            bool isPassCall = message.Call == Systems_PlayCall.Pass;
+            bool isPassCall = message.Call.IsPass();
 
             stats.Add("Pass/AttemptRate", isPassCall ? 1f : 0f);
 

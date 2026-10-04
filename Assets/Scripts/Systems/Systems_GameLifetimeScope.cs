@@ -116,6 +116,10 @@ namespace PoFootball.Systems
             // scrimmage stays the only thing that differs between them.
             builder.Register<Systems_FormationSelection>(Lifetime.Singleton);
 
+            // The twenty-two athletes. Both modes; it takes the mode registered
+            // above and redraws every play only in training. See Systems_Roster.
+            builder.Register<Systems_Roster>(Lifetime.Singleton);
+
             // What the viewer has asked the broadcast to do, and the system that
             // records it. Both modes, because the camera view is injected in both
             // and switches itself off on the presentation budget; in training
@@ -144,6 +148,7 @@ namespace PoFootball.Systems
             // one it is in. In training nothing ever publishes them.
             builder.RegisterMessageBroker<Systems_DownResolvedMessage>(messagePipeOptions);
             builder.RegisterMessageBroker<Systems_GameOverMessage>(messagePipeOptions);
+            builder.RegisterMessageBroker<Systems_PenaltyMessage>(messagePipeOptions);
 
             // The same seeded draw in both modes, unlike the kick and fumble models
             // below: a brain fitted against tackles that never miss would meet

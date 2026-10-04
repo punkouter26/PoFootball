@@ -194,7 +194,7 @@ namespace PoFootball.Tests
             {
                 float terminalSpeed = Systems_RoleTable.DriveForceOf(role)
                     / Systems_RoleTable.MassOf(role)
-                    / Systems_SimConstants.LINEAR_DAMPING;
+                    / Systems_RoleTable.LinearDampingOf(role);
 
                 Assert.That(
                     terminalSpeed,
@@ -299,7 +299,7 @@ namespace PoFootball.Tests
 
             rigidbody.gravityScale = 0f;
             rigidbody.mass = Systems_RoleTable.MassOf(role);
-            rigidbody.linearDamping = Systems_SimConstants.LINEAR_DAMPING;
+            rigidbody.linearDamping = Systems_RoleTable.LinearDampingOf(role);
             rigidbody.angularDamping = Systems_SimConstants.ANGULAR_DAMPING;
             rigidbody.collisionDetectionMode = CollisionDetectionMode2D.Continuous;
             rigidbody.interpolation = RigidbodyInterpolation2D.None;

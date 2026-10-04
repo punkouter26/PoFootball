@@ -4,6 +4,7 @@ using NUnit.Framework;
 using PoFootball.Agents;
 using PoFootball.Models;
 using PoFootball.Sensors;
+using PoFootball.Systems;
 using Unity.MLAgents.Actuators;
 using UnityEngine;
 
@@ -66,7 +67,7 @@ namespace PoFootball.Tests
                 }
 
                 Sensor_FootballState.Write(
-                    buffer, new Systems_FieldModel(), role,
+                    buffer, new Systems_FieldModel(), role, default,
                     new Vector2(3f, -8f), new Vector2(1f, 2f), 45f, 30f, 0.3f, false,
                     new Vector2(-2f, 5f), new Vector2(0f, 9f),
                     Systems_BallState.InFlight, Systems_PlayCall.Pass, 4f,
@@ -101,7 +102,7 @@ namespace PoFootball.Tests
             }
 
             Sensor_FootballState.Write(
-                buffer, new Systems_FieldModel(), Systems_PlayerRole.Quarterback,
+                buffer, new Systems_FieldModel(), Systems_PlayerRole.Quarterback, default,
                 Vector2.zero, Vector2.zero, 0f, 0f, 0f, true,
                 Vector2.zero, Vector2.zero, Systems_BallState.Held,
                 Systems_PlayCall.KeepQuarterback, 0f,
@@ -120,18 +121,21 @@ namespace PoFootball.Tests
         // --- Action contract ---------------------------------------------------
 
         /// <summary>
-        /// Exactly one brain carries discrete actions, and it is the quarterback's.
+        /// The quarterback's brain carries two discrete branches (call, throw), the
+        /// defense's one (the front, since revision 14), the offense's none.
         /// </summary>
         [Test]
-        public void OnlyTheQuarterbackBrain_HasDiscreteActions()
+        public void EachBrain_HasItsOwnDiscreteBranches()
         {
             foreach (Systems_BrainGroup group in Enum.GetValues(typeof(Systems_BrainGroup)))
             {
                 ActionSpec spec = Agent_ActionContract.For(group);
                 bool isQuarterback = group == Systems_BrainGroup.Quarterback;
+                bool isDefense = group == Systems_BrainGroup.Defense;
 
                 Assert.That(
-                    spec.NumDiscreteActions, Is.EqualTo(isQuarterback ? 2 : 0),
+                    spec.NumDiscreteActions,
+                    Is.EqualTo(isQuarterback ? 2 : isDefense ? 1 : 0),
                     $"{group} discrete branch count");
                 Assert.That(
                     spec.NumContinuousActions,
@@ -140,6 +144,75 @@ namespace PoFootball.Tests
                         : Agent_ActionContract.BASE_CONTINUOUS_ACTIONS),
                     $"{group} continuous action count");
             }
+        }
+
+        /// <summary>
+        /// The defense's branch is one index per front plus "no call". The count is
+        /// a literal in Agent_ActionContract because Tools/promote_brain.py reads
+        /// it, so a ninth front has to be caught here.
+        /// </summary>
+        [Test]
+        public void TheDefenseCallBranch_HasOneIndexPerFront()
+        {
+            Assert.That(
+                Agent_ActionContract.DEFENSE_CALL_SLOTS,
+                Is.EqualTo(Systems_FormationBook.DefensiveFormationCount));
+
+            Assert.That(
+                Agent_ActionContract.For(Systems_BrainGroup.Defense).BranchSizes[0],
+                Is.EqualTo(Agent_ActionContract.DEFENSE_CALL_BRANCH_SIZE));
+
+            Assert.That(
+                Systems_FormationBook.DefenseSlot(
+                    Systems_DefensiveFormation.FourThreeBase,
+                    Systems_FormationBook.DEFENSIVE_CAPTAIN_SLOT_INDEX
+                        - Systems_FormationBook.SLOTS_PER_SIDE).Role,
+                Is.EqualTo(Systems_PlayerRole.Linebacker),
+                "the captain's slot is not a linebacker");
+        }
+
+        /// <summary>
+        /// The front can be called before the snap and at no other time, once.
+        /// </summary>
+        [Test]
+        public void TheDefense_CallsItsFrontOnce_AndOnlyBeforeTheSnap()
+        {
+            Systems_PlayModel play = new Systems_PlayModel();
+            play.BeginEpisode(0f, 0f, 1, Systems_GameRules.YARDS_TO_GAIN);
+
+            Assert.That(play.DefenseIsCalled, Is.False);
+
+            play.CallDefense(3);
+            play.CallDefense(5);
+
+            Assert.That(play.DefenseCallIndex, Is.EqualTo(3), "the first call stands");
+
+            play.BeginEpisode(0f, 0f, 1, Systems_GameRules.YARDS_TO_GAIN);
+            play.Snap();
+            play.CallDefense(2);
+
+            Assert.That(play.DefenseIsCalled, Is.False, "a front was called after the snap");
+        }
+
+        /// <summary>
+        /// The receivers' route gate: open underneath on Pass, open deep on
+        /// PassDeep, and exactly what it was on every other call.
+        /// </summary>
+        [Test]
+        public void TheRouteReward_IsPaidAtTheDepthTheCallAskedFor()
+        {
+            float shallow = Systems_SimConstants.DEEP_SHOT_MIN_YARDS - 1f;
+            float deep = Systems_SimConstants.DEEP_SHOT_MIN_YARDS + 1f;
+
+            Assert.That(PoFootball.Rewards.Reward_Role.OnRoute(Systems_PlayCall.Pass, shallow), Is.EqualTo(1f));
+            Assert.That(PoFootball.Rewards.Reward_Role.OnRoute(Systems_PlayCall.Pass, deep), Is.Zero);
+            Assert.That(PoFootball.Rewards.Reward_Role.OnRoute(Systems_PlayCall.PassDeep, shallow), Is.Zero);
+            Assert.That(PoFootball.Rewards.Reward_Role.OnRoute(Systems_PlayCall.PassDeep, deep), Is.EqualTo(1f));
+            Assert.That(PoFootball.Rewards.Reward_Role.OnRoute(Systems_PlayCall.None, deep), Is.EqualTo(1f));
+            Assert.That(PoFootball.Rewards.Reward_Role.OnRoute(Systems_PlayCall.HandoffHalfback, deep), Is.EqualTo(1f));
+
+            Assert.That(Systems_PlayCall.Pass.IsPass() && Systems_PlayCall.PassDeep.IsPass(), Is.True);
+            Assert.That(Systems_PlayCall.HandoffFullback.IsPass(), Is.False);
         }
 
         /// <summary>

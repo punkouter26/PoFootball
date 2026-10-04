@@ -13,7 +13,7 @@ using UnityEngine.SceneManagement;
 namespace PoFootball.EditorTools
 {
     /// <summary>
-    /// Plays three full games of SCN_GAME at 8x and writes their REALISM lines to
+    /// Plays four full games of SCN_GAME at 8x, on four FIXED seeds, and writes their REALISM lines to
     /// results/realism/realism-&lt;stamp&gt;.json, for
     /// `Tools/promote_brain.py --check-realism` to judge.
     ///
@@ -30,8 +30,18 @@ namespace PoFootball.EditorTools
     /// turns the presentation off through Systems_PresentationBudget, which changes
     /// nothing a policy sees.
     ///
-    /// The games go through Systems_SceneRouter.LoadGame, the same route REMATCH
-    /// takes, so each starts with a fresh container and a fresh per-game seed.
+    /// ON FIXED SEEDS, BECAUSE THREE RANDOM GAMES WERE NOT A MEASUREMENT. A game
+    /// with a pinned seed replays exactly, and single games on unchanged code
+    /// ranged 4.2 to 8.6 yards a play — wider than any balance change this tool
+    /// was ever asked to judge, so revisions 12 and 13 were each compared against
+    /// their predecessor on different games and neither comparison meant
+    /// anything. The same four games every run make two reports differ only by
+    /// what changed in the code.
+    ///
+    /// The games go through Systems_SceneRouter.ReplayGame, the route REPLAY THIS
+    /// GAME takes, so each starts with a fresh container on its own seed. Entering
+    /// play mode starts a game on whatever seed the scene draws; it is replaced by
+    /// the first fixed one before it has run a tick.
     /// Fixed delta time is untouched: 8x is Editor_SimSpeed's measurement mode.
     /// State lives in SessionState because entering play mode may reload the domain.
     /// </summary>
@@ -39,7 +49,13 @@ namespace PoFootball.EditorTools
     internal static class Editor_RealismEval
     {
         private const string GAME_SCENE_PATH = "Assets/Scenes/SCN_GAME.unity";
-        private const int GAMES = 3;
+        /// <summary>
+        /// The four games. Changing these changes every number this tool reports,
+        /// so two reports are comparable only if they list the same seeds.
+        /// </summary>
+        private static readonly uint[] Seeds = { 1u, 2u, 3u, 4u };
+
+        private static int GAMES => Seeds.Length;
         private const float SIM_SPEED = 8f;
 
         /// <summary>
@@ -75,7 +91,7 @@ namespace PoFootball.EditorTools
 
         private static bool IsRunning => SessionState.GetInt(KEY_REMAINING, 0) > 0;
 
-        [MenuItem("Tools/PoFootball/Evaluate Realism (3 games)")]
+        [MenuItem("Tools/PoFootball/Evaluate Realism (4 fixed seeds)")]
         private static void RunFromMenu()
         {
             Begin(false);
@@ -121,6 +137,7 @@ namespace PoFootball.EditorTools
             {
                 // After Editor_SimSpeed, which applies its own setting on the same event.
                 EditorApplication.delayCall += ApplySimSpeed;
+                EditorApplication.delayCall += LoadNextGame;
                 return;
             }
 
@@ -149,6 +166,18 @@ namespace PoFootball.EditorTools
             {
                 EditorApplication.delayCall += ApplySimSpeed;
             }
+        }
+
+        /// <summary>The next unplayed game, on its own seed.</summary>
+        private static void LoadNextGame()
+        {
+            if (!IsRunning || !EditorApplication.isPlaying)
+            {
+                return;
+            }
+
+            MarkGameStarted();
+            Systems_SceneRouter.ReplayGame(Seeds[GAMES - SessionState.GetInt(KEY_REMAINING, 0)]);
         }
 
         private static void ApplySimSpeed()
@@ -190,8 +219,7 @@ namespace PoFootball.EditorTools
             if (remaining > 0)
             {
                 // Deferred: this runs inside the final whistle's own log call.
-                MarkGameStarted();
-                EditorApplication.delayCall += Systems_SceneRouter.LoadGame;
+                EditorApplication.delayCall += LoadNextGame;
                 return;
             }
 
@@ -268,6 +296,7 @@ namespace PoFootball.EditorTools
             json.Append($"  \"contract_revision\": {Agent_ActionContract.CONTRACT_REVISION},\n");
             json.Append($"  \"brains_loaded\": {(brainsLoaded ? "true" : "false")},\n");
             json.Append($"  \"sim_speed\": {SIM_SPEED.ToString(CultureInfo.InvariantCulture)},\n");
+            json.Append($"  \"seeds\": [{string.Join(", ", Seeds)}],\n");
             json.Append("  \"games\": [\n");
 
             string[] games = results.Split(new[] { ';' }, StringSplitOptions.RemoveEmptyEntries);

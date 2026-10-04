@@ -27,12 +27,13 @@ namespace PoFootball.Tests
             Systems_BallState ballState = Systems_BallState.Held,
             Systems_PlayCall call = Systems_PlayCall.None,
             float angularVelocityDegrees = 0f,
-            int physicsTick = 0)
+            int physicsTick = 0,
+            Systems_PlayerTraits traits = default)
         {
             float[] buffer = new float[Sensor_FootballState.OBSERVATION_SIZE];
 
             Sensor_FootballState.Write(
-                buffer, new Systems_FieldModel(), role, position, velocity,
+                buffer, new Systems_FieldModel(), role, traits, position, velocity,
                 rotationDegrees, angularVelocityDegrees, fatigue, isCarrier,
                 ballPosition, ballVelocity,
                 ballState, call, lineOfScrimmageY,
@@ -158,8 +159,9 @@ namespace PoFootball.Tests
         [Test]
         public void ThePlayCall_IsVisibleToTheOffenseAndHiddenFromTheDefense()
         {
-            int callStart =
-                Sensor_FootballState.OBSERVATION_SIZE - Sensor_FootballState.PLAY_CALL_SLOTS;
+            int callEnd =
+                Sensor_FootballState.OBSERVATION_SIZE - Sensor_FootballState.TRAIT_SLOTS;
+            int callStart = callEnd - Sensor_FootballState.PLAY_CALL_SLOTS;
 
             float[] offense = Collect(
                 Systems_PlayerRole.WideReceiver, Vector2.zero, Vector2.zero, 0f, 0f, false,
@@ -171,7 +173,7 @@ namespace PoFootball.Tests
 
             float offenseSum = 0f;
             float defenseSum = 0f;
-            for (int i = callStart; i < Sensor_FootballState.OBSERVATION_SIZE; i++)
+            for (int i = callStart; i < callEnd; i++)
             {
                 offenseSum += offense[i];
                 defenseSum += defense[i];
@@ -179,6 +181,39 @@ namespace PoFootball.Tests
 
             Assert.That(offenseSum, Is.EqualTo(1f).Within(1e-5f), "offense should see the call");
             Assert.That(defenseSum, Is.EqualTo(0f).Within(1e-5f), "defense must not see the call");
+        }
+
+        /// <summary>
+        /// Revision 14: a player is told which body he is driving, and his own
+        /// speed is read against HIS top speed — a fast receiver flat out reads 1,
+        /// not 1.05 clamped.
+        /// </summary>
+        [Test]
+        public void Traits_AreTheLastFourFloats_AndScaleOwnSpeed()
+        {
+            Systems_PlayerTraits fast = new Systems_PlayerTraits(1f, -0.5f, 0.25f, -1f);
+            Systems_PlayerRole role = Systems_PlayerRole.WideReceiver;
+            float ownTopSpeed = Systems_RoleTable.TopSpeedOf(role, fast);
+
+            Assert.That(
+                ownTopSpeed, Is.GreaterThan(Systems_RoleTable.TopSpeedOf(role)),
+                "test premise: a speed trait of +1 is faster than the role");
+
+            float[] observations = Collect(
+                role, Vector2.zero, new Vector2(0f, ownTopSpeed), 0f, 0f, false,
+                Vector2.zero, Vector2.zero, 0f, traits: fast);
+
+            int traitStart =
+                Sensor_FootballState.OBSERVATION_SIZE - Sensor_FootballState.TRAIT_SLOTS;
+
+            Assert.That(observations[traitStart], Is.EqualTo(1f).Within(1e-5f));
+            Assert.That(observations[traitStart + 1], Is.EqualTo(-0.5f).Within(1e-5f));
+            Assert.That(observations[traitStart + 2], Is.EqualTo(0.25f).Within(1e-5f));
+            Assert.That(observations[traitStart + 3], Is.EqualTo(-1f).Within(1e-5f));
+
+            // Forward velocity is the second float after the role one-hot and position.
+            Assert.That(
+                observations[Systems_RoleTable.ROLE_COUNT + 3], Is.EqualTo(1f).Within(1e-4f));
         }
 
         [Test]

@@ -41,7 +41,7 @@ A brain can fit the contract and still have learned the wrong game:
                              blow-up, and is refused above SPEED_CLAMP_CEILING.
     REALISM                  --check-realism, AFTER promotion: three games played
                              with the promoted brains by Unity's
-                             Tools > PoFootball > Evaluate Realism (3 games), judged
+                             Tools > PoFootball > Evaluate Realism (4 fixed seeds), judged
                              against the real-football bands CLAUDE.md gives, and
                              recorded in the version's MANIFEST.md.
 
@@ -160,6 +160,25 @@ def read_quarterback_behavior() -> str:
     return group
 
 
+def read_defense_behavior() -> str:
+    """The behavior whose brain carries the one-branch defensive call (revision 14)."""
+    text = ROLE_TABLE_CS.read_text(encoding="utf-8")
+    match = re.search(
+        r"HasDefenseCallActions[^{]*\{[^}]*group\s*==\s*Systems_BrainGroup\.(\w+)",
+        text,
+        re.DOTALL,
+    )
+    if not match:
+        raise ContractError("could not determine which brain has the defensive call")
+
+    group = match.group(1)
+    if group not in read_behavior_names():
+        raise ContractError(
+            f"HasDefenseCallActions names group '{group}', which BehaviorNameOf never returns"
+        )
+    return group
+
+
 def read_ray_observation_size() -> int:
     """
     Width of the RayPerceptionSensor2D observation, from Sensor_RayContract.
@@ -183,6 +202,7 @@ def expected_contract() -> dict:
     base_continuous = _read_int_const(ACTION_CS, "BASE_CONTINUOUS_ACTIONS")
     qb_continuous = _read_int_const(ACTION_CS, "QUARTERBACK_CONTINUOUS_ACTIONS")
     throw_branch = _read_int_const(ACTION_CS, "THROW_BRANCH_SIZE")
+    defense_call_slots = _read_int_const(ACTION_CS, "DEFENSE_CALL_SLOTS")
 
     return {
         "vector_observations": observation_size,
@@ -192,6 +212,8 @@ def expected_contract() -> dict:
         "quarterback_branches": [play_call_slots + 1, throw_branch],
         "behaviors": read_behavior_names(),
         "quarterback_behavior": read_quarterback_behavior(),
+        "defense_branches": [defense_call_slots + 1],
+        "defense_behavior": read_defense_behavior(),
     }
 
 
@@ -286,12 +308,16 @@ def validate(behavior: str, path: Path, contract: dict) -> list[str]:
             f"continuous actions {actual['continuous']} != expected {wanted_continuous}"
         )
 
-    wanted_branches = contract["quarterback_branches"]
+    is_defense = behavior == contract["defense_behavior"]
 
-    if is_quarterback:
+    wanted_branches = (
+        contract["defense_branches"] if is_defense else contract["quarterback_branches"]
+    )
+
+    if is_quarterback or is_defense:
         if not actual["has_discrete"]:
             problems.append(
-                "no discrete_actions output — this brain cannot call a play at all, "
+                "no discrete_actions output — this brain cannot make its call at all, "
                 "so every down decodes to whatever index 0 means"
             )
         elif actual["branches_are_exact"]:

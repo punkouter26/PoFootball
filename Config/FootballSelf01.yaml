@@ -1,0 +1,166 @@
+# PoFootball -- FootballBase16 with ML-Agents self-play switched back on.
+#
+# Pairs 1:1 with run-id `football_self01`. Contract revision 14, the same env build.
+#
+#   $env:CUDA_VISIBLE_DEVICES = "-1"
+#   mlagents-learn Config/FootballSelf01.yaml --run-id=football_self01 `
+#     --env=Builds/FootballEnv/PoFootball.exe --no-graphics `
+#     --base-port=5500 --num-envs=4
+#
+# WHY THIS EXISTS. docs/TRAINING_NOTES_base05.md removed self-play on the grounds
+# that "ML-Agents self-play does not model two different behaviors playing each
+# other". That is not what the trainer does. GhostTrainer's own docstring covers
+# "asymmetric games where there is only one team with a particular behavior", and
+# the official config/poca/StrikersVsGoalie.yaml (release_22, the tag mlagents
+# 1.1.0 was cut from) trains two different behaviours, one team id each, with a
+# self_play block on both and trainer_type poca -- this project's shape.
+#
+# What probably did stall base04 is something else: every GhostTrainer calls
+# GhostController.change_training_team on its own step clock, with no check for
+# a sibling on the same team. Two behaviours on team 0 (Offense, Quarterback)
+# with the same team_change therefore toggle the learning team twice. This is a
+# reading of ghost/trainer.py, not a reproduced bug.
+#
+# So ONE trainer per team drives the swap: Offense for team 0, Defense for team
+# 1. The Quarterback's team_change is set beyond its max_steps so it never
+# toggles and simply follows team 0's phases.
+#
+#   save_steps 50000, team_change 250000   the documented 5:1 ratio
+#   swap_steps                             (agents / opponent agents) * 50000:
+#                                          10/11 for Offense, 11/10 for Defense
+#   Quarterback save_steps 5000            it steps a tenth as often
+#
+# KNOWN COSTS, which is why base16 is the baseline and this is the experiment:
+#   - Each team learns half the time, so the same max_steps is about twice the
+#     wall clock, and the curriculum's progress measure slows with it.
+#   - The environment is reset at every team change.
+#   - Self-play/ELO is a TREND here, not a win rate. The trainer scores a win on
+#     the sign of the last step's reward, and a tackle pays the offense -0.5
+#     against +0.3 for a first down and +0.45 for a completion, so the offense
+#     "wins" only on a score or a completion that moves the chains.
+#   - UNVERIFIED at runtime: that ELO is recorded at all with per-agent
+#     EndEpisode rather than EndGroupEpisode (Agent_TeamGroups).
+#
+# Judge it against football_base16 on the same REALISM report, not on ELO.
+behaviors:
+  # MA-POCA for the two ten- and eleven-man groups; see archive/FootballBase11.yaml
+  # for why, and Systems_BrainGroup for why there are three behaviours, not six.
+  Offense: &football_brain
+    trainer_type: poca
+
+    hyperparameters:
+      batch_size: 1024
+      buffer_size: 20480
+      learning_rate: 3.0e-4
+      beta: 5.0e-3
+      epsilon: 0.2
+      lambd: 0.95
+      num_epoch: 3
+      learning_rate_schedule: constant
+      beta_schedule: constant
+      epsilon_schedule: constant
+
+    network_settings:
+      normalize: false            # Sensor_FootballState emits [-1, 1] already;
+                                  # Systems_ContractTests asserts this stays off.
+      hidden_units: 256
+      num_layers: 2
+      vis_encode_type: simple
+
+    reward_signals:
+      extrinsic:
+        gamma: 0.99
+        strength: 1.0
+
+    keep_checkpoints: 20
+    checkpoint_interval: 100000
+    max_steps: 12700000             # base15 was extended to this and was still climbing at 7M
+
+    # One whole play: MAX_PHYSICS_TICKS 600 / DECISION_PERIOD 5. Pinned by
+    # Systems_ContractTests.
+    time_horizon: 120
+
+    summary_freq: 50000
+    threaded: false               # deterministic ordering (UNITY_RULES section 2)
+
+    self_play:
+      save_steps: 50000
+      team_change: 250000
+      swap_steps: 45000
+      window: 10
+      play_against_latest_model_ratio: 0.5
+      initial_elo: 1200.0
+
+  Defense:
+    <<: *football_brain
+    self_play:
+      save_steps: 50000
+      team_change: 250000
+      swap_steps: 55000
+      window: 10
+      play_against_latest_model_ratio: 0.5
+      initial_elo: 1200.0
+
+  Quarterback:
+    <<: *football_brain
+    trainer_type: ppo
+    max_steps: 1270000
+    checkpoint_interval: 10000      # the QB steps 10x slower
+    self_play:
+      save_steps: 5000
+      team_change: 100000000      # never: Offense drives team 0's swap; see the header
+      swap_steps: 4500
+      window: 10
+      play_against_latest_model_ratio: 0.5
+      initial_elo: 1200.0
+    hyperparameters:
+      batch_size: 256
+      buffer_size: 2048
+      learning_rate: 3.0e-4
+      beta: 5.0e-2                # ten times the movement brains; see Base11
+      epsilon: 0.2
+      lambd: 0.95
+      num_epoch: 5
+      learning_rate_schedule: constant
+      beta_schedule: constant
+      epsilon_schedule: constant
+
+environment_parameters:
+  spot_lesson:
+    curriculum:
+      - name: RedZone
+        completion_criteria:
+          measure: progress
+          behavior: Offense
+          signal_smoothing: false
+          min_lesson_length: 0
+          threshold: 0.2
+        value: 0.0
+      - name: OpenFieldEarlyDowns
+        completion_criteria:
+          measure: progress
+          behavior: Offense
+          signal_smoothing: false
+          min_lesson_length: 0
+          threshold: 0.45
+        value: 1.0
+      - name: FullGame
+        value: 2.0
+
+env_settings:
+  # --env, --num-envs and --base-port go on the command line (see the header).
+  # Record --num-envs in the run's MANIFEST.md; promote_brain.py does it for you.
+  seed: 1
+
+engine_settings:
+  time_scale: 20                  # physics stays at dt=0.02; this only speeds the clock
+  quality_level: 0
+  target_frame_rate: -1
+  capture_frame_rate: 60
+
+torch_settings:
+  device: cpu                     # Not sufficient alone: launch with
+                                  # CUDA_VISIBLE_DEVICES=-1 (see CLAUDE.md).
+
+checkpoint_settings:
+  results_dir: results

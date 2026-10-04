@@ -349,6 +349,30 @@ namespace PoFootball.Models
         public const float LINEAR_DAMPING = 0.8f;
 
         /// <summary>
+        /// The same damping for the two lines, three times as strong (revision 14).
+        ///
+        /// WHY THE LINES ARE DIFFERENT. LINEAR_DAMPING is this simulation's ground
+        /// friction, and 0.8 was chosen for a receiver building to a sprint over
+        /// twenty-five metres. On a 140 kg lineman it meant a 1.25 s time constant
+        /// in every direction: once two of them were leaning on each other the
+        /// pair kept whatever velocity the shove gave it, nothing brought it to
+        /// rest, and five blocks drifted across the field together like one sheet
+        /// of ice. A lineman's whole job is the opposite — short steps, feet under
+        /// him, anchored against a push.
+        ///
+        /// Damping is also how hard a body resists being MOVED: the force needed
+        /// to hold it at a speed is m * d * v. At 2.4 a lineman shoved at 2 m/s
+        /// bleeds that off in 0.4 s and not 1.25, so a block is two bodies stood
+        /// up against each other and a pile stays where it formed.
+        ///
+        /// Systems_RoleTable.DriveForceOf is derived from this, so their top speed
+        /// is unchanged at 6.2 m/s; they reach it in about a second and a half,
+        /// which is a lineman's first three steps, and they push three times as
+        /// hard, on both sides of the ball alike.
+        /// </summary>
+        public const float LINE_LINEAR_DAMPING = 2.4f;
+
+        /// <summary>
         /// Rotational damping. Same relationship as LINEAR_DAMPING: the turn-rate
         /// time constant is 1 / this, so 6 means a player reaches its terminal
         /// turn rate in about 0.17 s. Left alone — the unrealistic part of turning
@@ -359,6 +383,23 @@ namespace PoFootball.Models
 
         /// <summary>Collider radius. Also the lever arm in the moment of inertia.</summary>
         public const float PLAYER_RADIUS = 0.5f;
+
+        // --- Player traits (revision 14) -------------------------------------
+        /// <summary>
+        /// How far one athlete's top speed can sit from his role's, as a fraction:
+        /// a trait of +1 is this much faster. Five percent is about half a metre
+        /// a second on a receiver — a step over forty yards, which is what the
+        /// difference between two starting corners actually is. Neighbouring roles
+        /// now overlap at the edges (a quick back can outrun a slow safety), which
+        /// is the point; the ordering Systems_RoleTable measured holds on average.
+        /// </summary>
+        public const float TRAIT_SPEED_SPREAD = 0.05f;
+
+        /// <summary>Mass, likewise. Eight percent of a guard is eleven kilograms.</summary>
+        public const float TRAIT_MASS_SPREAD = 0.08f;
+
+        /// <summary>Turn rate, likewise.</summary>
+        public const float TRAIT_TURN_SPREAD = 0.10f;
 
         /// <summary>
         /// Hard velocity ceiling — the pileup-explosion guard (criterion #13).
@@ -574,6 +615,16 @@ namespace PoFootball.Models
         /// is why Agent_ActionContract.CONTRACT_REVISION moves with it.
         /// </summary>
         public const int DROPBACK_TICKS = 40;
+
+        /// <summary>
+        /// Longest the snap waits for the defense to call its front. Two decision
+        /// periods: the caller's next decision is at most one away, and the second
+        /// is the same margin IsInCallLatchWindow keeps, because the Academy's step
+        /// and the director's tick are not ordered within a FixedUpdate. A defense
+        /// that has not called by then plays the front that was drawn for it, so a
+        /// scene with no caller is delayed by a fifth of a second and nothing else.
+        /// </summary>
+        public const int PRE_SNAP_MAX_TICKS = 2 * DECISION_PERIOD;
 
         /// <summary>
         /// How far behind the line of scrimmage the quarterback retreats during

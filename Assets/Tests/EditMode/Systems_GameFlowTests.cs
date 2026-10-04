@@ -59,6 +59,8 @@ namespace PoFootball.Tests
         private StubSubscriber<Systems_PlayEndedMessage> _ended;
         private StubPublisher<Systems_DownResolvedMessage> _resolved;
         private StubPublisher<Systems_GameOverMessage> _gameOver;
+        private StubPublisher<Systems_PenaltyMessage> _penalty;
+        private Systems_Roster _roster;
         private Systems_GameFlowSystem _flow;
 
         /// <summary>Tolerance in metres. A tenth of a yard is well inside a spot.</summary>
@@ -72,12 +74,15 @@ namespace PoFootball.Tests
             _ended = new StubSubscriber<Systems_PlayEndedMessage>();
             _resolved = new StubPublisher<Systems_DownResolvedMessage>();
             _gameOver = new StubPublisher<Systems_GameOverMessage>();
+            _penalty = new StubPublisher<Systems_PenaltyMessage>();
+            _roster = new Systems_Roster(Systems_SimMode.Game);
 
             // Deterministic, so the punt assertions below stay exact — see
-            // Systems_RefereeTests for the same reasoning.
+            // Systems_RefereeTests for the same reasoning. It never throws a flag
+            // either.
             _flow = new Systems_GameFlowSystem(
                 _game, _play, new Systems_DeterministicKickModel(),
-                new Systems_SimHealthModel(), _ended, _resolved, _gameOver);
+                new Systems_SimHealthModel(), _roster, _ended, _resolved, _gameOver, _penalty);
             _flow.Start();
         }
 
@@ -722,6 +727,102 @@ namespace PoFootball.Tests
             public bool IsOnsideRecovered() => false;
 
             public bool IsTwoPointGood() => TwoPointGood;
+
+            /// <summary>1 is no flag, as the deterministic model answers.</summary>
+            public float FoulDraw { get; set; } = 1f;
+
+            public float PreSnapFoulDraw() => FoulDraw;
+        }
+
+        // --- Pre-snap fouls ----------------------------------------------------
+
+        private ScriptedKickModel SetUpWithScriptedKicks()
+        {
+            _flow.Dispose();
+
+            ScriptedKickModel kick = new ScriptedKickModel();
+
+            _flow = new Systems_GameFlowSystem(
+                _game, _play, kick, new Systems_SimHealthModel(), _roster,
+                _ended, _resolved, _gameOver, _penalty);
+            _flow.Start();
+
+            return kick;
+        }
+
+        /// <summary>The smallest draw this roster turns into the given foul.</summary>
+        private float DrawThatGives(Systems_PreSnapFoul foul)
+        {
+            for (float unit = 0f; unit < 0.2f; unit += 0.0005f)
+            {
+                if (_roster.FoulFor(unit) == foul)
+                {
+                    return unit;
+                }
+            }
+
+            Assert.Fail($"no draw under 0.2 gives {foul}");
+            return 1f;
+        }
+
+        [Test]
+        public void NoFlag_IsThrown_ByADrawNoChanceReaches()
+        {
+            Assert.That(_roster.FoulFor(1f), Is.EqualTo(Systems_PreSnapFoul.None));
+
+            _flow.NextSituation();
+
+            Assert.That(_penalty.Count, Is.Zero);
+        }
+
+        [Test]
+        public void AFalseStart_IsFiveYardsBack_AndTheDownIsReplayed()
+        {
+            ScriptedKickModel kick = SetUpWithScriptedKicks();
+            kick.FoulDraw = DrawThatGives(Systems_PreSnapFoul.FalseStart);
+
+            Systems_PlaySituation situation = _flow.NextSituation();
+
+            Assert.That(_penalty.Last.Foul, Is.EqualTo(Systems_PreSnapFoul.FalseStart));
+            Assert.That(_penalty.Last.Team, Is.EqualTo(Systems_TeamId.Home), "the offense's flag");
+            Assert.That(situation.Down, Is.EqualTo(1));
+            Assert.That(situation.YardsToGo, Is.EqualTo(15f).Within(0.01f));
+            Assert.That(
+                YardLineOf(situation.LineOfScrimmageY),
+                Is.EqualTo(StartYardLine - 5f).Within(0.1f));
+            Assert.That(_resolved.Count, Is.Zero, "a flag is not a play");
+        }
+
+        [Test]
+        public void AnOffside_ThatReachesTheLineToGain_IsAFirstDown()
+        {
+            ScriptedKickModel kick = SetUpWithScriptedKicks();
+
+            // Second and three.
+            EndPlayAt(OwnYard(StartYardLine + 7f));
+            Assert.That(_game.Down, Is.EqualTo(2), "test premise");
+
+            kick.FoulDraw = DrawThatGives(Systems_PreSnapFoul.Offside);
+            Systems_PlaySituation situation = _flow.NextSituation();
+
+            Assert.That(_penalty.Last.Team, Is.EqualTo(Systems_TeamId.Away), "the defense's flag");
+            Assert.That(situation.Down, Is.EqualTo(1));
+            Assert.That(situation.YardsToGo, Is.EqualTo(10f).Within(0.01f));
+            Assert.That(
+                YardLineOf(situation.LineOfScrimmageY),
+                Is.EqualTo(StartYardLine + 12f).Within(0.1f));
+        }
+
+        [Test]
+        public void AnOffside_ShortOfTheLineToGain_ReplaysTheDownFromFiveYardsOn()
+        {
+            ScriptedKickModel kick = SetUpWithScriptedKicks();
+            kick.FoulDraw = DrawThatGives(Systems_PreSnapFoul.Offside);
+
+            Systems_PlaySituation situation = _flow.NextSituation();
+
+            Assert.That(situation.Down, Is.EqualTo(1));
+            Assert.That(situation.YardsToGo, Is.EqualTo(5f).Within(0.01f));
         }
 
         /// <summary>
@@ -783,7 +884,7 @@ namespace PoFootball.Tests
         public void BeforeTheHalf_TheOffenseStopsTheClockAndIsNotChargedTheHuddle()
         {
             AdvanceToQuarter(2);
-            BurnClockDownTo(50f);
+            BurnClockDownTo(Systems_GameRules.TIMEOUT_WINDOW_SECONDS * 0.8f);
 
             Systems_TeamId offense = _game.Possession;
             float before = _game.SecondsRemaining;
@@ -802,7 +903,7 @@ namespace PoFootball.Tests
         public void ATeamWithNoTimeoutsLeft_IsChargedTheHuddleLikeAnyOtherPlay()
         {
             AdvanceToQuarter(2);
-            BurnClockDownTo(50f);
+            BurnClockDownTo(Systems_GameRules.TIMEOUT_WINDOW_SECONDS * 0.8f);
 
             Systems_TeamId offense = _game.Possession;
 
@@ -834,7 +935,7 @@ namespace PoFootball.Tests
             EndPlayAt(Systems_FieldModel.ATTACKING_GOAL_LINE_Y, Systems_PlayOutcome.Touchdown);
 
             AdvanceToQuarter(Systems_GameRules.QUARTER_COUNT);
-            BurnClockDownTo(50f);
+            BurnClockDownTo(Systems_GameRules.TIMEOUT_WINDOW_SECONDS * 0.8f);
 
             // Put the LEADING team on offense, running the clock out.
             if (_game.Possession != Systems_TeamId.Home)
@@ -859,7 +960,7 @@ namespace PoFootball.Tests
         public void Halftime_GivesBothTeamsTheirTimeoutsBack()
         {
             AdvanceToQuarter(2);
-            BurnClockDownTo(50f);
+            BurnClockDownTo(Systems_GameRules.TIMEOUT_WINDOW_SECONDS * 0.8f);
             GainAFirstDown();
 
             Assert.That(_game.HomeTimeouts + _game.AwayTimeouts, Is.EqualTo(5), "test premise");
@@ -891,7 +992,8 @@ namespace PoFootball.Tests
             _gameOver = new StubPublisher<Systems_GameOverMessage>();
 
             _flow = new Systems_GameFlowSystem(
-                _game, _play, kick, new Systems_SimHealthModel(), _ended, _resolved, _gameOver);
+                _game, _play, kick, new Systems_SimHealthModel(), _roster,
+                _ended, _resolved, _gameOver, _penalty);
             _flow.Start();
 
             // Home kicks a field goal, then tackles Away in its own end zone.

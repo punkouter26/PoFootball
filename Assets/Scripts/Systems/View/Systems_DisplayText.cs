@@ -110,6 +110,7 @@ namespace PoFootball.Views
                 case Systems_PlayCall.HandoffFullback: return "FB DIVE";
                 case Systems_PlayCall.HandoffHalfback: return "HB RUN";
                 case Systems_PlayCall.Pass: return "PASS";
+                case Systems_PlayCall.PassDeep: return "DEEP PASS";
                 case Systems_PlayCall.Punt: return "PUNT";
                 case Systems_PlayCall.FieldGoal: return "FIELD GOAL";
                 default: return "NO CALL";
@@ -173,6 +174,7 @@ namespace PoFootball.Views
                 case Systems_PlayCall.HandoffFullback: return "FB DIVE";
                 case Systems_PlayCall.HandoffHalfback: return "HB RUN";
                 case Systems_PlayCall.Pass: return "PASS";
+                case Systems_PlayCall.PassDeep: return "DEEP";
                 case Systems_PlayCall.Punt: return "PUNT";
                 case Systems_PlayCall.FieldGoal: return "FG";
                 default: return string.Empty;
@@ -233,6 +235,17 @@ namespace PoFootball.Views
             }
 
             return twoPointGood ? "   2-PT GOOD" : "   2-PT NO GOOD";
+        }
+
+        public static string FoulBanner(Systems_PreSnapFoul foul)
+        {
+            return foul == Systems_PreSnapFoul.FalseStart ? "FALSE START" : "OFFSIDE";
+        }
+
+        /// <summary>"AWAY   5 yd   REPLAY THE DOWN". Allocates; a flag is a few times a game.</summary>
+        public static string FoulDetail(Systems_TeamId team, float yards)
+        {
+            return $"{TeamName(team)}   {Mathf.RoundToInt(yards)} yd   REPLAY THE DOWN";
         }
 
         /// <summary>"   TIMEOUT HOM", appended to the banner's detail line, or nothing.</summary>

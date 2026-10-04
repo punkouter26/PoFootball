@@ -59,7 +59,7 @@ Unity ML-Agents self-play.
 - Overwrite `.onnx` in place to preserve `.meta` GUIDs.
 - Headless: `--env --no-graphics` + explicit `--base-port` (envs take consecutive ports; collisions hang). 4–8 envs, leaving cores for torch. `--num-envs` changes how experience is batched — record it.
 - Telemetry over HTTP *and* `StatsRecorder` (`Agent_Telemetry`, a component on `/Systems` in `SCN_TRAIN_FOOTBALL` only). Kill TensorBoard before `--force`: it holds Windows handles and the wipe silently no-ops. Clean up trainer → envs → TensorBoard.
-- **Judge self-play on ELO, not mean reward** — *when self-play is actually running*. It is not, from base05 onward: ML-Agents self-play does not model two different behaviors playing each other, every behavior here carries exactly one team id, and the `self_play` block was removed from the anchor. `Self-play/ELO` does not exist for base05/base06; judge those on `Call/Entropy` and the play mix. See [docs/TRAINING_NOTES_base05.md](docs/TRAINING_NOTES_base05.md).
+- **Judge self-play on ELO, not mean reward** — *when self-play is actually running*. It is not, in any `FootballBase` config from base05 onward, so there is no `Self-play/ELO` for those; judge them on `Call/Entropy` and the play mix. The reason [docs/TRAINING_NOTES_base05.md](docs/TRAINING_NOTES_base05.md) gives for removing it — that ML-Agents self-play cannot model two different behaviors playing each other — is **wrong**: `GhostTrainer` handles one behavior per team, and the official `StrikersVsGoalie.yaml` is exactly that with `poca`. `Config/FootballSelf01.yaml` switches it back on as an experiment against the `football_base16` baseline; its header has the settings, the likely real cause of the base04 stall, and why its ELO is a trend and not a win rate.
 
 ---
 
@@ -85,7 +85,7 @@ results/<run-id>/MANIFEST.md   one per run — records --num-envs, which is part
 ```
 
 **`Assets/Agents/Football_v02` is promoted but REFUSED, so every player runs
-`Heuristic` until a revision 13 run (`football_base15`) is promoted.** v02 came from
+`Heuristic` until a revision 14 run (`football_base16`) is promoted.** v02 came from
 `football_base14` (contract revision 12, 2026-10-03), a run cut short to 1.2M steps
 with a quarterback only 32k steps old and a defense that never learned to pursue
 (`results/football_base14/training_report.html`). It FAILED the realism gate at 6.80
@@ -118,8 +118,74 @@ To promote: train against a config for the CURRENT contract revision, run
 Editor. That last step is not optional — the Python side copies `.onnx` files but
 cannot write the ScriptableObject that lists them.
 
-**THE CURRENT REVISION IS 13, AND `Config/FootballBase15.yaml` IS ITS CONFIG.**
-Revision 13 (2026-10-03) makes execution fallible, with every shape left identical,
+**THE CURRENT REVISION IS 14, AND `Config/FootballBase16.yaml` IS ITS CONFIG.**
+Revision 14 (2026-10-04) changes the shapes — 41 vector observations, Quarterback
+branches `[8, 2]`, and a Defense branch `[9]` — so the gate refuses an older brain as
+well as the stamp. Four things were batched, because nothing was promoted against
+revision 13 to lose:
+
+- **Player traits.** `Systems_RoleTable` was keyed on role alone, so both receivers
+  and all five linemen were one body. `Systems_Roster` now draws a
+  `Systems_PlayerTraits` per formation slot — speed ±5%, mass ±8%, turn rate ±10%,
+  and discipline — and every player observes its own four. **A played game keeps
+  its roster; training redraws it every episode**, so a brain is fitted across the
+  range and not against twenty-two fixed bodies. Same dynamics as a function of the
+  traits in both modes, and the traits are observed.
+- **`PassDeep`**, an eighth play call. The receivers' separation reward is paid
+  short of `DEEP_SHOT_MIN_YARDS` on `Pass` and beyond it on `PassDeep`
+  (`Reward_Role.OnRoute`), which is the whole difference between the two calls. The
+  scripted quarterback calls it on exactly the plays it used to treat as deep shots.
+- **The defense calls its front.** It was a uniform draw. The play now sits in
+  `PreSnap` until the middle linebacker's branch names one of the eight fronts, or
+  `PRE_SNAP_MAX_TICKS` (10) pass, and `Systems_EpisodeDirector` re-forms the defense
+  and snaps. The other ten defenders share the brain and so the branch, pinned to
+  "no call" by the mask. The scripted defense calls the front it was drawn, so the
+  scripted game is unchanged. Watch `DefenseCall/<front>` for a collapse: nothing
+  penalizes repetition yet.
+- **The two lines grip.** `LINE_LINEAR_DAMPING` is 2.4 against everyone else's 0.8
+  (`Systems_RoleTable.LinearDampingOf`), with the drive force re-derived, so a
+  lineman's top speed is unchanged but he reaches it in three steps, pushes three
+  times as hard and stops where he is pushed. At 0.8 two linemen leaning on each
+  other kept whatever velocity the shove gave them and five blocks drifted across
+  the field as one clump.
+
+**Pre-snap fouls arrived in the same change and are NOT contract.** A false start
+or an offside is rolled by `Systems_GameFlowSystem.NextSituation` from the roster's
+discipline, in a played game only: five yards, replay the down, no play run and
+nothing counted toward the REALISM line. Training never throws one.
+
+**The pace moved too, and is not contract either** (`Systems_GameRules`): quarters
+are 120 s with a 2.5 s huddle — the same ~75 snaps the 300 s / 12 s pairing gave —
+and the dead ball is 60 ticks, not 140, so a full game is about eight minutes.
+**There is no instant replay any more**: `Systems_ReplayView` still records every
+play, but only for the three-highlight reel at the final whistle. And the field
+keeps what happened on it — `Systems_TurfScuffView` draws one field-sized wear
+texture over the grass, in sand, with a footprint per running player five times a
+second, a scuff at every hard cut and a worn patch at every tackle, none of which
+fades.
+
+Four scripted games on revision 14, on the tool's four fixed seeds, read **4.84
+yards per play and 0.22 TDs per drive**
+(`results/realism/realism-20261004-133229.json`: 5.67, 3.85, 5.46, 4.38), inside
+both bands, with 84-94 scrimmage plays. The same four seeds read 5.51 and 0.22
+before the line grip went in (`realism-20261004-130850.json`), so the lines holding
+costs the scripted offense about two-thirds of a yard a play — the first balance
+change in this project measured like for like. Neither is comparable with revision
+13's 5.89, which was three random games.
+
+**`football_base15` cannot be promoted.** It was a revision 13 run and its
+`results/` directory was not on the machine revision 14 was written on. Its config
+is in `Config/archive/`.
+
+Two ideas were examined in the same pass and deliberately NOT built, because the
+code already does them: a forward-progress whistle (`Systems_Referee` already
+whistles a carrier who stays under `STALL_SPEED` for `STALL_TICKS`, and its
+comment explains why speed and not progress is the test), and speed-dependent
+turning (steering only rotates the body; the velocity turns through the drive
+force, which already caps lateral acceleration at `TopSpeedOf * LINEAR_DAMPING`,
+about 0.75 g for a receiver).
+
+Revision 13 (2026-10-03, `Config/archive/FootballBase15.yaml`) makes execution fallible, with every shape left identical,
 so only the stamp refuses an older brain. Through revision 12 being in position was
 the whole of every skill — a ball inside `CATCH_RADIUS` was caught, a defender
 inside `PASS_BREAKUP_RADIUS` broke it up, a hit over `TACKLE_CLOSING_SPEED` was a
@@ -199,8 +265,8 @@ run that ended in a tackle), a block no longer outpays the time cost, and there 
 no pursuit reward while the ball is in the air.
 
 Every config for an older contract is in `Config/archive/`, including
-FootballBase06-12 and 14, FootballLong01 and the six `experiments/` variants. Until
-a revision 13 run is promoted, every player is a heuristic.
+FootballBase06-12, 14 and 15, FootballLong01 and the six `experiments/` variants. Until
+a revision 14 run is promoted, every player is a heuristic.
 
 **Judge balance on fixed seeds.** Games with a pinned seed (`Systems_GameLifetimeScope
 ._varySeedPerGame` off, `_episodeSeed` set) replay exactly, and today's single
@@ -212,7 +278,7 @@ Note that `m_Model` references serialized in the scenes are dead either way:
 `Agent_BrainRegistry` at `Awake`, overwriting whatever the scene held.
 
 Heuristic-only is a supported, playable state, not a bug — but nothing you watch
-right now is a trained policy. **To change that, train and promote `football_base15`**
+right now is a trained policy. **To change that, train and promote `football_base16`**
 — see above.
 
 **Scenes.** `SCN_MENU` (front end) → `SCN_GAME` (a scored game) and
@@ -256,6 +322,13 @@ costs something.
 or from a trainer flag, or every existing `.onnx` is being evaluated against
 different dynamics than it was fitted against.
 
+**On a fresh clone, before anything else:** `git lfs pull`. 72 files are in LFS,
+including every DLL under `Assets/Plugins/NuGet`; without them the MCP bridge fails
+to compile with `CS0234 ... 'ReflectorNet'`, and because the Editor will not reload
+a domain that has compile errors, **every later script change compiles to disk and
+is silently never loaded** — tests keep passing against the old assemblies. Then
+recreate `.venv` (the two commands at the top of `requirements.txt`).
+
 **Training** — the config and run-id are paired by name:
 
 ```powershell
@@ -263,7 +336,7 @@ different dynamics than it was fitted against.
 
 # In-editor smoke test: start the trainer, then press Play.
 $env:CUDA_VISIBLE_DEVICES = "-1"     # MANDATORY on this machine. See below.
-mlagents-learn Config\FootballBase15.yaml --run-id=football_base15
+mlagents-learn Config\FootballBase16.yaml --run-id=football_base16
 
 # Headless sweep — envs take CONSECUTIVE ports from --base-port.
 # REBUILD Builds/FootballEnv FIRST whenever the contract revision moved:
@@ -272,7 +345,7 @@ mlagents-learn Config\FootballBase15.yaml --run-id=football_base15
 # stale env is NOT always refused by the handshake. That rebuild is on you.
 # --num-envs=4: measured 257.7 / 255.1 / 236.3 steps/s at 2 / 4 / 12 envs
 # (rl_optimization_log.md); the trainer is the bottleneck.
-mlagents-learn Config\FootballBase15.yaml --run-id=football_base15 `
+mlagents-learn Config\FootballBase16.yaml --run-id=football_base16 `
   --env=Builds\FootballEnv\PoFootball.exe --no-graphics `
   --base-port=5400 --num-envs=4
 
@@ -295,11 +368,14 @@ confidently during the revision 8 work and two of them made the game measurably
 worse. **Single games are very noisy** (4.48 to 7.37 yards/play on one config), so
 compare three-game means.
 
-`Tools > PoFootball > Evaluate Realism (3 games)` (`Editor_RealismEval`) plays three
-games at 8x and writes `results/realism/realism-<stamp>.json`; headless, run
+`Tools > PoFootball > Evaluate Realism (4 fixed seeds)` (`Editor_RealismEval`) plays
+four games at 8x, **always on seeds 1-4**, and writes
+`results/realism/realism-<stamp>.json` — so two reports differ only by what changed
+in the code, which the three random games it used to play could not promise;
+headless, run
 `Unity.exe -batchmode -projectPath . -executeMethod
 PoFootball.EditorTools.Editor_RealismEval.RunBatch` without `-quit`.
-`Tools/promote_brain.py --version NN --check-realism <file>` judges the three-game
+`Tools/promote_brain.py --version NN --check-realism <file>` judges the
 means (yards/play 4.5-6.5, TD/drive 0.15-0.40) and records the verdict in that
 version's MANIFEST.md.
 
@@ -346,7 +422,7 @@ for `cpu`, the `else` branch only sets the dtype — it never puts the default d
 back. Hiding the GPU is what fixes it. Use `-1`; an empty string is ignored on Windows.
 
 `Config/archive/FootballBase06.yaml` (long superseded — the live config is
-`FootballBase15.yaml`, three behaviors, revision 13) carried **six** behaviors. The quarterback has its own brain
+`FootballBase16.yaml`, three behaviors, revision 14) carried **six** behaviors. The quarterback has its own brain
 — it is the only one with discrete actions, and while it shared `OffenseSkill`
 with the backs and receivers its play-call gradient was diluted five to one and
 its entropy bonus could not be raised without injecting noise into four other

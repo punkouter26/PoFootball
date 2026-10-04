@@ -72,6 +72,14 @@ namespace PoFootball.Systems
         /// whether it came off.
         /// </summary>
         bool IsTwoPointGood();
+
+        /// <summary>
+        /// A draw on [0, 1) for the pre-snap flag; Systems_Roster.FoulFor turns it
+        /// into a false start, an offside or nothing. Here because this is the
+        /// rules layer's dice: the deterministic model answers 1, which no chance
+        /// reaches, so a flag is never thrown where the kicks are never random.
+        /// </summary>
+        float PreSnapFoulDraw();
     }
 
     /// <summary>
@@ -115,6 +123,11 @@ namespace PoFootball.Systems
         public bool IsTwoPointGood()
         {
             return false;
+        }
+
+        public float PreSnapFoulDraw()
+        {
+            return 1f;
         }
     }
 
@@ -213,6 +226,11 @@ namespace PoFootball.Systems
         public bool IsTwoPointGood()
         {
             return _rng.NextFloat() < Systems_GameRules.TWO_POINT_SUCCESS_CHANCE;
+        }
+
+        public float PreSnapFoulDraw()
+        {
+            return _rng.NextFloat();
         }
 
         /// <summary>

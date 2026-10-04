@@ -82,7 +82,7 @@ namespace PoFootball.Systems
             // real football calls it; a genuine throw stays a pass attempt whether
             // it was caught, dropped or picked off; and every yard now lands in
             // exactly one of the two columns.
-            bool wasThrown = message.Call == Systems_PlayCall.Pass
+            bool wasThrown = message.Call.IsPass()
                 && (completed
                     || message.Outcome == Systems_PlayOutcome.Incompletion
                     || message.Outcome == Systems_PlayOutcome.Interception);

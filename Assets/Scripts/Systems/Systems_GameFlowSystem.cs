@@ -39,6 +39,8 @@ namespace PoFootball.Systems
         private readonly Systems_PlayModel _play;
         private readonly Systems_IKickModel _kickModel;
         private readonly Systems_SimHealthModel _health;
+        private readonly Systems_Roster _roster;
+        private readonly IPublisher<Systems_PenaltyMessage> _penaltyPublisher;
         private readonly ISubscriber<Systems_PlayEndedMessage> _endedSubscriber;
         private readonly IPublisher<Systems_DownResolvedMessage> _resolvedPublisher;
         private readonly IPublisher<Systems_GameOverMessage> _gameOverPublisher;
@@ -65,10 +67,14 @@ namespace PoFootball.Systems
             Systems_PlayModel play,
             Systems_IKickModel kickModel,
             Systems_SimHealthModel health,
+            Systems_Roster roster,
             ISubscriber<Systems_PlayEndedMessage> endedSubscriber,
             IPublisher<Systems_DownResolvedMessage> resolvedPublisher,
-            IPublisher<Systems_GameOverMessage> gameOverPublisher)
+            IPublisher<Systems_GameOverMessage> gameOverPublisher,
+            IPublisher<Systems_PenaltyMessage> penaltyPublisher)
         {
+            _roster = roster;
+            _penaltyPublisher = penaltyPublisher;
             _game = game;
             _play = play;
             _kickModel = kickModel;
@@ -175,6 +181,8 @@ namespace PoFootball.Systems
                 _game.SetPhase(Systems_GamePhase.Playing);
             }
 
+            ApplyPreSnapFoul();
+
             _game.CountPlay();
             _liveTicks = 0;
 
@@ -184,6 +192,57 @@ namespace PoFootball.Systems
             _game.SetClockRunning(true);
 
             return Situation();
+        }
+
+        /// <summary>
+        /// A false start or an offside, resolved here the way a punt and a kickoff
+        /// are: nobody plays it. The ball is walked off five yards — or half the
+        /// distance to the goal line it is walked toward — the down is replayed,
+        /// and the snap that was about to happen happens from the new spot. An
+        /// offside that reaches the line to gain is a first down, as it is in the
+        /// real game; nothing else about either foul is automatic.
+        ///
+        /// Before CountPlay and with no Systems_DownResolvedMessage, because a flag
+        /// is not a play: it gains no yards for the REALISM line, costs no clock
+        /// and does not appear in the drive chart.
+        /// </summary>
+        private void ApplyPreSnapFoul()
+        {
+            Systems_PreSnapFoul foul = _roster.FoulFor(_kickModel.PreSnapFoulDraw());
+
+            if (foul == Systems_PreSnapFoul.None)
+            {
+                return;
+            }
+
+            bool isOnOffense = foul == Systems_PreSnapFoul.FalseStart;
+
+            float goalLineY = isOnOffense
+                ? Systems_FieldModel.OWN_GOAL_LINE_Y
+                : Systems_FieldModel.ATTACKING_GOAL_LINE_Y;
+
+            float metres = Mathf.Min(
+                Systems_GameRules.PRE_SNAP_PENALTY_YARDS * Systems_FieldModel.YARD,
+                Mathf.Abs(goalLineY - _game.LineOfScrimmageY) * 0.5f);
+
+            float spot = ClampSeriesStart(
+                _game.LineOfScrimmageY + (isOnOffense ? -metres : metres));
+
+            if (spot >= _game.FirstDownMarkerY)
+            {
+                _game.StartSeries(spot);
+            }
+            else
+            {
+                _game.ReplayDownFrom(spot);
+            }
+
+            _penalties++;
+
+            _penaltyPublisher.Publish(new Systems_PenaltyMessage(
+                foul,
+                isOnOffense ? _game.Possession : _game.Possession.Opponent(),
+                metres / Systems_FieldModel.YARD));
         }
 
         private Systems_PlaySituation Situation()
@@ -387,7 +446,8 @@ namespace PoFootball.Systems
                     + $"Punts {_punts}, FG {_fieldGoalsMade}/{_fieldGoalsAttempted}, "
                     + $"safeties {_safeties}, turnovers on downs {_turnoversOnDowns}, "
                     + $"fumbles lost {_fumblesLost}, timeouts {_timeoutsCalled}, "
-                    + $"2-pt {_twoPointsMade}/{_twoPointsAttempted}.");
+                    + $"2-pt {_twoPointsMade}/{_twoPointsAttempted}, "
+                    + $"penalties {_penalties}.");
 
                 float yardsPerPlay = _scrimmagePlays > 0
                     ? _scrimmageYards / _scrimmagePlays
@@ -668,6 +728,7 @@ namespace PoFootball.Systems
         private int _timeoutsCalled;
         private int _twoPointsAttempted;
         private int _twoPointsMade;
+        private int _penalties;
 
         /// <summary>
         /// Tallies the rare results, purely so the final log line can prove a game

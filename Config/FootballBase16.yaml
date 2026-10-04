@@ -1,0 +1,155 @@
+# PoFootball -- the first config against CONTRACT_REVISION 14.
+#
+# Pairs 1:1 with run-id `football_base16` (UNITY_RULES section 1).
+#
+# Launch (CUDA_VISIBLE_DEVICES=-1 is MANDATORY on this machine -- see CLAUDE.md):
+#   $env:CUDA_VISIBLE_DEVICES = "-1"
+#   mlagents-learn Config/FootballBase16.yaml --run-id=football_base16 `
+#     --env=Builds/FootballEnv/PoFootball.exe --no-graphics `
+#     --base-port=5400 --num-envs=4
+#
+# REBUILD Builds/FootballEnv FIRST (Tools > PoFootball > Build Training Env).
+# Revision 14 changes the shapes, so a stale env IS refused by the handshake this
+# time -- but only after it has started, so rebuild anyway.
+#
+# WHAT REVISION 14 IS (Agent_ActionContract has the detail):
+#
+#   Traits          every player has his own speed, mass, turn rate and discipline,
+#                   redrawn every episode here and fixed for a whole played game
+#                   (Systems_Roster). Four more observation floats.
+#   PassDeep        an eighth play call. The receivers' separation reward is paid
+#                   short of DEEP_SHOT_MIN_YARDS on Pass and beyond it on PassDeep.
+#   Defensive call  the Defense brain has one discrete branch, the front, read
+#                   from the middle linebacker before the snap. It was a uniform
+#                   draw, and a policy that samples uniformly -- which is what this
+#                   run starts as -- reproduces that draw.
+#   Line grip       the two lines' ground damping is 2.4, not 0.8, with their drive
+#                   force re-derived: same top speed, but they hold a block and stop
+#                   where they are pushed instead of gliding as one clump.
+#
+# Vector observations 36 -> 41; Quarterback branches [7, 2] -> [8, 2]; Defense
+# gains branch [9]. Pre-snap fouls are game-layer only and never occur here.
+#
+# WHAT TO READ IN THIS RUN:
+#   DefenseCall/<front>   eight series that sum to 1. A defense that settles on one
+#                         front is the collapse Call/Entropy exists to catch on the
+#                         other side of the ball; nothing penalizes repetition yet.
+#   Call/PassDeep         whether the deep call is used at all, and
+#   Pass/CompletionPerAttempt against base15's, which had one pass call.
+#   Play/LengthTicks      unchanged in meaning: the pre-snap wait (at most
+#                         PRE_SNAP_MAX_TICKS, usually under one decision period) is
+#                         before tick 0 and is not counted.
+#
+# THE TRAINER SETTINGS ARE FootballBase15's, UNCHANGED, at the budget that run
+# was extended to: at its original 7M the offense was still climbing.
+# football_base15 itself cannot be promoted -- its results were not on the machine
+# revision 14 was written on, and its contract is refused here.
+#
+# NO SELF-PLAY IN THIS CONFIG, on purpose: it is the baseline.
+# Config/FootballSelf01.yaml is this file plus self_play blocks; see its header.
+#
+# AFTER IT FINISHES:
+#   .venv\Scripts\python.exe Tools\promote_brain.py --run football_base16 `
+#     --version 03 --num-envs 4
+#   then Unity: Tools > PoFootball > Build Brain Table, Evaluate Realism (4 fixed
+#   seeds), and promote_brain.py --version 03 --check-realism <report>.
+behaviors:
+  # MA-POCA for the two ten- and eleven-man groups; see archive/FootballBase11.yaml
+  # for why, and Systems_BrainGroup for why there are three behaviours, not six.
+  Offense: &football_brain
+    trainer_type: poca
+
+    hyperparameters:
+      batch_size: 1024
+      buffer_size: 20480
+      learning_rate: 3.0e-4
+      beta: 5.0e-3
+      epsilon: 0.2
+      lambd: 0.95
+      num_epoch: 3
+      learning_rate_schedule: constant
+      beta_schedule: constant
+      epsilon_schedule: constant
+
+    network_settings:
+      normalize: false            # Sensor_FootballState emits [-1, 1] already;
+                                  # Systems_ContractTests asserts this stays off.
+      hidden_units: 256
+      num_layers: 2
+      vis_encode_type: simple
+
+    reward_signals:
+      extrinsic:
+        gamma: 0.99
+        strength: 1.0
+
+    keep_checkpoints: 20
+    checkpoint_interval: 100000
+    max_steps: 12700000             # base15 was extended to this and was still climbing at 7M
+
+    # One whole play: MAX_PHYSICS_TICKS 600 / DECISION_PERIOD 5. Pinned by
+    # Systems_ContractTests.
+    time_horizon: 120
+
+    summary_freq: 50000
+    threaded: false               # deterministic ordering (UNITY_RULES section 2)
+
+  Defense:
+    <<: *football_brain
+
+  Quarterback:
+    <<: *football_brain
+    trainer_type: ppo
+    max_steps: 1270000
+    checkpoint_interval: 10000      # the QB steps 10x slower; at 100000 a stop before 100k lost the whole brain
+    hyperparameters:
+      batch_size: 256
+      buffer_size: 2048
+      learning_rate: 3.0e-4
+      beta: 5.0e-2                # ten times the movement brains; see Base11
+      epsilon: 0.2
+      lambd: 0.95
+      num_epoch: 5
+      learning_rate_schedule: constant
+      beta_schedule: constant
+      epsilon_schedule: constant
+
+environment_parameters:
+  spot_lesson:
+    curriculum:
+      - name: RedZone
+        completion_criteria:
+          measure: progress
+          behavior: Offense
+          signal_smoothing: false
+          min_lesson_length: 0
+          threshold: 0.2
+        value: 0.0
+      - name: OpenFieldEarlyDowns
+        completion_criteria:
+          measure: progress
+          behavior: Offense
+          signal_smoothing: false
+          min_lesson_length: 0
+          threshold: 0.45
+        value: 1.0
+      - name: FullGame
+        value: 2.0
+
+env_settings:
+  # --env, --num-envs and --base-port go on the command line (see the header).
+  # Record --num-envs in the run's MANIFEST.md; promote_brain.py does it for you.
+  seed: 1
+
+engine_settings:
+  time_scale: 20                  # physics stays at dt=0.02; this only speeds the clock
+  quality_level: 0
+  target_frame_rate: -1
+  capture_frame_rate: 60
+
+torch_settings:
+  device: cpu                     # Not sufficient alone: launch with
+                                  # CUDA_VISIBLE_DEVICES=-1 (see CLAUDE.md).
+
+checkpoint_settings:
+  results_dir: results

@@ -9,44 +9,16 @@ using VContainer;
 namespace PoFootball.Views
 {
     /// <summary>
-    /// The broadcast truck: records every tick of live play, runs the big moment
-    /// back in slow motion during the dead ball, keeps the game's three best
-    /// plays, and offers them on a scrubber at the final whistle.
+    /// The broadcast truck: records every tick of live play, keeps the game's
+    /// three best plays, and offers them on a scrubber at the final whistle.
     ///
-    /// SLOW MOTION WITHOUT TOUCHING TIME. This project once had a slow-motion
-    /// effect that lowered Time.timeScale, and it was removed because a
-    /// presentation view writing that global stranded the Editor at 0.35 when a
-    /// scene unloaded mid-effect (see Systems_BroadcastCameraView and
-    /// Systems_ImpactView). Nothing here writes Time, moves the camera or touches
-    /// any other global. The simulation keeps running at full speed underneath —
-    /// it is a dead ball, so it is only counting down to the next snap — and the
-    /// replay is a recording of positions drawn by stand-in renderers
-    /// (Systems_ReplayGhosts) at 0.4 of a tick per tick. The real bodies are never
-    /// moved; why that matters is in the ghosts' own note.
-    ///
-    /// THE REPLAY FITS THE DEAD BALL BY CONSTRUCTION. In a game the whistle is
-    /// followed by one tick in which Systems_EpisodeDirector resolves it and then
-    /// Systems_GameRules.DEAD_BALL_TICKS (140) more before it re-forms the
-    /// formation and snaps. <see cref="REPLAY_SOURCE_TICKS"/> is derived from
-    /// that count, the speed and a margin, so 52 recorded ticks (1.04 s of play)
-    /// take 128 fixed ticks to show and the ghosts hand back to the real bodies
-    /// about a dozen ticks before anything moves them. The snap message also stops a replay
-    /// outright, so a shorter dead ball could cut one short but never leave the
-    /// ghosts standing on a live play. Raise DEAD_BALL_TICKS and the replay grows
-    /// with it; lower it and it shrinks.
-    ///
-    /// The clock that drives it is the fixed step, counted in FixedUpdate — the
-    /// same clock the dead-ball countdown runs on — so it stays in step with the
-    /// snap at any Sim Speed. LateUpdate only interpolates within the current
-    /// tick for smooth drawing.
-    ///
-    /// WHAT COUNTS AS A BIG MOMENT. A tackle at or above
-    /// Systems_SimConstants.FUMBLE_CLOSING_SPEED — the speed at which the fumble
-    /// model starts rolling, so a replayed hit is one hard enough to have cost
-    /// the ball — or a touchdown. Both are announced by the referee before the
-    /// whistle resolves; the replay is armed when Systems_DownResolvedMessage
-    /// arrives and started on the next FixedUpdate, never inside a collision
-    /// callback.
+    /// THERE IS NO INSTANT REPLAY ANY MORE. Through 2026-10-04 a big hit or a
+    /// touchdown was run back in slow motion during the dead ball, by ghosts
+    /// standing in for the real bodies. It was removed outright rather than
+    /// switched off: at a 1.2 s dead ball it had 0.4 s of play to show, and the
+    /// game is meant to re-form and snap. The tape and the ghosts stay, because
+    /// the highlight reel is built from one and drawn by the other. Nothing here
+    /// writes Time, moves the camera or touches any other global.
     ///
     /// RECORDING IS FIFTY WRITES OF A FEW FLOATS. Positions and headings are read
     /// off each player's Rigidbody2D (see Record for why not the transform), the
@@ -56,13 +28,10 @@ namespace PoFootball.Views
     /// mode only by that same gate: a trainer never pays for a recorder.
     ///
     /// THE UI IS ITS OWN DOCUMENT, above Systems_HudView's and below the status
-    /// HUD's, so neither of those is edited: a REPLAY tag in the bottom-left while
-    /// a replay runs, and the highlight reel docked at the bottom at the whistle
-    /// (Systems_HighlightReel explains the docking).
+    /// HUD's, so neither of those is edited: the highlight reel docked at the
+    /// bottom at the whistle (Systems_HighlightReel explains the docking).
     ///
-    /// THE HIGHLIGHTS PLAY ON THE FIELD, WITH THE SAME GHOSTS. After the final
-    /// whistle nothing else uses them — the instant replay is stopped for good at
-    /// OnGameOver — so the reel borrows them outright: while it is open this view
+    /// THE HIGHLIGHTS PLAY ON THE FIELD, WITH THE GHOSTS. While the reel is open this view
     /// shows the ghosts, poses them from the reel's cursor every frame, and
     /// publishes Systems_HighlightPlaybackMessage with the ghost ball's position.
     /// Systems_HudView takes the final overlay down on that, so the field can be
@@ -84,25 +53,6 @@ namespace PoFootball.Views
         /// <summary>Six seconds of play at the pinned 50 Hz — the longest highlight kept.</summary>
         private const int TAPE_TICKS = 300;
 
-        /// <summary>Slow-motion rate: recorded ticks shown per fixed tick.</summary>
-        private const float REPLAY_SPEED = 0.4f;
-
-        /// <summary>
-        /// Fixed ticks the replay leaves unused at the end of the dead ball, so the
-        /// real bodies are back on screen before the director moves them.
-        /// </summary>
-        private const int REPLAY_EXIT_MARGIN_TICKS = 8;
-
-        /// <summary>
-        /// How much of the play the instant replay shows: as many recorded ticks
-        /// as fit in the dead ball at <see cref="REPLAY_SPEED"/>. 52 today.
-        /// </summary>
-        private const int REPLAY_SOURCE_TICKS = (int)(
-            (Systems_GameRules.DEAD_BALL_TICKS - REPLAY_EXIT_MARGIN_TICKS) * REPLAY_SPEED);
-
-        /// <summary>A play shorter than this has nothing worth slowing down.</summary>
-        private const int MIN_REPLAY_TICKS = 10;
-
         private const int HIGHLIGHT_COUNT = 3;
 
         /// <summary>Half a second. A kick resolves on the tick it is called and is never one.</summary>
@@ -118,14 +68,14 @@ namespace PoFootball.Views
         private Systems_PlayerRegistry _registry;
 
         private ISubscriber<Systems_TackleMessage> _tackleSubscriber;
-        private ISubscriber<Systems_ScoreMessage> _scoreSubscriber;
+
         private ISubscriber<Systems_DownResolvedMessage> _resolvedSubscriber;
         private ISubscriber<Systems_PlaySnappedMessage> _snappedSubscriber;
         private ISubscriber<Systems_GameOverMessage> _gameOverSubscriber;
         private IPublisher<Systems_HighlightPlaybackMessage> _highlightPublisher;
 
         private IDisposable _tackleSubscription;
-        private IDisposable _scoreSubscription;
+
         private IDisposable _resolvedSubscription;
         private IDisposable _snappedSubscription;
         private IDisposable _gameOverSubscription;
@@ -142,24 +92,16 @@ namespace PoFootball.Views
         private Systems_ReplayGhosts _ghosts;
 
         private VisualElement _layer;
-        private Systems_UiOverlay _replayTag;
+
         private Systems_HighlightReel _reel;
 
-        /// <summary>Ticks recorded since the last snap, so a replay never reaches into the previous play.</summary>
+        /// <summary>Ticks recorded since the last snap, so a highlight never reaches into the previous play.</summary>
         private int _playFrames;
 
         /// <summary>Hardest tackle of the current play, m/s. Feeds the highlight score.</summary>
         private float _playPeakClosing;
 
-        private bool _bigMoment;
-        private bool _replayArmed;
-        private bool _replaying;
         private bool _gameOver;
-
-        private int _replayFirstFrame;
-        private int _replayFrameCount;
-        private int _replayTicksElapsed;
-        private int _replayTicksTotal;
 
         /// <summary>
         /// The colours the offense and defense units wore when the current play
@@ -185,7 +127,7 @@ namespace PoFootball.Views
             Systems_BallModel ball,
             Systems_PlayerRegistry registry,
             ISubscriber<Systems_TackleMessage> tackleSubscriber,
-            ISubscriber<Systems_ScoreMessage> scoreSubscriber,
+
             ISubscriber<Systems_DownResolvedMessage> resolvedSubscriber,
             ISubscriber<Systems_PlaySnappedMessage> snappedSubscriber,
             ISubscriber<Systems_GameOverMessage> gameOverSubscriber,
@@ -196,7 +138,7 @@ namespace PoFootball.Views
             _ball = ball;
             _registry = registry;
             _tackleSubscriber = tackleSubscriber;
-            _scoreSubscriber = scoreSubscriber;
+
             _resolvedSubscriber = resolvedSubscriber;
             _snappedSubscriber = snappedSubscriber;
             _gameOverSubscriber = gameOverSubscriber;
@@ -251,7 +193,7 @@ namespace PoFootball.Views
             base.Start();
 
             _tackleSubscription = _tackleSubscriber?.Subscribe(OnTackle);
-            _scoreSubscription = _scoreSubscriber?.Subscribe(OnScore);
+
             _resolvedSubscription = _resolvedSubscriber?.Subscribe(OnDownResolved);
             _snappedSubscription = _snappedSubscriber?.Subscribe(OnSnapped);
             _gameOverSubscription = _gameOverSubscriber?.Subscribe(OnGameOver);
@@ -259,30 +201,7 @@ namespace PoFootball.Views
 
         private void FixedUpdate()
         {
-            if (_gameOver)
-            {
-                return;
-            }
-
-            if (_replayArmed)
-            {
-                _replayArmed = false;
-                BeginReplay();
-            }
-
-            if (_replaying)
-            {
-                _replayTicksElapsed++;
-
-                if (_replayTicksElapsed >= _replayTicksTotal)
-                {
-                    StopReplay();
-                }
-
-                return;
-            }
-
-            if (_play.Phase == Systems_PlayPhase.Live)
+            if (!_gameOver && _play.Phase == Systems_PlayPhase.Live)
             {
                 Record();
             }
@@ -290,7 +209,7 @@ namespace PoFootball.Views
 
         /// <summary>
         /// The reel runs on wall-clock time, so its highlight is posed here rather
-        /// than in LateUpdate's fixed-tick interpolation — and here is also early
+        /// than in LateUpdate — and here is also early
         /// enough that the message reaches Systems_BroadcastCameraView before its
         /// LateUpdate frames this same frame.
         /// </summary>
@@ -324,33 +243,13 @@ namespace PoFootball.Views
             if (_highlightOnField)
             {
                 _ghosts.EnforceHidden();
-                return;
             }
-
-            if (!_replaying)
-            {
-                return;
-            }
-
-            // Where inside the current fixed tick this frame falls, for smooth
-            // drawing between the tick-counted steps. Read, never written.
-            float withinTick = Mathf.Clamp01(
-                (Time.time - Time.fixedTime) / Time.fixedDeltaTime);
-
-            float played = Mathf.Min(
-                (_replayTicksElapsed + withinTick) * REPLAY_SPEED,
-                _replayFrameCount - 1);
-
-            _ghosts.Pose(_tape, _replayFirstFrame + played);
-            _ghosts.EnforceHidden();
         }
 
         private void OnDisable()
         {
             // A disabled view must not leave the real players hidden, nor the
             // final overlay down with nothing on the field to watch.
-            StopReplay();
-
             if (_reel != null)
             {
                 _reel.Close();
@@ -364,8 +263,6 @@ namespace PoFootball.Views
             _tackleSubscription?.Dispose();
             _tackleSubscription = null;
 
-            _scoreSubscription?.Dispose();
-            _scoreSubscription = null;
 
             _resolvedSubscription?.Dispose();
             _resolvedSubscription = null;
@@ -384,8 +281,6 @@ namespace PoFootball.Views
                 _ghosts.Destroy();
                 _ghosts = null;
             }
-
-            _replaying = false;
         }
 
         // --- UI -----------------------------------------------------------------
@@ -394,50 +289,6 @@ namespace PoFootball.Views
         {
             _layer = Systems_UiTheme.Layer();
             Root.Add(_layer);
-
-            _replayTag = BuildReplayTag();
-            _layer.Add(_replayTag.Root);
-        }
-
-        /// <summary>
-        /// The bug in the corner that says this is not live. Bottom-left, just above
-        /// the status footer: the top of the screen is the scoreboard and the
-        /// result banner, both of which are saying something during a dead ball.
-        /// </summary>
-        private static Systems_UiOverlay BuildReplayTag()
-        {
-            Systems_UiOverlay overlay = new Systems_UiOverlay(
-                "ReplayTag", blocksInput: false, scrim: Color.clear);
-
-            overlay.Content.pickingMode = PickingMode.Ignore;
-
-            VisualElement chip = Systems_UiTheme.Row();
-            chip.style.position = Position.Absolute;
-            chip.style.left = Systems_UiTheme.SPACE_M;
-            chip.style.bottom = Systems_UiTheme.STATUS_FOOTER_HEIGHT + Systems_UiTheme.SPACE_M;
-            chip.style.backgroundColor = Systems_UiTheme.SurfaceOverField;
-            chip.pickingMode = PickingMode.Ignore;
-            Systems_UiTheme.SetPadding(chip, Systems_UiTheme.SPACE_XS, Systems_UiTheme.SPACE_M);
-            Systems_UiTheme.SetRadius(chip, Systems_UiTheme.RADIUS);
-            Systems_UiTheme.ApplyElevation(chip);
-
-            VisualElement dot = new VisualElement();
-            dot.style.width = Systems_UiTheme.DOT_SIZE;
-            dot.style.height = Systems_UiTheme.DOT_SIZE;
-            dot.style.marginRight = Systems_UiTheme.SPACE_S;
-            dot.style.backgroundColor = Systems_UiTheme.TextPrimary;
-            dot.pickingMode = PickingMode.Ignore;
-            Systems_UiTheme.SetRadius(dot, Systems_UiTheme.DOT_SIZE / 2);
-
-            Label label = Systems_UiTheme.Text(
-                "REPLAY", Systems_UiTheme.TEXT_BODY, Systems_UiTheme.TextPrimary,
-                FontStyle.Bold, Systems_UiTheme.Typeface.Display);
-            label.style.letterSpacing = 2f;
-
-            chip.Add(dot);
-            chip.Add(label);
-            overlay.Content.Add(chip);
-            return overlay;
         }
 
         // --- Recording ------------------------------------------------------------
@@ -483,7 +334,7 @@ namespace PoFootball.Views
             if (_playerCount == 0)
             {
                 Debug.LogWarning(
-                    $"{nameof(Systems_ReplayView)}: found no players to record. Replays are off.");
+                    $"{nameof(Systems_ReplayView)}: found no players to record. Highlights are off.");
                 return false;
             }
 
@@ -502,7 +353,7 @@ namespace PoFootball.Views
             {
                 Debug.LogWarning(
                     $"{nameof(Systems_ReplayView)}: no Systems_BallView with a SpriteRenderer. "
-                    + "Replays will show the players without the ball.");
+                    + "Highlights will show the players without the ball.");
             }
 
             return true;
@@ -555,77 +406,17 @@ namespace PoFootball.Views
             }
         }
 
-        // --- Instant replay -------------------------------------------------------
-
-        private void BeginReplay()
-        {
-            int frames = Mathf.Min(REPLAY_SOURCE_TICKS, Mathf.Min(_playFrames, _tape.Count));
-
-            if (frames < MIN_REPLAY_TICKS || _ghosts == null)
-            {
-                return;
-            }
-
-            _replayFirstFrame = _tape.Count - frames;
-            _replayFrameCount = frames;
-            _replayTicksElapsed = 0;
-            _replayTicksTotal = Mathf.CeilToInt((frames - 1) / REPLAY_SPEED);
-            _replaying = true;
-
-            _ghosts.Show();
-            _ghosts.Pose(_tape, _replayFirstFrame);
-
-            if (_replayTag != null)
-            {
-                _replayTag.Show();
-            }
-        }
-
-        /// <summary>
-        /// Every way a replay ends comes through here: its natural end, the snap,
-        /// the final whistle, OnDisable and OnDestroy. Idempotent.
-        /// </summary>
-        private void StopReplay()
-        {
-            if (!_replaying)
-            {
-                return;
-            }
-
-            _replaying = false;
-
-            if (_ghosts != null)
-            {
-                _ghosts.Hide();
-            }
-
-            if (_replayTag != null)
-            {
-                _replayTag.Hide();
-            }
-        }
-
         // --- Messages -------------------------------------------------------------
 
         private void OnTackle(Systems_TackleMessage message)
         {
             _playPeakClosing = Mathf.Max(_playPeakClosing, message.ClosingSpeed);
-
-            if (message.ClosingSpeed >= Systems_SimConstants.FUMBLE_CLOSING_SPEED)
-            {
-                _bigMoment = true;
-            }
-        }
-
-        private void OnScore(Systems_ScoreMessage message)
-        {
-            _bigMoment = true;
         }
 
         /// <summary>
         /// The play is over and the game has decided what it meant. Published
         /// synchronously from the whistle — possibly inside a collision callback —
-        /// so this only copies and flags; the replay itself starts in FixedUpdate.
+        /// so this only copies.
         /// The tape is not appended to again until the next snap, so its newest
         /// frames are exactly this play's.
         /// </summary>
@@ -637,23 +428,10 @@ namespace PoFootball.Views
             }
 
             ConsiderHighlight(message);
-
-            if (_bigMoment)
-            {
-                _replayArmed = true;
-            }
-
-            _bigMoment = false;
         }
 
         private void OnSnapped(Systems_PlaySnappedMessage message)
         {
-            // Regardless of how far the replay got: the formation has just been
-            // re-formed under it and the ball is live.
-            _replayArmed = false;
-            StopReplay();
-
-            _bigMoment = false;
             _playPeakClosing = 0f;
             _playFrames = 0;
 
@@ -667,8 +445,6 @@ namespace PoFootball.Views
         private void OnGameOver(Systems_GameOverMessage message)
         {
             _gameOver = true;
-            _replayArmed = false;
-            StopReplay();
 
             BuildReel();
         }
@@ -846,7 +622,6 @@ namespace PoFootball.Views
 
             _reel = new Systems_HighlightReel(ordered, count);
 
-            // Under the replay tag, which is hidden by now anyway.
             _layer.Insert(0, _reel.Root);
             _reel.Show();
         }

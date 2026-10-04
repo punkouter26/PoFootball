@@ -98,6 +98,17 @@ namespace PoFootball.Systems
         }
 
         /// <summary>
+        /// Replaces the drawn front with the one the defense called before the
+        /// snap. The draw above still happens every play, in both modes, so the
+        /// stream — and the offense's alignment — is the same whether or not
+        /// anybody calls; it is also what the defense lines up in when nobody does.
+        /// </summary>
+        public void CallDefense(Systems_DefensiveFormation formation)
+        {
+            Defense = formation;
+        }
+
+        /// <summary>
         /// The starting position of a squad slot, 0..21, under the formations
         /// currently drawn. Offense occupies 0..10 and defense 11..21, which is the
         /// same absolute indexing every agent in the scene already carries.

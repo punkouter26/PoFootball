@@ -66,6 +66,14 @@ namespace PoFootball.Agents
         private float _fatigue;
 
         /// <summary>
+        /// Who this body is this play (revision 14), and the top speed that makes
+        /// it. Set by ApplyTraits with the two derived forces above and the mass,
+        /// so the four can never disagree.
+        /// </summary>
+        private Systems_PlayerTraits _traits;
+        private float _topSpeed;
+
+        /// <summary>
         /// Normal impulse resolved against this body since AccumulateFatigue last
         /// ran, in newton-seconds. Written by the collision callbacks, which fire
         /// after the solver step, and spent on the following tick.
@@ -123,6 +131,16 @@ namespace PoFootball.Agents
         /// <summary>Index on the throw branch that means "release".</summary>
         private const int THROW_RELEASE = 1;
 
+        /// <summary>The Defense brain's only branch: which front to line up in.</summary>
+        private const int DEFENSE_CALL_BRANCH = 0;
+
+        /// <summary>
+        /// One series per front, written when it is called. The collapse this is
+        /// here to show is the one Call/Entropy exists for on the other side of
+        /// the ball: a defense that lines up in one front on every down.
+        /// </summary>
+        private static readonly string[] DefenseCallStatKeys = BuildDefenseCallStatKeys();
+
         // --- Heuristic play-call thresholds ----------------------------------
         //
         // These shape ChooseCall only. They are NOT part of the action contract and
@@ -171,6 +189,13 @@ namespace PoFootball.Agents
         private const float ZONE_SETTLE_RADIUS = 3.5f;
 
         private bool _hasQuarterbackActions;
+
+        /// <summary>
+        /// Whether this is the one defender whose call branch is read. The other
+        /// ten carry the branch because they share the brain, pinned to "no call".
+        /// </summary>
+        private bool _isDefenseCaptain;
+        private bool _hasDefenseCall;
         private bool _isBlocker;
 
         /// <summary>
@@ -257,6 +282,9 @@ namespace PoFootball.Agents
 
         private Systems_FormationSelection _formations;
 
+        /// <summary>Null for an agent with no lifetime scope, who is role-average.</summary>
+        private Systems_Roster _roster;
+
         /// <summary>
         /// The formations on the field this play, with a fallback for an agent that
         /// never got a Construct.
@@ -290,9 +318,11 @@ namespace PoFootball.Agents
             Systems_IIntentSink intentSink,
             Systems_IContactSink contactSink,
             Systems_FormationSelection formations,
+            Systems_Roster roster,
             Systems_SimHealthModel health)
         {
             _health = health;
+            _roster = roster;
             _play = play;
             _ball = ball;
             _ballSystem = ballSystem;
@@ -350,6 +380,10 @@ namespace PoFootball.Agents
             CacheRole();
             _hasQuarterbackActions =
                 Systems_RoleTable.HasQuarterbackActions(Systems_RoleTable.BrainOf(_role));
+            _hasDefenseCall =
+                Systems_RoleTable.HasDefenseCallActions(Systems_RoleTable.BrainOf(_role));
+            _isDefenseCaptain =
+                _formationSlotIndex == Systems_FormationBook.DEFENSIVE_CAPTAIN_SLOT_INDEX;
 
             // Before base.Awake, which is where Agent registers the communicator.
             ConfigureTrainerLink();
@@ -363,8 +397,6 @@ namespace PoFootball.Agents
             _transform = transform;
             _rigidbody = GetComponent<Rigidbody2D>();
 
-            _driveForce = Systems_RoleTable.DriveForceOf(_role);
-            _steerTorque = Systems_RoleTable.SteerTorqueOf(_role);
             _driveStatKey = "Control/Drive/" + _role;
             _driveSaturationStatKey = "Control/DriveSaturation/" + _role;
             _isBlocker = Reward_Role.IsBlocker(_role);
@@ -408,8 +440,11 @@ namespace PoFootball.Agents
             // base03, which meant a 92 kg corner and a 140 kg guard carried
             // identical momentum into a collision and the pileup was decided
             // purely by who happened to be moving faster.
-            _rigidbody.mass = Systems_RoleTable.MassOf(_role);
-            _rigidbody.linearDamping = Systems_SimConstants.LINEAR_DAMPING;
+            //
+            // And per player since revision 14. Role-average here; the director's
+            // first ResetTo applies this player's own traits before any snap.
+            ApplyTraits(default);
+            _rigidbody.linearDamping = Systems_RoleTable.LinearDampingOf(_role);
             _rigidbody.angularDamping = Systems_SimConstants.ANGULAR_DAMPING;
             _rigidbody.collisionDetectionMode = CollisionDetectionMode2D.Continuous;
             _rigidbody.interpolation = RigidbodyInterpolation2D.None;
@@ -419,6 +454,19 @@ namespace PoFootball.Agents
             // applied as torque, so leaving that constraint on would silently
             // discard half of every action the policy takes.
             _rigidbody.constraints = RigidbodyConstraints2D.None;
+        }
+
+        /// <summary>
+        /// Mass, top speed and the two forces derived from them, for one athlete.
+        /// The only writer of any of the four.
+        /// </summary>
+        private void ApplyTraits(Systems_PlayerTraits traits)
+        {
+            _traits = traits;
+            _topSpeed = Systems_RoleTable.TopSpeedOf(_role, traits);
+            _driveForce = Systems_RoleTable.DriveForceOf(_role, traits);
+            _steerTorque = Systems_RoleTable.SteerTorqueOf(_role, traits);
+            _rigidbody.mass = Systems_RoleTable.MassOf(_role, traits);
         }
 
         /// <summary>
@@ -535,6 +583,7 @@ namespace PoFootball.Agents
                 _observationBuffer,
                 _field,
                 _role,
+                _traits,
                 position,
                 Velocity,
                 _rigidbody == null ? 0f : _rigidbody.rotation,
@@ -583,6 +632,12 @@ namespace PoFootball.Agents
         /// </summary>
         public override void WriteDiscreteActionMask(IDiscreteActionMask actionMask)
         {
+            if (_hasDefenseCall)
+            {
+                WriteDefenseCallMask(actionMask);
+                return;
+            }
+
             if (!_hasQuarterbackActions || _play == null)
             {
                 return;
@@ -615,6 +670,68 @@ namespace PoFootball.Agents
         }
 
         /// <summary>
+        /// The front is called by one player, once, before the snap — and that is
+        /// the only decision on which the branch is free. Everywhere else it is
+        /// pinned to "no call", for the reason the quarterback's is: a sample that
+        /// cannot matter should carry no gradient. Inside the window "no call" is
+        /// masked instead, so the call cannot be declined.
+        /// </summary>
+        private void WriteDefenseCallMask(IDiscreteActionMask actionMask)
+        {
+            bool canCall = _isDefenseCaptain
+                && _play != null
+                && _play.Phase == Systems_PlayPhase.PreSnap
+                && !_play.DefenseIsCalled;
+
+            for (int callIndex = 0;
+                callIndex < Agent_ActionContract.DEFENSE_CALL_BRANCH_SIZE;
+                callIndex++)
+            {
+                actionMask.SetActionEnabled(
+                    DEFENSE_CALL_BRANCH, callIndex, canCall ? callIndex != 0 : callIndex == 0);
+            }
+        }
+
+        /// <summary>
+        /// Index 0 is "no call", so a zeroed buffer — what ML-Agents hands back
+        /// between EndEpisode and the next decision — calls nothing, as on the
+        /// quarterback's branch.
+        /// </summary>
+        private void CallDefense(int branchIndex)
+        {
+            if (branchIndex <= 0
+                || branchIndex > Agent_ActionContract.DEFENSE_CALL_SLOTS
+                || _play.DefenseIsCalled)
+            {
+                return;
+            }
+
+            _play.CallDefense(branchIndex - 1);
+
+            if (Academy.IsInitialized && Academy.Instance.IsCommunicatorOn)
+            {
+                StatsRecorder stats = Academy.Instance.StatsRecorder;
+
+                for (int front = 0; front < DefenseCallStatKeys.Length; front++)
+                {
+                    stats.Add(DefenseCallStatKeys[front], front == branchIndex - 1 ? 1f : 0f);
+                }
+            }
+        }
+
+        private static string[] BuildDefenseCallStatKeys()
+        {
+            string[] keys = new string[Agent_ActionContract.DEFENSE_CALL_SLOTS];
+
+            for (int front = 0; front < keys.Length; front++)
+            {
+                keys[front] = "DefenseCall/" + (Systems_DefensiveFormation)front;
+            }
+
+            return keys;
+        }
+
+        /// <summary>
         /// Whether a decision taken now can be the one that latches the call: no call
         /// yet, and its actions will still be applied on or after DROPBACK_TICKS.
         ///
@@ -638,7 +755,7 @@ namespace PoFootball.Agents
         /// </summary>
         private bool CanReleasePass()
         {
-            return _play.Call == Systems_PlayCall.Pass
+            return _play.Call.IsPass()
                 && _isCarrier
                 && _ball != null
                 && _ball.IsHeld
@@ -665,7 +782,19 @@ namespace PoFootball.Agents
 
         public override void OnActionReceived(ActionBuffers actions)
         {
-            if (_play == null || _play.Phase != Systems_PlayPhase.Live)
+            if (_play == null)
+            {
+                return;
+            }
+
+            // The one thing any player does before the snap.
+            if (_isDefenseCaptain && _play.Phase == Systems_PlayPhase.PreSnap)
+            {
+                CallDefense(actions.DiscreteActions[DEFENSE_CALL_BRANCH]);
+                return;
+            }
+
+            if (_play.Phase != Systems_PlayPhase.Live)
             {
                 return;
             }
@@ -842,7 +971,7 @@ namespace PoFootball.Agents
             _previousSteerCommand = steerCommand;
 
             _speedSum += Mathf.Clamp01(
-                _rigidbody.linearVelocity.magnitude / Systems_RoleTable.TopSpeedOf(_role));
+                _rigidbody.linearVelocity.magnitude / _topSpeed);
 
             float driveSize = Mathf.Abs(driveCommand);
             _driveCommandSum += driveSize;
@@ -1035,9 +1164,14 @@ namespace PoFootball.Agents
             if (_isReceiver && !_isCarrier)
             {
                 Systems_IPlayerHandle defender = NearestOpponent();
+                // Paid only at the depth the call asked for (revision 14), which
+                // is the whole of what makes Pass and PassDeep different plays.
                 return defender == null
                     ? 0f
-                    : Reward_Role.Separation(Vector2.Distance(Position, defender.Position));
+                    : Reward_Role.Separation(Vector2.Distance(Position, defender.Position))
+                        * Reward_Role.OnRoute(
+                            _play.Call,
+                            (Position.y - _play.LineOfScrimmageY) / Systems_FieldModel.YARD);
             }
 
             return 0f;
@@ -1212,6 +1346,10 @@ namespace PoFootball.Agents
 
         public void ResetTo(Vector2 position)
         {
+            // Every play, because training redraws the roster every play; in a
+            // game this writes the same values back.
+            ApplyTraits(_roster == null ? default : _roster.TraitsOf(_formationSlotIndex));
+
             float rotation = _side == Systems_TeamSide.Offense ? 0f : 180f;
 
             _transform.SetPositionAndRotation(
@@ -1328,7 +1466,20 @@ namespace PoFootball.Agents
                 discreteActions[index] = 0;
             }
 
-            if (_play == null || _play.Phase != Systems_PlayPhase.Live)
+            if (_play == null)
+            {
+                return;
+            }
+
+            // The scripted defense calls the front it was drawn, so the scripted
+            // game is the one it was before the front could be called at all.
+            if (_isDefenseCaptain && _play.Phase == Systems_PlayPhase.PreSnap)
+            {
+                discreteActions[DEFENSE_CALL_BRANCH] = (int)Formations.Defense + 1;
+                return;
+            }
+
+            if (_play.Phase != Systems_PlayPhase.Live)
             {
                 return;
             }
@@ -1646,7 +1797,7 @@ namespace PoFootball.Agents
                 return true;
             }
 
-            return _play.Call == Systems_PlayCall.Pass
+            return _play.Call.IsPass()
                 && _play.PhysicsTick <= Systems_SimConstants.THROW_WINDOW_TICKS;
         }
 
@@ -1747,7 +1898,7 @@ namespace PoFootball.Agents
         /// </summary>
         private Vector2 InterceptOf(Systems_IPlayerHandle carrier)
         {
-            float speed = Systems_RoleTable.TopSpeedOf(_role);
+            float speed = _topSpeed;
 
             if (speed <= 0.01f)
             {
@@ -1899,7 +2050,7 @@ namespace PoFootball.Agents
                 return;
             }
 
-            if (_play.Call != Systems_PlayCall.Pass || !_isCarrier || _ball == null
+            if (!_play.Call.IsPass() || !_isCarrier || _ball == null
                 || !_ball.IsHeld)
             {
                 return;
@@ -1908,7 +2059,7 @@ namespace PoFootball.Agents
             // Hold the ball a moment so the routes develop, then release inside the
             // window OnActionReceived enforces. A deep shot holds longer, because a
             // fifteen-yard route is still eight yards downfield at THROW_AT_TICK.
-            bool isDeepShot = IsDeepShotPlay();
+            bool isDeepShot = _play.Call == Systems_PlayCall.PassDeep;
 
             int releaseTick = isDeepShot
                 ? Systems_SimConstants.DEEP_SHOT_THROW_AT_TICK
@@ -2158,12 +2309,20 @@ namespace PoFootball.Agents
                 ? 50f
                 : _field.YardsToAttackingGoal(Position.y);
 
-            return Agent_PlayCaller.Choose(
+            Systems_PlayCall call = Agent_PlayCaller.Choose(
                 _play.Down,
                 _play.YardsToGo,
                 yardsToGoal,
                 IsInFieldGoalRange(),
                 NextHeuristicUnit);
+
+            // The deep shot is a call of its own since revision 14. Made here, on
+            // the same plays IsDeepShotPlay always picked, so the scripted offense
+            // throws deep exactly as often as it did when "deep" was something the
+            // quarterback decided after calling Pass.
+            return call == Systems_PlayCall.Pass && IsDeepShotPlay()
+                ? Systems_PlayCall.PassDeep
+                : call;
         }
 
         /// <summary>

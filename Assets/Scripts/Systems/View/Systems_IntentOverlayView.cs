@@ -791,7 +791,7 @@ namespace PoFootball.Views
         /// </summary>
         private void AppendQuarterbackRead()
         {
-            if (_play.Call != Systems_PlayCall.Pass || _ball == null || !_ball.IsHeld)
+            if (!_play.Call.IsPass() || _ball == null || !_ball.IsHeld)
             {
                 return;
             }

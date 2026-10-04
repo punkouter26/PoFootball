@@ -32,8 +32,8 @@ namespace PoFootball.Models
         /// <summary>
         /// Fraction of the final quarter over which the clock term ramps in. The
         /// two-minute warning is two of fifteen minutes; that is too short a window
-        /// against Systems_GameRules.HUDDLE_SECONDS, which burns twelve seconds a
-        /// play — the whole ramp would pass in three snaps.
+        /// against Systems_GameRules.HUDDLE_SECONDS plus the live play, about a
+        /// twentieth of a quarter per snap — the whole ramp would pass in three.
         /// </summary>
         private const float LATE_FRACTION = 0.4f;
 
