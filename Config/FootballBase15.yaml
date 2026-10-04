@@ -54,6 +54,14 @@
 #   then Unity: Tools > PoFootball > Build Brain Table, Evaluate Realism (3 games),
 #   and promote_brain.py --version 03 --check-realism <report>.
 
+# EXTENDED 2026-10-04, by request, by about eight hours. The run was left to reach
+# its 7M / 700k budget and write its final checkpoints, then resumed with --resume
+# and these budgets: 5.7M more Offense/Defense steps at the ~200 steps/s it was
+# making by then. At 5.95M the offense was only at +1.2 yards a play against a
+# defense that had learned to pursue, and still climbing. The curriculum thresholds
+# are fractions of max_steps, but the run was already in FullGame (7M / 12.7M is
+# 0.55, past 0.45), so the extension changes no lesson.
+
 behaviors:
   # MA-POCA for the two ten- and eleven-man groups; see archive/FootballBase11.yaml
   # for why, and Systems_BrainGroup for why there are three behaviours, not six.
@@ -86,7 +94,7 @@ behaviors:
 
     keep_checkpoints: 20
     checkpoint_interval: 100000
-    max_steps: 7000000
+    max_steps: 12700000             # was 7000000; see EXTENDED above
 
     # One whole play: MAX_PHYSICS_TICKS 600 / DECISION_PERIOD 5. Pinned by
     # Systems_ContractTests.
@@ -101,7 +109,7 @@ behaviors:
   Quarterback:
     <<: *football_brain
     trainer_type: ppo
-    max_steps: 700000
+    max_steps: 1270000              # was 700000; see EXTENDED above
     checkpoint_interval: 10000      # the QB steps 10x slower; see the header
     hyperparameters:
       batch_size: 256
