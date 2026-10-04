@@ -1,6 +1,8 @@
 ---
 name: inputsystem-save
 description: Re-serialize a `.inputactions` InputActionAsset to disk and re-import it. Useful to force-persist an asset after external edits.
+metadata:
+  generated-by: mcp-plugin-dotnet
 ---
 
 # InputSystem / Save Asset

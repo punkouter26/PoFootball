@@ -1,6 +1,8 @@
 ---
 name: inputsystem-action-add
 description: Add an Action (with type and optional expectedControlType) to an ActionMap in a `.inputactions` asset, optionally with an initial binding path, and save it.
+metadata:
+  generated-by: mcp-plugin-dotnet
 ---
 
 # InputSystem / Add Action

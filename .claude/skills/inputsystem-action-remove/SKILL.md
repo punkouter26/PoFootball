@@ -1,6 +1,8 @@
 ---
 name: inputsystem-action-remove
 description: Remove an Action (and its Bindings) from an ActionMap in a `.inputactions` asset and save it.
+metadata:
+  generated-by: mcp-plugin-dotnet
 ---
 
 # InputSystem / Remove Action

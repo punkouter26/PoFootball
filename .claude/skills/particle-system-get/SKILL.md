@@ -1,6 +1,8 @@
 ---
 name: particle-system-get
 description: Inspect a `UnityEngine.ParticleSystem` component on a GameObject — runtime state (playing/paused/emitting/stopped, particle count, time) plus opt-in serialized data for any of the ~24 particle modules (Main, Emission, Shape, Velocity, Noise, Collision, Trails, Renderer, etc.). Pair with 'particle-system-modify' to write changes back.
+metadata:
+  generated-by: mcp-plugin-dotnet
 ---
 
 # ParticleSystem / Get

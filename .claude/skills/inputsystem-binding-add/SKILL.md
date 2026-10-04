@@ -1,6 +1,8 @@
 ---
 name: inputsystem-binding-add
 description: Add a simple (non-composite) Binding to an Action in a `.inputactions` asset, with an optional control path, groups, interactions and processors, then save it.
+metadata:
+  generated-by: mcp-plugin-dotnet
 ---
 
 # InputSystem / Add Binding

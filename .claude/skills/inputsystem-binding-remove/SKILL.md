@@ -1,6 +1,8 @@
 ---
 name: inputsystem-binding-remove
 description: Remove a Binding by its index from an Action in a `.inputactions` asset, then save it.
+metadata:
+  generated-by: mcp-plugin-dotnet
 ---
 
 # InputSystem / Remove Binding

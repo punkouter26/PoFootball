@@ -1,6 +1,8 @@
 ---
 name: inputsystem-actionmap-add
 description: Add a new ActionMap to an existing `.inputactions` InputActionAsset and save it.
+metadata:
+  generated-by: mcp-plugin-dotnet
 ---
 
 # InputSystem / Add ActionMap

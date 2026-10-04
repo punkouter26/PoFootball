@@ -1,6 +1,8 @@
 ---
 name: inputsystem-modify
 description: "Generic write escape-hatch: apply a `SerializedMember` diff to the `InputActionAsset` object itself via ReflectorNet `TryModify`, for fields not covered by the dedicated tools. Use 'inputsystem-get' first to inspect the structure."
+metadata:
+  generated-by: mcp-plugin-dotnet
 ---
 
 # InputSystem / Modify Asset (generic)
