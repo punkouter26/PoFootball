@@ -67,5 +67,8 @@
         "extensions.unity"
       ]
     }
+  ],
+  "testables": [
+    "com.besty.unity-skills"
   ]
 }

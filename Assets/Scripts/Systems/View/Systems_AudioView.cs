@@ -781,8 +781,11 @@ namespace PoFootball.Views
                     PlayFlat(_touchdown, 0.7f, 1.12f);
                     break;
 
+                // A recovered kick is the kicking team keeping the ball: the banner
+                // shows it as good news, so the crowd does not groan at it.
                 case Systems_DownResult.FirstDown:
                 case Systems_DownResult.ExtraPointGood:
+                case Systems_DownResult.KickRecovered:
                     PlayFlat(_firstDown, 0.8f, 1f);
                     break;
 
@@ -791,7 +794,6 @@ namespace PoFootball.Views
                 case Systems_DownResult.Safety:
                 case Systems_DownResult.FumbleLost:
                 case Systems_DownResult.BlockedKick:
-                case Systems_DownResult.KickRecovered:
                 case Systems_DownResult.DefensiveTry:
                     PlayFlat(_turnover, 0.9f, 1f);
                     break;

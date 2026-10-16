@@ -1451,14 +1451,17 @@ namespace PoFootball.Tests
             _ball.AttachTo(back.Id, back.Position, Systems_TeamSide.Offense);
             _play.LatchCall(Systems_PlayCall.HandoffHalfback);
 
-            // In front of him, inside the crowd range and outside tackling reach.
+            // Two of them in front of him, inside the crowd range and outside
+            // tackling reach: a crowd, with nobody's hands on him.
             StubPlayer lineman = Player(11);
+            StubPlayer otherLineman = Player(12);
 
             for (int tick = 0; tick < 300 && _play.Phase == Systems_PlayPhase.Live; tick++)
             {
                 back.Position += new Vector2(0f, -0.005f);
                 back.Velocity = new Vector2(tick % 2 == 0 ? 3f : -3f, 0f);
                 lineman.Position = back.Position + new Vector2(0f, 2.2f);
+                otherLineman.Position = back.Position + new Vector2(1.2f, 2.2f);
 
                 _referee.FixedTick();
             }
@@ -1494,6 +1497,67 @@ namespace PoFootball.Tests
                 back.Position += new Vector2(0f, 0.04f);
                 back.Velocity = new Vector2(0f, 2f);
                 lineman.Position = back.Position + new Vector2(2.2f, 0f);
+
+                _referee.FixedTick();
+            }
+
+            Assert.That(_play.Phase, Is.EqualTo(Systems_PlayPhase.Live));
+        }
+
+        /// <summary>
+        /// The review's case against the first version: a receiver crossing the
+        /// field with two defenders trailing him, nobody touching him, is going
+        /// somewhere, and plays on.
+        /// </summary>
+        [Test]
+        public void ACarrierRunningAcrossTheFieldWithDefendersTrailing_PlaysOn()
+        {
+            _skill.WrapUpsToBreak = 100000;
+            MoveEveryoneFarAway();
+
+            StubPlayer back = Player(Systems_Formation.HALFBACK_SLOT_INDEX);
+            back.Position = new Vector2(-10f, 2f);
+            _quarterback.SetCarrier(false);
+            back.SetCarrier(true);
+            _ball.AttachTo(back.Id, back.Position, Systems_TeamSide.Offense);
+            _play.LatchCall(Systems_PlayCall.HandoffHalfback);
+
+            StubPlayer chaser = Player(11);
+            StubPlayer otherChaser = Player(12);
+
+            for (int tick = 0; tick < Systems_SimConstants.STALL_TICKS * 3; tick++)
+            {
+                back.Position += new Vector2(0.1f, 0f);
+                back.Velocity = new Vector2(5f, 0f);
+                chaser.Position = back.Position + new Vector2(-2.2f, 0f);
+                otherChaser.Position = back.Position + new Vector2(-2.2f, 1.0f);
+
+                _referee.FixedTick();
+            }
+
+            Assert.That(_play.Phase, Is.EqualTo(Systems_PlayPhase.Live));
+        }
+
+        /// <summary>One pursuer within reach of a carrier who is going nowhere is a chase, not a crowd.</summary>
+        [Test]
+        public void OnePursuerAndNoContact_IsNotACrowd()
+        {
+            _skill.WrapUpsToBreak = 100000;
+            MoveEveryoneFarAway();
+
+            StubPlayer back = Player(Systems_Formation.HALFBACK_SLOT_INDEX);
+            back.Position = new Vector2(0f, -4f);
+            _quarterback.SetCarrier(false);
+            back.SetCarrier(true);
+            _ball.AttachTo(back.Id, back.Position, Systems_TeamSide.Offense);
+            _play.LatchCall(Systems_PlayCall.HandoffHalfback);
+
+            StubPlayer lineman = Player(11);
+
+            for (int tick = 0; tick < Systems_SimConstants.STALL_TICKS * 2; tick++)
+            {
+                back.Velocity = new Vector2(tick % 2 == 0 ? 3f : -3f, 0f);
+                lineman.Position = back.Position + new Vector2(0f, 2.2f);
 
                 _referee.FixedTick();
             }

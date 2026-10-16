@@ -184,6 +184,22 @@ namespace PoFootball.Models
 
         public bool CallIsLatched => Call != Systems_PlayCall.None;
 
+        /// <summary>
+        /// The front the defense called before this snap, or -1 when it has not
+        /// called one. An index rather than the enum so "none" needs no ninth
+        /// formation.
+        ///
+        /// WHY THE DEFENSE CALLS AT ALL (revision 14). The front used to be a
+        /// uniform draw (Systems_FormationSelection), so a trained defense lined up
+        /// in a zero blitz on first and ten as often as on third and long and could
+        /// not do otherwise. It is called in the PreSnap phase — the same
+        /// PRESNAP_TICKS in which the quarterback may call a kick — and
+        /// Systems_EpisodeDirector puts the front on the field the tick it is set.
+        /// </summary>
+        public int DefenseCallIndex { get; private set; } = -1;
+
+        public bool DefenseIsCalled => DefenseCallIndex >= 0;
+
         /// <summary>True once a receiver has caught a pass on this play.</summary>
         public bool PassCompleted { get; private set; }
 
@@ -221,6 +237,7 @@ namespace PoFootball.Models
             Phase = Systems_PlayPhase.PreSnap;
             Outcome = Systems_PlayOutcome.None;
             Call = Systems_PlayCall.None;
+            DefenseCallIndex = -1;
             PassCompleted = false;
             PhysicsTick = 0;
             PreSnapTick = 0;
@@ -453,6 +470,20 @@ namespace PoFootball.Models
             }
 
             return count;
+        }
+
+        /// <summary>
+        /// Records the defense's front. Before the snap only, and only the first:
+        /// like the quarterback's call, it cannot be changed once made.
+        /// </summary>
+        public void CallDefense(int formationIndex)
+        {
+            if (Phase != Systems_PlayPhase.PreSnap || DefenseIsCalled || formationIndex < 0)
+            {
+                return;
+            }
+
+            DefenseCallIndex = formationIndex;
         }
 
         /// <summary>Advanced once per FixedUpdate by Systems_Referee while the play is live.</summary>

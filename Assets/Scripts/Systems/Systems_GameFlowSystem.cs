@@ -233,7 +233,6 @@ namespace PoFootball.Systems
 
             int pointsScored = 0;
             Systems_TeamId scorer = offense;
-            float markerBefore = _game.FirstDownMarkerY;
 
             Systems_DownResult result = Resolve(
                 message, offense, spotY, ref pointsScored, ref scorer,
@@ -243,13 +242,10 @@ namespace PoFootball.Systems
             Systems_DownResult playResult = result;
 
             // The chains moved on a flag, not a gain: an accepted defensive foul
-            // that left the offense with the ball and a new line to gain.
+            // that gave the offense a new series. Decided where it was enforced.
             bool penaltyFirstDown = result == Systems_DownResult.Penalty
-                && ruling.Accepted
-                && ruling.FoulTeam != offense
-                && _game.Possession == offense
-                && _game.Down == 1
-                && !Mathf.Approximately(_game.FirstDownMarkerY, markerBefore);
+                && ruling.Decision == Systems_FoulDecision.Enforced
+                && ruling.FirstDown;
 
             float returnYards = ReturnYardsOf(message);
 
@@ -406,8 +402,10 @@ namespace PoFootball.Systems
             // Scrimmage plays only, and only snaps that were played: a kick gains
             // nothing for the offense by construction, a try is not a down, and a
             // kneel or a spike is the clock, not football.
+            // ...nor a down a flag replaced, which the box score does not book either.
             bool isScrimmagePlay = kind == Systems_PlayKind.Scrimmage
-                && message.Outcome != Systems_PlayOutcome.DeadBallFoul;
+                && message.Outcome != Systems_PlayOutcome.DeadBallFoul
+                && playResult != Systems_DownResult.Penalty;
 
             if (isScrimmagePlay)
             {
@@ -419,7 +417,7 @@ namespace PoFootball.Systems
                 // went seventy: football's mean, nothing like football's plays. A
                 // carry is any scrimmage snap where the ball did not leave the
                 // passer's hand, as in Systems_StatsSystem; a sack is neither.
-                bool thrown = message.Call == Systems_PlayCall.Pass
+                bool thrown = message.Call.IsPass()
                     && (message.PassCompleted
                         || message.Outcome == Systems_PlayOutcome.Incompletion
                         || message.Outcome == Systems_PlayOutcome.Interception);
@@ -1028,7 +1026,8 @@ namespace PoFootball.Systems
             _game.SetNextPlay(Systems_PlayKind.Scrimmage);
 
             return new Systems_FoulRuling(
-                Systems_FoulDecision.Enforced, foul, foulTeam, yardsAwarded, Systems_DownResult.Penalty);
+                Systems_FoulDecision.Enforced, foul, foulTeam, yardsAwarded, Systems_DownResult.Penalty,
+                firstDown);
         }
 
         /// <summary>
@@ -1169,6 +1168,7 @@ namespace PoFootball.Systems
                 lineOfScrimmage + ((againstOffense ? -yards : yards) * Systems_FieldModel.YARD));
 
             Systems_TeamId foulTeam = TeamOf(foul.Side, offense);
+            bool deadBallFirstDown = false;
 
             if (kind.IsTry())
             {
@@ -1182,6 +1182,7 @@ namespace PoFootball.Systems
             {
                 _game.StartSeries(newLine);
                 _game.SetNextPlay(Systems_PlayKind.Scrimmage);
+                deadBallFirstDown = true;
             }
             else
             {
@@ -1190,7 +1191,8 @@ namespace PoFootball.Systems
             }
 
             return new Systems_FoulRuling(
-                Systems_FoulDecision.Enforced, foul, foulTeam, yards, Systems_DownResult.Penalty);
+                Systems_FoulDecision.Enforced, foul, foulTeam, yards, Systems_DownResult.Penalty,
+                deadBallFirstDown);
         }
 
         /// <summary>The foul on this side worth the most yards — the one an offended team would take.</summary>
@@ -1544,8 +1546,12 @@ namespace PoFootball.Systems
                 && _game.ScoreOf(team) <= _game.ScoreOf(team.Opponent());
         }
 
-        /// <summary>Seconds left in a half under which a team without timeouts spikes it.</summary>
-        private const float SPIKE_WINDOW_SECONDS = 20f;
+        /// <summary>
+        /// Seconds left in a half under which a team without timeouts spikes it: the
+        /// last minute of an NFL half, on this game's clock (CLOCK_SCALE). A flat
+        /// 20 s was a sixth of a two-minute quarter.
+        /// </summary>
+        private const float SPIKE_WINDOW_SECONDS = 60f * Systems_GameRules.CLOCK_SCALE;
 
         // =====================================================================
         // Periods and overtime
@@ -1716,8 +1722,14 @@ namespace PoFootball.Systems
             // THE THREE NUMBERS THAT SAY WHETHER THIS IS FOOTBALL. Real football
             // runs about 5.5 yards a play, faces a fourth down on roughly one series
             // in three, and scores a touchdown on about one drive in five.
-            float yardsPerCarry = _rushCarries > 0 ? _rushYards / _rushCarries : 0f;
-            float completionRate = _passAttempts > 0 ? _completions / (float)_passAttempts : 0f;
+            // "n/a", not 0.00, when there was nothing to measure: a game with no
+            // carries ran for no yards a carry, it did not run for zero.
+            string yardsPerCarry = _rushCarries > 0
+                ? (_rushYards / _rushCarries).ToString("F2", System.Globalization.CultureInfo.InvariantCulture)
+                : "n/a";
+            string completionRate = _passAttempts > 0
+                ? (_completions / (float)_passAttempts).ToString("F2", System.Globalization.CultureInfo.InvariantCulture)
+                : "n/a";
 
             // The last three were added after a game read 6.4 yards a play from
             // minus-yardage runs and seventy-yard completions. Appended, so a parser
@@ -1727,9 +1739,9 @@ namespace PoFootball.Systems
                 + $" | 4th downs faced {_fourthDowns}"
                 + $" | TD/drive {touchdownsPerDrive:F2}"
                 + $" | scrimmage plays {_scrimmagePlays}"
-                + $" | rush yd/carry {yardsPerCarry:F2}"
+                + $" | rush yd/carry {yardsPerCarry}"
                 + $" | first downs {_firstDowns}"
-                + $" | completion {completionRate:F2}");
+                + $" | completion {completionRate}");
 
             Systems_Log.Info($"[PoFootball] Down results: {Tally<Systems_DownResult>(_resultCounts)}");
             Systems_Log.Info($"[PoFootball] Play outcomes: {Tally<Systems_PlayOutcome>(_outcomeCounts)}");
@@ -1960,19 +1972,29 @@ namespace PoFootball.Systems
         public readonly Systems_TeamSide Side;
         public readonly float SpotY;
 
+        /// <summary>
+        /// The enforcement started a new series for the offended offense. Decided
+        /// where the penalty is walked off, not inferred afterwards from the line to
+        /// gain moving: the marker is clamped at the goal line, so an automatic
+        /// first down inside the ten left it where it was and went uncounted.
+        /// </summary>
+        public readonly bool FirstDown;
+
         public Systems_FoulRuling(
             Systems_FoulDecision decision, Systems_Foul foul, Systems_TeamId foulTeam,
-            float yards, Systems_DownResult result)
+            float yards, Systems_DownResult result, bool firstDown = false)
             : this(decision, foul, foulTeam, yards, result,
-                Systems_PlayOutcome.None, Systems_TeamSide.Offense, 0f)
+                Systems_PlayOutcome.None, Systems_TeamSide.Offense, 0f, firstDown)
         {
         }
 
         private Systems_FoulRuling(
             Systems_FoulDecision decision, Systems_Foul foul, Systems_TeamId foulTeam,
             float yards, Systems_DownResult result,
-            Systems_PlayOutcome outcome, Systems_TeamSide side, float spotY)
+            Systems_PlayOutcome outcome, Systems_TeamSide side, float spotY,
+            bool firstDown = false)
         {
+            FirstDown = firstDown;
             Decision = decision;
             Foul = foul;
             FoulTeam = foulTeam;

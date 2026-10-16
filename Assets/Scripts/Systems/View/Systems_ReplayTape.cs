@@ -5,7 +5,7 @@ namespace PoFootball.Views
 {
     /// <summary>
     /// A fixed number of physics ticks of where every body and the ball were:
-    /// the recording that the instant replay, the highlights and the scrubber all
+    /// the recording that the highlights and the scrubber both
     /// play back from.
     ///
     /// STRUCTURE OF ARRAYS, ALLOCATED ONCE. Twenty-two positions and headings a
@@ -21,8 +21,7 @@ namespace PoFootball.Views
     /// of one tape into another starting at slot 0, which is how a highlight is
     /// frozen without a second ring to reason about.
     ///
-    /// SAMPLES BETWEEN TICKS. Playback runs slower than the simulation (the
-    /// instant replay) or on wall-clock time (the scrubber), so a rendered frame
+    /// SAMPLES BETWEEN TICKS. Playback runs on wall-clock time (the scrubber), so a rendered frame
     /// almost never lands on a recorded tick. Positions are lerped and headings go
     /// through Mathf.LerpAngle, so a body turning through 0 degrees does not spin
     /// the long way round for one frame. The carrier is not interpolated — the

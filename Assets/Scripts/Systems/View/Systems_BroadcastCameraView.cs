@@ -637,6 +637,11 @@ namespace PoFootball.Views
             Vector2 ball = _ball.Position;
             float size = _camera.orthographicSize;
 
+            if (_ball.IsKicked && TryCoverageCentre(out Vector2 coverage))
+            {
+                return KickTarget(ball, coverage);
+            }
+
             Vector2 target = _ball.IsInFlight && _passTarget != null
                 ? FlightTarget(ball)
                 : new Vector2(ball.x * _lateralTracking, ball.y + (size * DOWNFIELD_LEAD));
@@ -670,6 +675,64 @@ namespace PoFootball.Views
         private Vector2 FlightTarget(Vector2 ball)
         {
             return (ball + _passTarget.Position) * 0.5f;
+        }
+
+        /// <summary>
+        /// A kick in the air is framed between the ball and the kicking team's
+        /// coverage, the way a pass is framed between the ball and its receiver.
+        ///
+        /// WHY (2026-10-16 review). A kicked ball is not IsInFlight — that is a
+        /// pass — so a kickoff was followed like a ball on the ground: the shot ran
+        /// sixty yards downfield with it, the eleven men chasing it fell out of the
+        /// bottom of the frame, and the viewer watched a returner wait under an
+        /// empty sky. A kick is the coverage racing the ball; both belong on screen.
+        /// Held so the ball stays in frame, which on a long kick off a tall screen
+        /// means the coverage can still be at the edge — the ball wins, as it does
+        /// everywhere else in this camera.
+        /// </summary>
+        private Vector2 KickTarget(Vector2 ball, Vector2 coverage)
+        {
+            Vector2 target = (ball + coverage) * 0.5f;
+            target.x *= _lateralTracking;
+
+            float size = Mathf.Min(SizeToHold(ball, target), WideSize());
+
+            return KeepBallInFrame(target, ball, size);
+        }
+
+        /// <summary>
+        /// The middle of the kicking team: the side the kick left from, the offense of
+        /// the snap. False before the bodies are registered.
+        /// </summary>
+        private bool TryCoverageCentre(out Vector2 centre)
+        {
+            centre = Vector2.zero;
+
+            if (_registry == null)
+            {
+                return false;
+            }
+
+            int count = 0;
+
+            for (int slotIndex = 0; slotIndex < Systems_PlayerRegistry.CAPACITY; slotIndex++)
+            {
+                Systems_IPlayerHandle player = _registry.Get(slotIndex);
+
+                if (player != null && player.Side == Systems_TeamSide.Offense)
+                {
+                    centre += player.Position;
+                    count++;
+                }
+            }
+
+            if (count == 0)
+            {
+                return false;
+            }
+
+            centre /= count;
+            return true;
         }
 
         /// <summary>See LATERAL_LOOK_AHEAD_SECONDS for why this is sideways only.</summary>
@@ -717,6 +780,13 @@ namespace PoFootball.Views
             if (_play == null || _ball.IsInFlight)
             {
                 return wide;
+            }
+
+            // A kick: wide enough for the ball and the coverage, never wider than the
+            // wide shot. See KickTarget.
+            if (_ball.IsKicked)
+            {
+                return Mathf.Max(Mathf.Min(SizeToHold(_ball.Position, target), wide), tight);
             }
 
             float size = Mathf.Lerp(tight, wide, openness);

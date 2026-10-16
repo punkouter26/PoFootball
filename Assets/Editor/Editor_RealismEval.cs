@@ -4,6 +4,7 @@ using System.IO;
 using System.Text;
 using System.Text.RegularExpressions;
 using PoFootball.Agents;
+using PoFootball.Systems;
 using PoFootball.Views;
 using UnityEditor;
 using UnityEditor.SceneManagement;
@@ -68,7 +69,7 @@ namespace PoFootball.EditorTools
         private static readonly Regex RealismLine = new Regex(
             @"\[PoFootball\] REALISM\s+yards/play (-?[\d.]+) \| 4th downs faced (\d+) "
             + @"\| TD/drive ([\d.]+) \| scrimmage plays (\d+)"
-            + @"(?: \| rush yd/carry (-?[\d.]+) \| first downs (\d+) \| completion ([\d.]+))?");
+            + @"(?: \| rush yd/carry (-?[\d.]+|n/a) \| first downs (\d+) \| completion ([\d.]+|n/a))?");
 
         static Editor_RealismEval()
         {
@@ -86,7 +87,7 @@ namespace PoFootball.EditorTools
 
         private static bool IsRunning => SessionState.GetInt(KEY_REMAINING, 0) > 0;
 
-        [MenuItem("Tools/PoFootball/Evaluate Realism (4 games)")]
+        [MenuItem("Tools/PoFootball/Evaluate Realism (4 fixed seeds)")]
         private static void RunFromMenu()
         {
             Begin(false);
@@ -205,7 +206,19 @@ namespace PoFootball.EditorTools
                 OrMissing(match.Groups[5]),
                 OrMissing(match.Groups[6]),
                 OrMissing(match.Groups[7]),
-                SEEDS[Math.Min(played, GAMES - 1)].ToString(CultureInfo.InvariantCulture));
+                // The seed the game ACTUALLY ran on. A ReplayGame the router
+                // swallowed (a load already in flight) plays whatever seed was
+                // drawn instead, and recording SEEDS[played] would have filed it
+                // silently under the wrong one.
+                Systems_EpisodeSeed.Value.ToString(CultureInfo.InvariantCulture));
+
+            if (Systems_EpisodeSeed.Value != SEEDS[Math.Min(played, GAMES - 1)])
+            {
+                Debug.LogWarning(
+                    $"[PoFootball] Evaluate Realism: game {played + 1} ran on seed "
+                    + $"{Systems_EpisodeSeed.Value}, not {SEEDS[Math.Min(played, GAMES - 1)]}. "
+                    + "Its report is not comparable to one on the fixed seeds.");
+            }
 
             SessionState.SetString(KEY_RESULTS, SessionState.GetString(KEY_RESULTS, string.Empty) + game + ";");
 
@@ -242,7 +255,7 @@ namespace PoFootball.EditorTools
         /// <summary>A group the line did not carry — one written before the split was logged.</summary>
         private static string OrMissing(Group group)
         {
-            return group.Success ? group.Value : "null";
+            return group.Success && group.Value != "n/a" ? group.Value : "null";
         }
 
         private static void Finish()
@@ -314,6 +327,7 @@ namespace PoFootball.EditorTools
             json.Append($"  \"contract_revision\": {Agent_ActionContract.CONTRACT_REVISION},\n");
             json.Append($"  \"brains_loaded\": {(brainsLoaded ? "true" : "false")},\n");
             json.Append($"  \"sim_speed\": {SIM_SPEED.ToString(CultureInfo.InvariantCulture)},\n");
+            json.Append($"  \"seeds\": [{string.Join(", ", SEEDS)}],\n");
             json.Append("  \"games\": [\n");
 
             string[] games = results.Split(new[] { ';' }, StringSplitOptions.RemoveEmptyEntries);

@@ -257,7 +257,19 @@ namespace PoFootball.Models
         /// </summary>
         public static float DriveForceOf(Systems_PlayerRole role)
         {
-            return TopSpeedOf(role) * MassOf(role) * Systems_SimConstants.LINEAR_DAMPING;
+            return TopSpeedOf(role) * MassOf(role) * LinearDampingOf(role);
+        }
+
+        /// <summary>
+        /// Ground friction for this role: the two lines grip, everyone else runs.
+        /// See Systems_SimConstants.LINE_LINEAR_DAMPING.
+        /// </summary>
+        public static float LinearDampingOf(Systems_PlayerRole role)
+        {
+            return role == Systems_PlayerRole.OffensiveLine
+                || role == Systems_PlayerRole.DefensiveLine
+                    ? Systems_SimConstants.LINE_LINEAR_DAMPING
+                    : Systems_SimConstants.LINEAR_DAMPING;
         }
 
         /// <summary>
@@ -275,6 +287,49 @@ namespace PoFootball.Models
                 * Systems_SimConstants.PLAYER_RADIUS * Systems_SimConstants.PLAYER_RADIUS;
 
             return TurnRateOf(role) * momentOfInertia * Systems_SimConstants.ANGULAR_DAMPING;
+        }
+
+        // --- One athlete rather than one role (revision 14) -------------------
+        //
+        // The same derivations with a Systems_PlayerTraits applied. Force and
+        // torque are derived from the SCALED speed, mass and turn rate, so the
+        // steady-state argument above still holds for every individual body: a
+        // fast player's terminal velocity is exactly his own TopSpeedOf.
+
+        public static float TopSpeedOf(Systems_PlayerRole role, Systems_PlayerTraits traits)
+        {
+            return TopSpeedOf(role) * traits.SpeedScale;
+        }
+
+        public static float MassOf(Systems_PlayerRole role, Systems_PlayerTraits traits)
+        {
+            return MassOf(role) * traits.MassScale;
+        }
+
+        public static float TurnRateOf(Systems_PlayerRole role, Systems_PlayerTraits traits)
+        {
+            return TurnRateOf(role) * traits.TurnScale;
+        }
+
+        public static float DriveForceOf(Systems_PlayerRole role, Systems_PlayerTraits traits)
+        {
+            return DriveForceOf(role) * traits.SpeedScale * traits.MassScale;
+        }
+
+        public static float SteerTorqueOf(Systems_PlayerRole role, Systems_PlayerTraits traits)
+        {
+            return SteerTorqueOf(role) * traits.TurnScale * traits.MassScale;
+        }
+
+        /// <summary>
+        /// The defensive brain carries one discrete branch: which front to line up
+        /// in. Every defender shares the brain and so the branch, but it is read
+        /// from one player only (Systems_FormationBook.DEFENSIVE_CAPTAIN_SLOT_INDEX)
+        /// and pinned to "no call" by the action mask for the other ten.
+        /// </summary>
+        public static bool HasDefenseCallActions(Systems_BrainGroup group)
+        {
+            return group == Systems_BrainGroup.Defense;
         }
 
         /// <summary>

@@ -59,7 +59,7 @@ Unity ML-Agents self-play.
 - Overwrite `.onnx` in place to preserve `.meta` GUIDs.
 - Headless: `--env --no-graphics` + explicit `--base-port` (envs take consecutive ports; collisions hang). 4–8 envs, leaving cores for torch. `--num-envs` changes how experience is batched — record it.
 - Telemetry over HTTP *and* `StatsRecorder` (`Agent_Telemetry`, a component on `/Systems` in `SCN_TRAIN_FOOTBALL` only). Kill TensorBoard before `--force`: it holds Windows handles and the wipe silently no-ops. Clean up trainer → envs → TensorBoard.
-- **Judge self-play on ELO, not mean reward** — *when self-play is actually running*. It is not, from base05 onward: ML-Agents self-play does not model two different behaviors playing each other, every behavior here carries exactly one team id, and the `self_play` block was removed from the anchor. `Self-play/ELO` does not exist for base05/base06; judge those on `Call/Entropy` and the play mix. See [docs/TRAINING_NOTES_base05.md](docs/TRAINING_NOTES_base05.md).
+- **Judge self-play on ELO, not mean reward** — *when self-play is actually running*. It is not, in any `FootballBase` config from base05 onward, so there is no `Self-play/ELO` for those; judge them on `Call/Entropy` and the play mix. The reason [docs/TRAINING_NOTES_base05.md](docs/TRAINING_NOTES_base05.md) gives for removing it — that ML-Agents self-play cannot model two different behaviors playing each other — is **wrong**: `GhostTrainer` handles one behavior per team, and the official `StrikersVsGoalie.yaml` is exactly that with `poca`. `Config/FootballSelf01.yaml` switches it back on as an experiment against the `football_base17` baseline; its header has the settings, the likely real cause of the base04 stall, and why its ELO is a trend and not a win rate.
 
 ---
 
@@ -85,7 +85,7 @@ results/<run-id>/MANIFEST.md   one per run — records --num-envs, which is part
 ```
 
 **`Assets/Agents/Football_v02` is promoted but REFUSED, so every player runs
-`Heuristic` until a revision 14 run (`football_base16`) is promoted.** v02 came from
+`Heuristic` until a revision 15 run (`football_base17`) is promoted.** v02 came from
 `football_base14` (contract revision 12, 2026-10-03), a run cut short to 1.2M steps
 with a quarterback only 32k steps old and a defense that never learned to pursue
 (`results/football_base14/training_report.html`). It FAILED the realism gate at 6.80
@@ -123,10 +123,25 @@ To promote: train against a config for the CURRENT contract revision, run
 Editor. That last step is not optional — the Python side copies `.onnx` files but
 cannot write the ScriptableObject that lists them.
 
-**THE CURRENT REVISION IS 14, AND `Config/FootballBase16.yaml` IS ITS CONFIG.**
-Revision 14 (2026-10-15) PLAYS THE WHOLE GAME, and unlike 11-13 it changes the
-SHAPES: 45 observations (was 36) and a pitch branch on the Offense and Defense
-brains, so a shape check refuses an older brain as well as the stamp.
+**THE CURRENT REVISION IS 15, AND `Config/FootballBase17.yaml` IS ITS CONFIG.**
+Revision 15 (2026-10-16) IS THE MERGE OF TWO REVISION 14s. Both were built from
+revision 13 in parallel — one on another machine on 2026-10-04, pushed to origin,
+one here on 2026-10-15, never pulled against it — and they shared a number and
+nothing else. Revision 15 keeps every shape of both: **50 observations; Quarterback
+branches `[8, 2]`; Offense `[2]`, the pitch; Defense `[2, 9]`, the pitch and then the
+front.** Where the two built the same thing, one was kept: the pre-snap is this
+machine's (bodies set for `PRESNAP_TICKS`, the referee snaps), with the front
+called inside it and lined up the tick it is called; pre-snap fouls are this
+machine's refereed flinches, weighted by the other's discipline trait
+(`Systems_SeededDisciplineModel`), and the other's between-plays roll is gone;
+kicks are played, so `Systems_IKickModel` stays deleted; the pace is the other's
+(120 s quarters, 2.5 s huddle, 1.2 s dead ball, no instant replay), with this
+machine's clock rules scaled to it. **No brain of either revision 14 loads.**
+`football_base16` (below) can be promoted only from commit `1417808`.
+
+Revision 14, as written HERE (2026-10-15), PLAYS THE WHOLE GAME, and unlike 11-13
+it changes the SHAPES: 45 observations (was 36) and a pitch branch on the Offense
+and Defense brains.
 `Agent_ActionContract` and `docs/GAME_LAYER.md` ("Rules implemented") have the detail:
 
 - **Kicks are snaps.** Kickoffs, punts, field goals and the try after a touchdown
@@ -147,9 +162,8 @@ brains, so a shape check refuses an older brain as well as the stamp.
   defender's CONTACT and the stall read the carrier's jostling SPEED, so a scrum
   shoved backwards through the carrier's own blockers was whistled by nothing but
   the 600-tick ceiling: 14% of training plays by 450k steps, minus-two-yard runs
-  and conceded safeties in a scripted game. Still revision 14 — no brain was ever
-  promoted from the old rule, and the one run trained on it (`football_base16`'s
-  first 40 minutes) was wiped by its `--force` restart.
+  and conceded safeties in a scripted game. `football_base16` was restarted on it
+  and trained to 6.67M / 7.34M / 667k steps (`results/football_base16/MANIFEST.md`).
 - **Throwaways and intentional grounding**, and a `Sack` outcome.
 - **The officials** (`Systems_PenaltySystem`) flag holding, pass interference,
   roughing, facemask, block in the back, kick-catch interference and grounding from
@@ -157,6 +171,8 @@ brains, so a shape check refuses an older brain as well as the stamp.
   (`FOUL_REWARD`); a game enforces it with accept/decline by expected points.
 - **A pre-snap** of `PRESNAP_TICKS` with the bodies FROZEN — a false start or an
   offside is a drawn flinch (`Systems_IDisciplineModel`, game only), refereed.
+  Since revision 15 the flinch lands on a lineman in proportion to his
+  indiscipline, and the defense's front is called in the same window.
 - **The game layer**: out-of-bounds clock rules, the two-minute warning, kneel and
   spike, played tries, and the NFL's possession-owed overtime.
 
@@ -165,7 +181,74 @@ branch exercised — kickoffs returned and touched back, punts, field goals, ext
 points, interceptions returned, safeties, flags accepted and declined — and are
 recorded in `results/realism/`. Re-measure on the fixed seeds before tuning.
 
-Revision 13 (2026-10-03) makes execution fallible, with every shape left identical,
+Revision 14, as written on THE OTHER MACHINE (2026-10-04, commit `e1c86a1`),
+changes the shapes — 41 vector observations, Quarterback
+branches `[8, 2]`, and a Defense branch `[9]` — so the gate refuses an older brain as
+well as the stamp. Four things were batched, because nothing was promoted against
+revision 13 to lose:
+
+- **Player traits.** `Systems_RoleTable` was keyed on role alone, so both receivers
+  and all five linemen were one body. `Systems_Roster` now draws a
+  `Systems_PlayerTraits` per formation slot — speed ±5%, mass ±8%, turn rate ±10%,
+  and discipline — and every player observes its own four. **A played game keeps
+  its roster; training redraws it every episode**, so a brain is fitted across the
+  range and not against twenty-two fixed bodies. Same dynamics as a function of the
+  traits in both modes, and the traits are observed.
+- **`PassDeep`**, an eighth play call. The receivers' separation reward is paid
+  short of `DEEP_SHOT_MIN_YARDS` on `Pass` and beyond it on `PassDeep`
+  (`Reward_Role.OnRoute`), which is the whole difference between the two calls. The
+  scripted quarterback calls it on exactly the plays it used to treat as deep shots.
+- **The defense calls its front.** It was a uniform draw. The middle linebacker's
+  branch names one of the eight fronts before the snap and
+  `Systems_EpisodeDirector` re-forms the defense. (Its own snap-wait,
+  `PRE_SNAP_MAX_TICKS`, did not survive the merge: revision 15 calls the front
+  inside `PRESNAP_TICKS`.) The other ten defenders share the brain and so the branch, pinned to
+  "no call" by the mask. The scripted defense calls the front it was drawn, so the
+  scripted game is unchanged. Watch `DefenseCall/<front>` for a collapse: nothing
+  penalizes repetition yet.
+- **The two lines grip.** `LINE_LINEAR_DAMPING` is 2.4 against everyone else's 0.8
+  (`Systems_RoleTable.LinearDampingOf`), with the drive force re-derived, so a
+  lineman's top speed is unchanged but he reaches it in three steps, pushes three
+  times as hard and stops where he is pushed. At 0.8 two linemen leaning on each
+  other kept whatever velocity the shove gave them and five blocks drifted across
+  the field as one clump.
+
+**Pre-snap fouls arrived in the same change and are NOT contract.** They were
+rolled between plays from the roster's discipline; revision 15 replaced the roll
+with this machine's refereed flinch and kept the discipline weighting.
+
+**The pace moved too, and is not contract either** (`Systems_GameRules`): quarters
+are 120 s with a 2.5 s huddle — the same ~75 snaps the 300 s / 12 s pairing gave —
+and the dead ball is 60 ticks, not 140, so a full game is about eight minutes.
+**There is no instant replay any more**: `Systems_ReplayView` still records every
+play, but only for the three-highlight reel at the final whistle. And the field
+keeps what happened on it — `Systems_TurfScuffView` draws one field-sized wear
+texture over the grass, in sand, with a footprint per running player five times a
+second, a scuff at every hard cut and a worn patch at every tackle, none of which
+fades.
+
+Four scripted games on revision 14, on the tool's four fixed seeds, read **4.84
+yards per play and 0.22 TDs per drive**
+(`results/realism/realism-20261004-133229.json`: 5.67, 3.85, 5.46, 4.38), inside
+both bands, with 84-94 scrimmage plays. The same four seeds read 5.51 and 0.22
+before the line grip went in (`realism-20261004-130850.json`), so the lines holding
+costs the scripted offense about two-thirds of a yard a play — the first balance
+change in this project measured like for like. Neither is comparable with revision
+13's 5.89, which was three random games.
+
+**`football_base15` cannot be promoted.** It was a revision 13 run and its
+`results/` directory was not on the machine revision 14 was written on. Its config
+is in `Config/archive/`.
+
+Two ideas were examined in the same pass and deliberately NOT built there, because
+the code already did them: a forward-progress whistle — which THIS machine's
+revision 14 built anyway, together with the crowd rule, after measuring a
+speed-only stall miss scrums that crept backwards — and speed-dependent
+turning (steering only rotates the body; the velocity turns through the drive
+force, which already caps lateral acceleration at `TopSpeedOf * LINEAR_DAMPING`,
+about 0.75 g for a receiver).
+
+Revision 13 (2026-10-03, `Config/archive/FootballBase15.yaml`) makes execution fallible, with every shape left identical,
 so only the stamp refuses an older brain. Through revision 12 being in position was
 the whole of every skill — a ball inside `CATCH_RADIUS` was caught, a defender
 inside `PASS_BREAKUP_RADIUS` broke it up, a hit over `TACKLE_CLOSING_SPEED` was a
@@ -245,8 +328,8 @@ run that ended in a tackle), a block no longer outpays the time cost, and there 
 no pursuit reward while the ball is in the air.
 
 Every config for an older contract is in `Config/archive/`, including
-FootballBase06-12, 14 and 15, FootballLong01 and the six `experiments/` variants.
-Until a revision 14 run is promoted, every player is a heuristic.
+FootballBase06-12, 14, 15 and 16, FootballLong01 and the six `experiments/`
+variants. Until a revision 15 run is promoted, every player is a heuristic.
 
 **Judge balance on fixed seeds.** Games with a pinned seed (`Systems_GameLifetimeScope
 ._varySeedPerGame` off, `_episodeSeed` set) replay exactly, and today's single
@@ -258,7 +341,7 @@ Note that `m_Model` references serialized in the scenes are dead either way:
 `Agent_BrainRegistry` at `Awake`, overwriting whatever the scene held.
 
 Heuristic-only is a supported, playable state, not a bug — but nothing you watch
-right now is a trained policy. **To change that, train and promote `football_base16`**
+right now is a trained policy. **To change that, train and promote `football_base17`**
 — see above.
 
 **Scenes.** `SCN_MENU` (front end) → `SCN_GAME` (a scored game) and
@@ -302,6 +385,13 @@ costs something.
 or from a trainer flag, or every existing `.onnx` is being evaluated against
 different dynamics than it was fitted against.
 
+**On a fresh clone, before anything else:** `git lfs pull`. 72 files are in LFS,
+including every DLL under `Assets/Plugins/NuGet`; without them the MCP bridge fails
+to compile with `CS0234 ... 'ReflectorNet'`, and because the Editor will not reload
+a domain that has compile errors, **every later script change compiles to disk and
+is silently never loaded** — tests keep passing against the old assemblies. Then
+recreate `.venv` (the two commands at the top of `requirements.txt`).
+
 **Training** — the config and run-id are paired by name:
 
 ```powershell
@@ -309,7 +399,7 @@ different dynamics than it was fitted against.
 
 # In-editor smoke test: start the trainer, then press Play.
 $env:CUDA_VISIBLE_DEVICES = "-1"     # MANDATORY on this machine. See below.
-mlagents-learn Config\FootballBase16.yaml --run-id=football_base16
+mlagents-learn Config\FootballBase17.yaml --run-id=football_base17
 
 # Headless sweep — envs take CONSECUTIVE ports from --base-port.
 # REBUILD Builds/FootballEnv FIRST whenever the contract revision moved:
@@ -318,7 +408,7 @@ mlagents-learn Config\FootballBase16.yaml --run-id=football_base16
 # stale env is NOT always refused by the handshake. That rebuild is on you.
 # --num-envs=4: measured 257.7 / 255.1 / 236.3 steps/s at 2 / 4 / 12 envs
 # (rl_optimization_log.md); the trainer is the bottleneck.
-mlagents-learn Config\FootballBase16.yaml --run-id=football_base16 `
+mlagents-learn Config\FootballBase17.yaml --run-id=football_base17 `
   --env=Builds\FootballEnv\PoFootball.exe --no-graphics `
   --base-port=5400 --num-envs=4
 
@@ -345,7 +435,7 @@ confidently during the revision 8 work and two of them made the game measurably
 worse. **Single games are very noisy** (4.48 to 7.37 yards/play on one config), so
 compare means over the same seeds.
 
-`Tools > PoFootball > Evaluate Realism (4 games)` (`Editor_RealismEval`) plays the
+`Tools > PoFootball > Evaluate Realism (4 fixed seeds)` (`Editor_RealismEval`) plays the
 four FIXED seeds 1-4 at 8x — the same four games on the same code, every run — and
 writes `results/realism/realism-<stamp>.json`; headless, run
 `Unity.exe -batchmode -projectPath . -executeMethod
@@ -406,7 +496,7 @@ for `cpu`, the `else` branch only sets the dtype — it never puts the default d
 back. Hiding the GPU is what fixes it. Use `-1`; an empty string is ignored on Windows.
 
 `Config/archive/FootballBase06.yaml` (long superseded — the live config is
-`FootballBase16.yaml`, three behaviors, revision 14) carried **six** behaviors. The quarterback has its own brain
+`FootballBase17.yaml`, three behaviors, revision 15) carried **six** behaviors. The quarterback has its own brain
 — it is the only one with discrete actions, and while it shared `OffenseSkill`
 with the backs and receivers its play-call gradient was diluted five to one and
 its entropy bonus could not be raised without injecting noise into four other

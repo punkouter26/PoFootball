@@ -105,6 +105,32 @@ namespace PoFootball.Rewards
         }
 
         /// <summary>
+        /// 1 when a receiver is at the depth the call asked for, 0 when he is not:
+        /// short of DEEP_SHOT_MIN_YARDS on Pass, at or beyond it on PassDeep.
+        /// Multiplies <see cref="Separation"/>, so being open only pays on the
+        /// route. Any other call — a run, or nothing yet, which is the first
+        /// DROPBACK_TICKS of every play — is 1 and the term is what it always was.
+        ///
+        /// A gate rather than a new term on purpose: it cannot raise what a
+        /// receiver earns over a play, so the bound Reward_Tests pins on the
+        /// shaped terms holds without being touched.
+        /// </summary>
+        public static float OnRoute(Systems_PlayCall call, float yardsPastTheLine)
+        {
+            bool isDeep = yardsPastTheLine >= Systems_SimConstants.DEEP_SHOT_MIN_YARDS;
+
+            switch (call)
+            {
+                case Systems_PlayCall.Pass:
+                    return isDeep ? 0f : 1f;
+                case Systems_PlayCall.PassDeep:
+                    return isDeep ? 1f : 0f;
+                default:
+                    return 1f;
+            }
+        }
+
+        /// <summary>
         /// Signed reward for closing on the ball over one tick. metresClosed is the
         /// previous distance minus the current one, so drifting away is a small
         /// negative — which is the half that matters. A purely positive pursuit

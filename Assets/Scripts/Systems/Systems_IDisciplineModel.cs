@@ -45,34 +45,39 @@ namespace PoFootball.Systems
     }
 
     /// <summary>
-    /// A played game. Rates are per snap and come from the NFL's long-run counts:
-    /// about one false start per team per game, an offside a little more than every
-    /// other game, and a delay of game every second or third.
+    /// A played game. The rates are Systems_GameRules.FALSE_START_CHANCE and
+    /// OFFSIDE_CHANCE per snap for a side of average discipline, from the NFL's
+    /// long-run counts.
+    ///
+    /// WHO JUMPS IS THE ROSTER'S (revision 15). Each man on the front carries an
+    /// equal share of his side's rate, moved by his own discipline trait
+    /// (Systems_PlayerTraits.Discipline, PENALTY_DISCIPLINE_WEIGHT), so an
+    /// undisciplined line is flagged more often and the flag lands on him. This is
+    /// the merge of two revision 14s: one drew the flinch here and refereed it, the
+    /// other rolled the flag between plays from the traits. The flinch is kept —
+    /// it is refereed and enforced like any other foul — and the traits decide it.
     /// </summary>
     public sealed class Systems_SeededDisciplineModel : Systems_IDisciplineModel
     {
-        /// <summary>Chance per snap that an offensive lineman or the tight end moves early.</summary>
-        public const float FALSE_START_CHANCE = 0.014f;
-
-        /// <summary>Chance per snap that a defensive lineman jumps into the neutral zone.</summary>
-        public const float OFFSIDE_CHANCE = 0.008f;
-
         /// <summary>Chance per snap that the play clock runs out.</summary>
         public const float DELAY_OF_GAME_CHANCE = 0.004f;
 
         /// <summary>Arbitrary odd constant; keeps this stream independent of the others.</summary>
         private const uint STREAM_OFFSET = 0x27D4EB2Fu;
 
-        /// <summary>The offensive line and the tight end: slots 0 to 5.</summary>
+        /// <summary>The offensive line and the tight end: slots 0-5.</summary>
         private const int OFFENSIVE_FRONT_SLOTS = 6;
 
-        /// <summary>The defensive line: the first four defensive slots.</summary>
+        /// <summary>The defensive line, from the first defensive slot.</summary>
         private const int DEFENSIVE_FRONT_SLOTS = 4;
+
+        private readonly Systems_Roster _roster;
 
         private Random _rng;
 
-        public Systems_SeededDisciplineModel()
+        public Systems_SeededDisciplineModel(Systems_Roster roster)
         {
+            _roster = roster;
             uint seed = Systems_EpisodeSeed.Value ^ STREAM_OFFSET;
             _rng = new Random(seed == 0u ? 1u : seed);
         }
@@ -83,15 +88,19 @@ namespace PoFootball.Systems
             float roll = _rng.NextFloat();
             float pick = _rng.NextFloat();
 
-            if (roll < FALSE_START_CHANCE)
+            float falseStart = FrontChance(0, OFFENSIVE_FRONT_SLOTS, Systems_GameRules.FALSE_START_CHANCE);
+
+            if (roll < falseStart)
             {
-                return (int)(pick * OFFENSIVE_FRONT_SLOTS) % OFFENSIVE_FRONT_SLOTS;
+                return PickFrom(0, OFFENSIVE_FRONT_SLOTS, pick);
             }
 
-            if (roll < FALSE_START_CHANCE + OFFSIDE_CHANCE)
+            float offside = FrontChance(
+                Systems_FormationBook.SLOTS_PER_SIDE, DEFENSIVE_FRONT_SLOTS, Systems_GameRules.OFFSIDE_CHANCE);
+
+            if (roll < falseStart + offside)
             {
-                return Systems_FormationBook.SLOTS_PER_SIDE
-                    + ((int)(pick * DEFENSIVE_FRONT_SLOTS) % DEFENSIVE_FRONT_SLOTS);
+                return PickFrom(Systems_FormationBook.SLOTS_PER_SIDE, DEFENSIVE_FRONT_SLOTS, pick);
             }
 
             return -1;
@@ -100,6 +109,50 @@ namespace PoFootball.Systems
         public bool IsDelayOfGame()
         {
             return _rng.NextFloat() < DELAY_OF_GAME_CHANCE;
+        }
+
+        /// <summary>One man's weight: 1 for average discipline, less for more.</summary>
+        private float WeightOf(int slotIndex)
+        {
+            float discipline = _roster == null ? 0f : _roster.TraitsOf(slotIndex).Discipline;
+            return 1f - (Systems_GameRules.PENALTY_DISCIPLINE_WEIGHT * discipline);
+        }
+
+        private float FrontChance(int firstSlot, int count, float sideRate)
+        {
+            float total = 0f;
+
+            for (int slotIndex = firstSlot; slotIndex < firstSlot + count; slotIndex++)
+            {
+                total += WeightOf(slotIndex);
+            }
+
+            return sideRate * total / count;
+        }
+
+        /// <summary>The man who jumped, chosen in proportion to his weight.</summary>
+        private int PickFrom(int firstSlot, int count, float pick)
+        {
+            float total = 0f;
+
+            for (int slotIndex = firstSlot; slotIndex < firstSlot + count; slotIndex++)
+            {
+                total += WeightOf(slotIndex);
+            }
+
+            float target = pick * total;
+
+            for (int slotIndex = firstSlot; slotIndex < firstSlot + count; slotIndex++)
+            {
+                target -= WeightOf(slotIndex);
+
+                if (target < 0f)
+                {
+                    return slotIndex;
+                }
+            }
+
+            return firstSlot + count - 1;
         }
     }
 }

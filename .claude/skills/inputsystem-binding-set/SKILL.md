@@ -1,6 +1,8 @@
 ---
 name: inputsystem-binding-set
 description: Update a Binding's path, groups, interactions and/or processors by index on an Action in a `.inputactions` asset, then save it. Only the supplied fields are changed.
+metadata:
+  generated-by: mcp-plugin-dotnet
 ---
 
 # InputSystem / Set Binding

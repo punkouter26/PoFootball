@@ -1,6 +1,8 @@
 ---
 name: inputsystem-get
 description: Read the full structure of a `.inputactions` InputActionAsset — its ActionMaps, Actions (type / expectedControlType), Bindings (path / groups / interactions / processors / index) and Control Schemes. Read-only.
+metadata:
+  generated-by: mcp-plugin-dotnet
 ---
 
 # InputSystem / Get Asset Structure

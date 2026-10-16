@@ -1,6 +1,8 @@
 ---
 name: particle-system-modify
 description: Modify a `UnityEngine.ParticleSystem` component on a GameObject. Pass `SerializedMember` payloads only for the modules you want to change; everything else is left alone. Use 'particle-system-get' first to inspect the current structure.
+metadata:
+  generated-by: mcp-plugin-dotnet
 ---
 
 # ParticleSystem / Modify

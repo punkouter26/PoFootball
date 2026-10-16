@@ -1,6 +1,8 @@
 ---
 name: inputsystem-controlscheme-add
 description: Add a Control Scheme (with optional required / optional device requirements) to a `.inputactions` asset, then save it.
+metadata:
+  generated-by: mcp-plugin-dotnet
 ---
 
 # InputSystem / Add Control Scheme

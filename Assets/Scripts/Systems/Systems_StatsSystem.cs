@@ -82,7 +82,7 @@ namespace PoFootball.Systems
             // real football calls it; a genuine throw stays a pass attempt whether
             // it was caught, dropped or picked off; and every yard now lands in
             // exactly one of the two columns.
-            bool wasThrown = message.Call == Systems_PlayCall.Pass
+            bool wasThrown = message.Call.IsPass()
                 && (completed
                     || message.Outcome == Systems_PlayOutcome.Incompletion
                     || message.Outcome == Systems_PlayOutcome.Interception);
@@ -180,11 +180,13 @@ namespace PoFootball.Systems
                     offense.AddFirstDown();
                     break;
 
-                // A punt the receivers touched and the kickers fell on is a fumble
-                // the receivers lost. An onside kickoff recovered is not — nobody
-                // on the receiving team ever had it — which is how the NFL keeps it.
+                // A kick the receivers touched and the kickers fell on is a fumble
+                // the receivers lost, punt or kickoff alike. An onside kick the
+                // kickers recovered clean is not: nobody on the receiving team ever
+                // had it, which is how the NFL keeps it. Read off the play model,
+                // which is still the play's at this message.
                 case Systems_DownResult.KickRecovered:
-                    if (message.Kind == Systems_PlayKind.Punt)
+                    if (_play.KickTouchedByReceivers)
                     {
                         defense.AddTurnover();
                     }

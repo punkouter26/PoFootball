@@ -84,6 +84,7 @@ namespace PoFootball.Systems
         private float _crowdFrom;
         private float _crowdFurthest;
         private float _crowdFurthestY;
+        private float _crowdFromX;
         private int _crowdTicks;
         private float _furthestProgress;
         private float _furthestProgressY;
@@ -467,7 +468,7 @@ namespace PoFootball.Systems
                 && _play.PhysicsTick - _lastContactTick <= Systems_SimConstants.CONTACT_GRACE_TICKS;
 
             bool inThePocket = carrier.Id == Systems_Formation.QUARTERBACK_SLOT_INDEX
-                && _play.Call == Systems_PlayCall.Pass
+                && _play.Call.IsPass()
                 && !_play.ForwardPassThrown
                 && _play.PhysicsTick <= Systems_SimConstants.THROW_WINDOW_TICKS;
 
@@ -523,10 +524,12 @@ namespace PoFootball.Systems
         }
 
         /// <summary>
-        /// STOPPED IN A CROWD (2026-10-16). A carrier with an opponent within
-        /// twice tackling reach who gains less than FORWARD_PROGRESS_GAIN_METRES in
-        /// STALL_TICKS is down, spotted at the furthest point he reached in the
-        /// crowd. Returns whether the whistle went.
+        /// STOPPED IN A CROWD (2026-10-16). A carrier in a crowd (touched in the
+        /// last CROWD_CONTACT_TICKS, or with CROWD_OPPONENTS opponents within twice
+        /// tackling reach) who neither gains FORWARD_PROGRESS_GAIN_METRES nor runs
+        /// CROWD_LATERAL_METRES across the field in STALL_TICKS is down, spotted at
+        /// the furthest point he reached in the crowd. Returns whether the whistle
+        /// went.
         ///
         /// WHY THE TWO RULES ABOVE MISSED IT. Forward progress starts on CONTACT, and
         /// in a pile the carrier is often touching only his own blockers, with the
@@ -547,7 +550,16 @@ namespace PoFootball.Systems
         /// </summary>
         private bool TrackCrowd(Systems_IPlayerHandle carrier, bool exempt)
         {
-            if (exempt || !IsOpponentNear(carrier))
+            // A CROWD, NOT A PURSUER (2026-10-16 review). The first version counted
+            // any one opponent within reach, so a receiver on a crossing route with a
+            // corner two metres behind him, or a sweep with a linebacker trailing,
+            // was whistled down untouched after 1.2 s. A crowd is now a defender who
+            // has had hands on him in the last CROWD_CONTACT_TICKS, or
+            // CROWD_OPPONENTS of them within reach, which a scrum always is.
+            bool touched = _lastContactTick >= 0
+                && _play.PhysicsTick - _lastContactTick <= Systems_SimConstants.CROWD_CONTACT_TICKS;
+
+            if (exempt || !(touched || CountOpponentsNear(carrier) >= Systems_SimConstants.CROWD_OPPONENTS))
             {
                 _inCrowd = false;
                 _crowdTicks = 0;
@@ -563,6 +575,7 @@ namespace PoFootball.Systems
                 _crowdFrom = progress;
                 _crowdFurthest = progress;
                 _crowdFurthestY = position.y;
+                _crowdFromX = position.x;
                 _crowdTicks = 0;
             }
 
@@ -572,9 +585,16 @@ namespace PoFootball.Systems
                 _crowdFurthestY = position.y;
             }
 
-            if (_crowdFurthest > _crowdFrom + Systems_SimConstants.FORWARD_PROGRESS_GAIN_METRES)
+            // Going somewhere is not being stopped: real ground forward, or a run
+            // across the field. Being driven BACK is the one direction that never
+            // counts; that is the scrum this exists for.
+            bool gainedGround = _crowdFurthest > _crowdFrom + Systems_SimConstants.FORWARD_PROGRESS_GAIN_METRES;
+            bool runningAcross = Mathf.Abs(position.x - _crowdFromX) > Systems_SimConstants.CROWD_LATERAL_METRES;
+
+            if (gainedGround || runningAcross)
             {
                 _crowdFrom = _crowdFurthest;
+                _crowdFromX = position.x;
                 _crowdTicks = 0;
             }
 
@@ -588,13 +608,35 @@ namespace PoFootball.Systems
             Vector2 spot = new Vector2(position.x, _crowdFurthestY);
             _play.SetBallY(spot.y);
 
-            int tacklerId = LowestSlotIn(_contactMask);
+            // Credited to a defender who is on him NOW. The contact mask outlives the
+            // contact: it can name a man from a broken tackle twenty metres back.
+            int tacklerId = touched ? LowestSlotIn(_contactMask) : -1;
 
             _tacklePublisher.Publish(new Systems_TackleMessage(
                 tacklerId < 0 ? NearestOpponentId(carrier) : tacklerId, carrier.Id, 0f, _play.NetYards));
 
             EndCarrierDown(carrier, spot, Systems_PlayOutcome.Tackle);
             return true;
+        }
+
+        private int CountOpponentsNear(Systems_IPlayerHandle carrier)
+        {
+            float reach = Systems_SimConstants.REACH_TACKLE_RANGE * 2f;
+            float reachSquared = reach * reach;
+            int count = 0;
+
+            for (int slotIndex = 0; slotIndex < Systems_PlayerRegistry.CAPACITY; slotIndex++)
+            {
+                Systems_IPlayerHandle other = _registry.Get(slotIndex);
+
+                if (other != null && other.Side != carrier.Side
+                    && (other.Position - carrier.Position).sqrMagnitude <= reachSquared)
+                {
+                    count++;
+                }
+            }
+
+            return count;
         }
 
         private int NearestOpponentId(Systems_IPlayerHandle carrier)
@@ -1010,7 +1052,7 @@ namespace PoFootball.Systems
         {
             return carrier.Role == Systems_PlayerRole.Quarterback
                 && carrier.Side == Systems_TeamSide.Offense
-                && _play.Call == Systems_PlayCall.Pass
+                && _play.Call.IsPass()
                 && !_play.ForwardPassThrown
                 && spot.y < _play.LineOfScrimmageY;
         }

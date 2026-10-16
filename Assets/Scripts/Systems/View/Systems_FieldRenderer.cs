@@ -277,6 +277,13 @@ namespace PoFootball.Views
             surroundRenderer.sortingOrder = _renderer.sortingOrder - 1;
 
             Vector2 spriteSize = _renderer.sprite.bounds.size;
+
+            if (spriteSize.x <= 0f || spriteSize.y <= 0f)
+            {
+                Destroy(surround);
+                return;
+            }
+
             surround.transform.localScale = new Vector3(
                 (Systems_FieldModel.FIELD_WIDTH * SURROUND_SCALE) / spriteSize.x,
                 (Systems_FieldModel.TOTAL_LENGTH * SURROUND_SCALE) / spriteSize.y,

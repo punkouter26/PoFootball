@@ -25,7 +25,7 @@ namespace PoFootball.Models
         /// <summary>
         /// Seconds of overtime when regulation ends level. Scaled from the NFL's
         /// ten minutes by the same factor QUARTER_SECONDS scales a quarter by
-        /// (300 / 900), which puts it at 200.
+        /// (120 / 900), which puts it at 80.
         ///
         /// SINCE REVISION 14 THIS IS THE NFL'S OVERTIME, NOT SUDDEN DEATH. Each team
         /// gets a possession — a touchdown on the first no longer ends it — unless
@@ -33,18 +33,21 @@ namespace PoFootball.Models
         /// the ball, the next score wins. A period that expires level is a tie.
         /// Systems_GameFlowSystem's overtime bookkeeping has the detail.
         /// </summary>
-        public const float OVERTIME_SECONDS = 200f;
+        public const float OVERTIME_SECONDS = 80f;
 
         /// <summary>
-        /// Seconds per quarter. Five minutes rather than fifteen, which is what
-        /// makes the final whistle reachable in a sitting.
+        /// Seconds per quarter. Two minutes, so the scoreboard reads like the
+        /// eight-minute game this actually is.
         ///
-        /// The arithmetic: nearly all of a play's cost is HUDDLE_SECONDS, and a play
-        /// is only live for a few seconds on top of that. At the 12 s huddle two
-        /// lines below — roughly 15 s of game clock per down — this is about twenty
-        /// plays a quarter and eighty in a game.
+        /// The arithmetic: a play is live for about four seconds and then charged
+        /// HUDDLE_SECONDS, two lines below. At 2.5 s that is roughly 6.5 s of game
+        /// clock per down — about eighteen plays a quarter and seventy-five in a
+        /// game, which is what the 300 s quarter and 12 s huddle this replaced
+        /// produced too. THE TWO MOVE TOGETHER: shortening the quarter alone would
+        /// have left eight snaps in it, too few for a drive to develop, which is
+        /// the mistake the 25 s huddle once made.
         /// </summary>
-        public const float QUARTER_SECONDS = 300f;
+        public const float QUARTER_SECONDS = 120f;
 
         /// <summary>
         /// Every clock threshold below is a real one scaled by this: a five-minute
@@ -60,29 +63,50 @@ namespace PoFootball.Models
         /// CUT FROM 25 TO 12, AND THAT IS WHAT SETS THE LENGTH OF A GAME. A measured
         /// full game came in at 45 plays across 9 drives — an NFL game is about 130
         /// — because at 25 s a quarter can only physically contain eleven or twelve
-        /// snaps. 12 s roughly doubles the game to the eighty or ninety snaps that
-        /// let drives actually develop.
+        /// snaps. Every drive was three to five plays, which is why so few of them
+        /// ever reached a fourth down, and a viewer barely saw the playbook.
+        ///
+        /// 12 s was a no-huddle pace rather than a leisurely one, and it roughly
+        /// doubled the game to the eighty or ninety snaps that let drives actually
+        /// develop. It costs nothing in real time — the wall-clock length of a game
+        /// is DEAD_BALL_TICKS plus live play, not this — so the game gets longer in
+        /// football and stays the same length in minutes.
+        ///
+        /// 2.5 NOW, SCALED WITH QUARTER_SECONDS (300 -> 120) so the snap count is
+        /// unchanged; see there. Nobody huddles in this game at all — the teams
+        /// re-form on the whistle — so this is only the price of a down in clock.
         /// </summary>
-        public const float HUDDLE_SECONDS = 12f;
+        public const float HUDDLE_SECONDS = 2.5f;
 
         /// <summary>
         /// What a hurry-up to the line costs when a team is about to spike it: the
-        /// time to line up and snap without a huddle.
+        /// time to line up and snap without a huddle. Four tenths of a huddle, as
+        /// fifteen seconds is of forty in the NFL. It was 4 s against a 12 s huddle;
+        /// at the 2.5 s huddle the merge brought in, 4 s made the hurry-up the SLOW
+        /// way to the line, and a spike cost more clock than the down it saved.
         /// </summary>
-        public const float HURRY_UP_SECONDS = 4f;
+        public const float HURRY_UP_SECONDS = 0.4f * HUDDLE_SECONDS;
 
         /// <summary>Seconds per physics tick. Mirrors the pinned fixed timestep.</summary>
         public const float SECONDS_PER_TICK = 0.02f;
 
         /// <summary>
         /// Physics ticks the ball stays dead between the whistle and the next snap
-        /// — 140 ticks = 2.8 s at the pinned 50 Hz.
+        /// — 60 ticks = 1.2 s at the pinned 50 Hz.
         ///
-        /// Sized to outlast Systems_HudView.BANNER_SECONDS (2.2 s) with room either
-        /// side, because the banner is the only place a viewer is ever told what
-        /// just happened.
+        /// WAS 140 (2.8 s), sized to outlast Systems_HudView.BANNER_SECONDS (2.2 s).
+        /// At about seventy-five snaps that was three and a half minutes of every
+        /// game spent looking at twenty-two players standing still, and a full
+        /// game ran past ten minutes. The banner is still the only place a viewer
+        /// is told what just happened, and the next snap still takes it down, so
+        /// this is the floor: long enough to read a headline and a yardage, short
+        /// enough that the game feels like it is being played.
+        ///
+        /// The game clock does not run during it. Football charges the interval
+        /// between plays as HUDDLE_SECONDS at the whistle, which is already counted
+        /// — burning this as well would bill the offense twice for the same gap.
         /// </summary>
-        public const int DEAD_BALL_TICKS = 140;
+        public const int DEAD_BALL_TICKS = 60;
 
         /// <summary>
         /// The two-minute warning — an automatic stoppage at 2:00 of the second and
@@ -120,9 +144,32 @@ namespace PoFootball.Models
         /// Seconds left in a half under which a team that needs the clock starts
         /// spending timeouts. A timeout is worth exactly HUDDLE_SECONDS here — it
         /// is the huddle that does not get charged — so three of them inside this
-        /// window buy back most of it.
+        /// window buy back a third of it. Matches ONSIDE_SECONDS_REMAINING: the two
+        /// are the same judgement, that the game has reached its last fifth of a
+        /// quarter — the last minute of five, when this was 60.
         /// </summary>
-        public const float TIMEOUT_WINDOW_SECONDS = 60f;
+        public const float TIMEOUT_WINDOW_SECONDS = 24f;
+
+        // --- Pre-snap fouls --------------------------------------------------
+        // Drawn by Systems_SeededDisciplineModel during the pre-snap and refereed
+        // like any other foul (Systems_PenaltySystem). Played games only.
+        /// <summary>
+        /// Chance per snap that an offense of average discipline false-starts.
+        /// NFL teams are flagged for it about once a game each, in about
+        /// sixty-five snaps; at this game's seventy-five snaps shared between two
+        /// teams, 0.02 is one or two a game in total.
+        /// </summary>
+        public const float FALSE_START_CHANCE = 0.02f;
+
+        /// <summary>The defense's equivalent — offside and encroachment together.</summary>
+        public const float OFFSIDE_CHANCE = 0.012f;
+
+        /// <summary>
+        /// How far a player's discipline trait moves his share of the chance: at
+        /// 0.8 the least disciplined player is flagged nine times as often as the
+        /// most, and the average player exactly as often as the rate says.
+        /// </summary>
+        public const float PENALTY_DISCIPLINE_WEIGHT = 0.8f;
 
         // --- Downs -----------------------------------------------------------
         public const int DOWNS_PER_SERIES = 4;
@@ -219,7 +266,7 @@ namespace PoFootball.Models
         /// Seconds left in the fourth quarter under which an onside kick becomes the
         /// right call.
         /// </summary>
-        public const float ONSIDE_SECONDS_REMAINING = 60f;
+        public const float ONSIDE_SECONDS_REMAINING = 24f;
 
         /// <summary>
         /// A drive may not start inside an end zone, so every computed line of

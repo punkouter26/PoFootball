@@ -7,7 +7,7 @@ namespace PoFootball.Views
 {
     /// <summary>
     /// Twenty-two players, a ball and its shadow that only exist to be drawn: the
-    /// bodies the instant replay and the post-game highlights move, so that the
+    /// bodies the post-game highlights move, so that the
     /// real ones never are.
     ///
     /// WHY NOT REWIND THE REAL BODIES. They are Rigidbody2Ds with colliders, owned

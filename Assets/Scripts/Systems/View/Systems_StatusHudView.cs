@@ -79,7 +79,11 @@ namespace PoFootball.Views
         private const float PANEL_SORT_ORDER = 300f;
 
         private const string MENU_LABEL = "MENU";
-        private const string MENU_CONFIRM_LABEL = "QUIT GAME?";
+        /// <summary>
+        /// Short enough to fit the chip's own width: "QUIT GAME?" widened it past its
+        /// minimum and, on a narrow screen, into the FPS readout centred beside it.
+        /// </summary>
+        private const string MENU_CONFIRM_LABEL = "QUIT?";
 
         /// <summary>How long an armed MENU waits for the second tap, in real milliseconds.</summary>
         private const long MENU_CONFIRM_MS = 3000;
@@ -186,6 +190,9 @@ namespace PoFootball.Views
         /// and read out as a rate every REFRESH_INTERVAL.
         /// </summary>
         private ProfilerRecorder _gcAllocated;
+
+        /// <summary>The heap at the last refresh, for when the counter above is not available.</summary>
+        private long _lastMonoHeap;
         private long _gcBytesInWindow;
         private float _gcWindowSeconds;
 
@@ -600,7 +607,21 @@ namespace PoFootball.Views
 
             // Bytes the engine counted as allocated over the frames since the last
             // refresh, as a rate over the real time they took.
-            _allocPerSecond = _gcWindowSeconds > 0f ? _gcBytesInWindow / _gcWindowSeconds : 0f;
+            if (_gcAllocated.Valid)
+            {
+                _allocPerSecond = _gcWindowSeconds > 0f ? _gcBytesInWindow / _gcWindowSeconds : 0f;
+            }
+            else
+            {
+                // A player that does not provide the counter: the heap's growth
+                // instead, which undercounts a window a collection ran in but never
+                // reads a steady leak as zero.
+                _allocPerSecond = _lastMonoHeap > 0L
+                    ? Mathf.Max(0f, (monoHeap - _lastMonoHeap) / Mathf.Max(_gcWindowSeconds, 0.001f))
+                    : 0f;
+            }
+
+            _lastMonoHeap = monoHeap;
             _gcBytesInWindow = 0L;
             _gcWindowSeconds = 0f;
 

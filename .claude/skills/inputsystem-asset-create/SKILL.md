@@ -1,6 +1,8 @@
 ---
 name: inputsystem-asset-create
 description: Create a new `.inputactions` InputActionAsset at an 'Assets/'-rooted path, optionally seeding an initial ActionMap. Returns the created asset path.
+metadata:
+  generated-by: mcp-plugin-dotnet
 ---
 
 # InputSystem / Create InputActionAsset

@@ -1,3 +1,9 @@
+# ARCHIVED 2026-10-16: the config of football_base16, which ran on THIS machine's
+# revision 14 (play the whole game) at commit 1417808. Revision 15 merged it with
+# the other revision 14 and refuses its brains; the live config is
+# Config/FootballBase17.yaml. The other machine's FootballBase16.yaml (traits,
+# PassDeep, the called front) is in git history at e1c86a1.
+#
 # PoFootball -- the first config against CONTRACT_REVISION 14.
 #
 # Pairs 1:1 with run-id `football_base16` (UNITY_RULES section 1).

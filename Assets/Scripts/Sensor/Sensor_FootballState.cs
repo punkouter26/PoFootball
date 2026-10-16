@@ -26,7 +26,10 @@ namespace PoFootball.Sensors
         /// Must equal BrainParameters.VectorObservationSize or ML-Agents throws at
         /// the first step. Agent_FootballPlayer sets that field from this constant.
         /// </summary>
-        public const int OBSERVATION_SIZE = 45;
+        /// 36 -> 50 across revision 15, which merged two revision 14s: the play
+        /// kind, ball state, possession, ball height and pre-snap flag of one (+9),
+        /// and the PassDeep call and the player's four traits of the other (+5).
+        public const int OBSERVATION_SIZE = 50;
 
         /// <summary>
         /// Number of real play calls, excluding None. Width of the call one-hot.
@@ -35,9 +38,13 @@ namespace PoFootball.Sensors
         /// two of the four floats OBSERVATION_SIZE grew by (32 -> 36; down and
         /// distance are the other two): the one-hot is written straight into the
         /// observation vector, so every extra call is another float every agent
-        /// reads. Both numbers are checked by Tools/promote_brain.py.
+        /// reads. Both numbers are checked by Tools/promote_brain.py. Seven since
+        /// revision 14 added PassDeep.
         /// </summary>
-        public const int PLAY_CALL_SLOTS = 6;
+        public const int PLAY_CALL_SLOTS = 7;
+
+        /// <summary>Speed, strength, agility, discipline: the last four floats.</summary>
+        public const int TRAIT_SLOTS = 4;
 
         /// <summary>
         /// Size of the quarterback's play-call discrete branch: the six real calls
@@ -85,6 +92,7 @@ namespace PoFootball.Sensors
             float[] buffer,
             Systems_FieldModel field,
             Systems_PlayerRole role,
+            Systems_PlayerTraits traits,
             Vector2 position,
             Vector2 velocity,
             float rotationDegrees,
@@ -130,7 +138,10 @@ namespace PoFootball.Sensors
             // velocity was the one input the network had to rotate through the facing
             // before it meant anything about its own controls — "am I sliding
             // sideways" was a function of four inputs rather than one.
-            float topSpeed = Systems_RoleTable.TopSpeedOf(role);
+            // This player's own top speed, not his role's: a fast receiver at
+            // full stride reads 1, as a slow one does. Which of the two he is is
+            // in the traits slice at the end of the vector.
+            float topSpeed = Systems_RoleTable.TopSpeedOf(role, traits);
             float sideways = (velocity.x * cos) + (velocity.y * sin);
             float forward = (-velocity.x * sin) + (velocity.y * cos);
             buffer[cursor++] = Mathf.Clamp(sideways / topSpeed, -1f, 1f);
@@ -190,7 +201,7 @@ namespace PoFootball.Sensors
             // and observations are not stacked. Without this the policy steered a
             // second-order system while seeing only its position.
             buffer[cursor++] = Mathf.Clamp(
-                (angularVelocityDegrees * Mathf.Deg2Rad) / Systems_RoleTable.TurnRateOf(role),
+                (angularVelocityDegrees * Mathf.Deg2Rad) / Systems_RoleTable.TurnRateOf(role, traits),
                 -1f, 1f);
 
             // The play clock: 1. Ticks since the snap over MAX_PHYSICS_TICKS.
@@ -215,7 +226,7 @@ namespace PoFootball.Sensors
                 Mathf.Clamp01((down - 1f) / (Systems_GameRules.DOWNS_PER_SERIES - 1f));
             buffer[cursor++] = Mathf.Clamp01(yardsToGo / LONG_YARDAGE_YARDS);
 
-            // Play call one-hot: 6, offense only.
+            // Play call one-hot: 7, offense only.
             bool isOffense = Systems_RoleTable.SideOf(role) == Systems_TeamSide.Offense;
 
             for (int callIndex = 0; callIndex < PLAY_CALL_SLOTS; callIndex++)
@@ -248,6 +259,13 @@ namespace PoFootball.Sensors
 
             // Before the snap: 1. The only window in which a kick may be called.
             buffer[cursor++] = isPreSnap ? 1f : 0f;
+
+            // This athlete: 4. Already in [-1, 1]; zero is the role's average.
+            // Last, after the nine above, since revision 15 merged the two.
+            buffer[cursor++] = Mathf.Clamp(traits.Speed, -1f, 1f);
+            buffer[cursor++] = Mathf.Clamp(traits.Strength, -1f, 1f);
+            buffer[cursor++] = Mathf.Clamp(traits.Agility, -1f, 1f);
+            buffer[cursor++] = Mathf.Clamp(traits.Discipline, -1f, 1f);
         }
 
         /// <summary>Fills the buffer and pushes it into the sensor in one call.</summary>
@@ -256,6 +274,7 @@ namespace PoFootball.Sensors
             float[] buffer,
             Systems_FieldModel field,
             Systems_PlayerRole role,
+            Systems_PlayerTraits traits,
             Vector2 position,
             Vector2 velocity,
             float rotationDegrees,
@@ -276,7 +295,7 @@ namespace PoFootball.Sensors
             bool isPreSnap)
         {
             Write(
-                buffer, field, role, position, velocity, rotationDegrees,
+                buffer, field, role, traits, position, velocity, rotationDegrees,
                 angularVelocityDegrees, fatigue,
                 isCarrier, ballPosition, ballVelocity, ballState, call, lineOfScrimmageY,
                 down, yardsToGo, physicsTick, ballHeight, possession, kind, isPreSnap);

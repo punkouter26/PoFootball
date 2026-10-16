@@ -294,8 +294,55 @@ namespace PoFootball.Agents
         /// (revision 13) are both fitted against a different game and must not load.
         /// football_base15 can still be promoted from commit 981ba23, where it was
         /// trained. Config/FootballBase16.yaml is this revision's config.
+        ///
+        /// The OTHER revision 14 — the one made on a second machine on 2026-10-04
+        /// and not seen here until 2026-10-16 — changes the SHAPES too, so the gate catches it as well as the
+        /// stamp. No revision 13 brain was ever promoted — football_base15's
+        /// results did not survive the machine it ran on — so it costs nothing to
+        /// batch four changes:
+        ///
+        ///     Traits          every player has his own speed, mass, turn rate and
+        ///                     discipline (Systems_PlayerTraits, Systems_Roster),
+        ///                     observed as four floats; own velocity and spin are
+        ///                     normalized by HIS top speed and turn rate
+        ///     PassDeep        an eighth play call (branch 7 -> 8, one-hot 6 -> 7).
+        ///                     The receivers' route reward is paid short of
+        ///                     DEEP_SHOT_MIN_YARDS on Pass and beyond it on PassDeep
+        ///     Defensive call  the Defense brain gains one discrete branch, the
+        ///                     front, read from the middle linebacker before the
+        ///                     snap and pinned to "no call" for everyone else.
+        ///                     The front used to be a uniform draw
+        ///
+        ///     Line grip       the two lines' ground damping is 2.4, not 0.8
+        ///                     (LINE_LINEAR_DAMPING), with their drive force
+        ///                     re-derived, so they hold a block and stop where they
+        ///                     are pushed instead of gliding as one clump
+        ///
+        /// Vector observations 36 -> 41. Pre-snap fouls arrived in the same change
+        /// and are not contract: they are rolled by the game layer only, between
+        /// plays.
+        ///
+        /// Revision 15 (2026-10-16) is the MERGE of those two revision 14s, which
+        /// were built in parallel on two machines from the same revision 13 and
+        /// share a number and nothing else. Every shape of both is kept:
+        ///
+        ///     Observations   36 -> 50: the play kind, ball state, possession, ball
+        ///                    height and pre-snap flag (+9), PassDeep in the call
+        ///                    one-hot and the four traits (+5)
+        ///     Quarterback    4 continuous + branches [8, 2]: the call, PassDeep
+        ///                    included, read in two windows; the throw, which also
+        ///                    pitches
+        ///     Offense        2 continuous + branch [2]: the pitch
+        ///     Defense        2 continuous + branches [2, 9]: the pitch at index 0,
+        ///                    where every non-quarterback brain has it, then the
+        ///                    front, read from the middle linebacker only
+        ///
+        /// No brain of either revision 14 loads here. football_base16 was trained on
+        /// the first of them, after the crowd rule (Systems_Referee.TrackCrowd), and
+        /// can be promoted only from commit 1417808. Config/FootballBase17.yaml is
+        /// this revision's config.
         /// </summary>
-        public const int CONTRACT_REVISION = 14;
+        public const int CONTRACT_REVISION = 15;
 
         /// <summary>Continuous outputs every brain has: drive and steer.</summary>
         public const int BASE_CONTINUOUS_ACTIONS = 2;
@@ -316,8 +363,27 @@ namespace PoFootball.Agents
         /// </summary>
         public const int LATERAL_BRANCH_SIZE = 2;
 
+        /// <summary>
+        /// Defensive fronts that can be called. A literal because
+        /// Tools/promote_brain.py reads it; Systems_ContractTests pins it to
+        /// Systems_FormationBook.DefensiveFormationCount.
+        /// </summary>
+        public const int DEFENSE_CALL_SLOTS = 8;
+
+        /// <summary>The fronts plus index 0, "no call", as on the play-call branch.</summary>
+        public const int DEFENSE_CALL_BRANCH_SIZE = DEFENSE_CALL_SLOTS + 1;
+
         public static ActionSpec For(Systems_BrainGroup group)
         {
+            // The pitch first, at the index every non-quarterback brain reads it
+            // from, then the front. Revision 15.
+            if (Systems_RoleTable.HasDefenseCallActions(group))
+            {
+                return new ActionSpec(
+                    BASE_CONTINUOUS_ACTIONS,
+                    new[] { LATERAL_BRANCH_SIZE, DEFENSE_CALL_BRANCH_SIZE });
+            }
+
             if (!Systems_RoleTable.HasQuarterbackActions(group))
             {
                 return new ActionSpec(BASE_CONTINUOUS_ACTIONS, new[] { LATERAL_BRANCH_SIZE });

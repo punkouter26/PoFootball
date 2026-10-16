@@ -440,8 +440,12 @@ namespace PoFootball.Views
             // came out behind the MENU chip.
             bar.style.top = Systems_UiTheme.STATUS_BAR_HEIGHT;
 
-            // Translucent, so the top of the field still reads through the chrome.
-            bar.style.backgroundColor = Systems_UiTheme.SurfaceOverField;
+            // OPAQUE (2026-10-16 review). It was translucent "so the top of the field
+            // still reads through the chrome", and what read through was every yard
+            // line and hash mark, drawn across the clock and the down-and-distance;
+            // on a tall phone the camera holds the field under the bar more often,
+            // not less. A scoreboard is a surface in front of the play.
+            bar.style.backgroundColor = Systems_UiTheme.Surface;
 
             // A lit top edge and a dark bottom one, which is the only way to say
             // "this is a surface in front of the field" on a panel that has no
@@ -1026,13 +1030,7 @@ namespace PoFootball.Views
 
             ReleasePointerSlot(slot, evt.pointerId);
 
-            // Not during the dead ball. That is when the instant replay runs, and
-            // the replay draws stand-ins while the real bodies — the ones TapAt
-            // searches — stand hidden somewhere else, so a tap on a player the
-            // viewer could see picked one the viewer could not.
-            bool deadBall = _play != null && _play.Phase == Systems_PlayPhase.Dead;
-
-            if (tapped && !deadBall && TryPanelToWorld(evt.position, out Vector2 world))
+            if (tapped && TryPanelToWorld(evt.position, out Vector2 world))
             {
                 _spectatorSystem.TapAt(world);
             }
@@ -1494,9 +1492,23 @@ namespace PoFootball.Views
             _bannerDrive = Systems_UiTheme.Caption(string.Empty);
             _bannerDrive.style.marginTop = Systems_UiTheme.SPACE_XS;
 
-            overlay.Content.Add(_bannerHeadline);
-            overlay.Content.Add(_bannerDetail);
-            overlay.Content.Add(_bannerDrive);
+            // ON A PLATE (2026-10-16 review). The three lines sat straight on the
+            // turf, and the two under the headline are muted grey: on the light
+            // mow stripe "FB DIVE +3 yd" and the drive line were close to
+            // invisible. A dark, rounded plate sized to the text keeps the banner
+            // an announcement over the play rather than paint on it, and still
+            // covers only the band it needs.
+            VisualElement plate = Systems_UiTheme.Column();
+            plate.style.alignItems = Align.Center;
+            plate.style.backgroundColor = Systems_UiTheme.SurfaceOverField;
+            Systems_UiTheme.SetRadius(plate, Systems_UiTheme.RADIUS);
+            Systems_UiTheme.SetPadding(plate, Systems_UiTheme.SPACE_S, Systems_UiTheme.SPACE_L);
+            plate.pickingMode = PickingMode.Ignore;
+
+            plate.Add(_bannerHeadline);
+            plate.Add(_bannerDetail);
+            plate.Add(_bannerDrive);
+            overlay.Content.Add(plate);
             return overlay;
         }
 
@@ -1780,6 +1792,7 @@ namespace PoFootball.Views
             }
 
             _bannerOverlay.Hide();
+
             _snapDriveIndex = _game.DriveIndex;
         }
 

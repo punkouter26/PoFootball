@@ -1,6 +1,8 @@
 ---
 name: inputsystem-binding-composite-add
 description: Add a composite Binding (e.g. `2DVector` / WASD, `1DAxis`) with its named parts to an Action in a `.inputactions` asset, then save it.
+metadata:
+  generated-by: mcp-plugin-dotnet
 ---
 
 # InputSystem / Add Composite Binding

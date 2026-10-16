@@ -1513,8 +1513,9 @@ namespace PoFootball.Tests
                 EndPlayAt(OwnYard(50f), Systems_PlayOutcome.Interception, Systems_PlayCall.Pass);
             }
 
-            // Burn it down to a handful of seconds, clock running.
-            BurnClockDownTo(20f);
+            // Burn it down to a handful of seconds, clock running: three huddles,
+            // well inside what four downs of kneeling can run off.
+            BurnClockDownTo(3f * Systems_GameRules.HUDDLE_SECONDS);
             Whistle(_game.LineOfScrimmageY + (11f * Systems_FieldModel.YARD), Systems_PlayOutcome.Tackle, Systems_TeamSide.Offense);
 
             // Away still has three timeouts and calls one; burn the rest.
@@ -1561,9 +1562,9 @@ namespace PoFootball.Tests
             Whistle(_game.LineOfScrimmageY + (11f * Systems_FieldModel.YARD), Systems_PlayOutcome.Tackle, Systems_TeamSide.Offense);
             Assert.That(_resolved.Last.TwoMinuteWarning, Is.True, "test premise");
 
-            // A gain with the clock running, inside the spike window, and nothing
-            // left to stop it with.
-            BurnClockDownTo(15f);
+            // A gain with the clock running, inside the spike window (the last
+            // minute of an NFL half on this clock), and nothing left to stop it with.
+            BurnClockDownTo(45f * Systems_GameRules.CLOCK_SCALE);
             Whistle(_game.LineOfScrimmageY + (11f * Systems_FieldModel.YARD), Systems_PlayOutcome.Tackle, Systems_TeamSide.Offense);
 
             Assert.That(_game.NextPlayKind, Is.EqualTo(Systems_PlayKind.Spike));

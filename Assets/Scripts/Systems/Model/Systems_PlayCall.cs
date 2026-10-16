@@ -22,6 +22,11 @@ namespace PoFootball.Models
 
         HandoffHalfback = 3,
 
+        /// <summary>
+        /// The short game. Since revision 14 the receivers' route reward is paid
+        /// underneath Systems_SimConstants.DEEP_SHOT_MIN_YARDS on this call and
+        /// beyond it on <see cref="PassDeep"/>; the throw itself is the same.
+        /// </summary>
         Pass = 4,
 
         /// <summary>
@@ -40,6 +45,23 @@ namespace PoFootball.Models
         /// Systems_GameRules.FIELD_GOAL_MAX_YARDS. The try after a touchdown latches
         /// it on its own (Systems_PlayKind.ExtraPoint).
         /// </summary>
-        FieldGoal = 6
+        FieldGoal = 6,
+
+        /// <summary>
+        /// The deep shot (revision 14). Through revision 13 there was one Pass and
+        /// "deep" was something the scripted quarterback did on every fourth
+        /// episode index, which no trained offense could ask for or be told about.
+        /// Appended rather than placed beside Pass so no existing value moves.
+        /// </summary>
+        PassDeep = 7
+    }
+
+    public static class Systems_PlayCallExtensions
+    {
+        /// <summary>Either pass call: the ones on which the quarterback may throw.</summary>
+        public static bool IsPass(this Systems_PlayCall call)
+        {
+            return call == Systems_PlayCall.Pass || call == Systems_PlayCall.PassDeep;
+        }
     }
 }

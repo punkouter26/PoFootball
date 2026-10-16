@@ -128,6 +128,7 @@ namespace PoFootball.Views
                 case Systems_PlayCall.HandoffFullback: return "FB DIVE";
                 case Systems_PlayCall.HandoffHalfback: return "HB RUN";
                 case Systems_PlayCall.Pass: return "PASS";
+                case Systems_PlayCall.PassDeep: return "DEEP PASS";
                 case Systems_PlayCall.Punt: return "PUNT";
                 case Systems_PlayCall.FieldGoal: return "FIELD GOAL";
                 // No call was made: the whistle came before the dropback latched
@@ -348,6 +349,7 @@ namespace PoFootball.Views
                 case Systems_PlayCall.HandoffFullback: return "FB DIVE";
                 case Systems_PlayCall.HandoffHalfback: return "HB RUN";
                 case Systems_PlayCall.Pass: return "PASS";
+                case Systems_PlayCall.PassDeep: return "DEEP";
                 case Systems_PlayCall.Punt: return "PUNT";
                 case Systems_PlayCall.FieldGoal: return "FG";
                 default: return string.Empty;

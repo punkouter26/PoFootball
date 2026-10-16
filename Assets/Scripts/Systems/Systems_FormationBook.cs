@@ -41,7 +41,14 @@ namespace PoFootball.Systems
         public const int HALFBACK_SLOT_INDEX = 10;
 
         // Defensive slot indices. Absolute — defense occupies 11..21.
+        public const int LINEBACKER_MIDDLE_SLOT_INDEX = 16;
         public const int LINEBACKER_STRONG_SLOT_INDEX = 17;
+
+        /// <summary>
+        /// The one defender whose call branch is read: the middle linebacker, who
+        /// makes the calls on a real defense. See Systems_PlayModel.CallDefense.
+        /// </summary>
+        public const int DEFENSIVE_CAPTAIN_SLOT_INDEX = LINEBACKER_MIDDLE_SLOT_INDEX;
         public const int CORNERBACK_LEFT_SLOT_INDEX = 18;
         public const int CORNERBACK_RIGHT_SLOT_INDEX = 19;
         public const int FREE_SAFETY_SLOT_INDEX = 20;

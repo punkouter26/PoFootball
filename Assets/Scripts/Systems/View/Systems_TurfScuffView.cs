@@ -1,3 +1,4 @@
+using System;
 using MessagePipe;
 using PoFootball.Models;
 using PoFootball.Systems;
@@ -37,6 +38,20 @@ namespace PoFootball.Views
     /// ONE SYSTEM, WORLD SPACE, EMITTED THROUGH EmitParams — the same construction
     /// Systems_ImpactView uses and for the same reasons: no pool, no prefab, no
     /// per-spray draw call.
+    ///
+    /// AND THE GROUND REMEMBERS (2026-10-04). The spray is gone in half a second,
+    /// and the turf shader's own wear is one soft patch that follows the line of
+    /// scrimmage, so nothing on the field said where the game had actually been
+    /// played. The wear layer below is a field-sized texture drawn once over the
+    /// grass, in bare-earth sand: every player who is running leaves a footprint
+    /// in it five times a second, a cut leaves a scuff and a tackle a worn patch,
+    /// and none of it ever fades. By the fourth quarter the hash marks and the
+    /// lines of scrimmage are visibly churned and the corners are still green.
+    ///
+    /// THIS ONE DOES WALK ALL TWENTY-TWO, on a timer rather than a frame: 110
+    /// position reads a second and a few byte writes each, against a texture that
+    /// is uploaded only on the ticks something was written. It is one quad and one
+    /// draw call however worn the field gets.
     /// </summary>
     [DefaultExecutionOrder(-50)]
     [DisallowMultipleComponent]
@@ -85,6 +100,55 @@ namespace PoFootball.Views
         /// </summary>
         private static readonly Color ClodColor = new Color(0.36f, 0.31f, 0.19f, 0.9f);
 
+        // --- The wear layer ------------------------------------------------------
+
+        /// <summary>
+        /// Metres of field per texel. A quarter of a metre is about one boot, so a
+        /// single texel reads as a footprint; the whole field is 195 x 439.
+        /// </summary>
+        private const float WEAR_TEXEL_METRES = 0.25f;
+
+        /// <summary>
+        /// Seconds between footprints. At a run that is a stride and a half, which
+        /// is what makes a trail read as prints and not a painted line.
+        /// </summary>
+        private const float FOOTPRINT_INTERVAL = 0.2f;
+
+        /// <summary>Slower than this a player is standing or shuffling and marks nothing.</summary>
+        private const float FOOTPRINT_MIN_SPEED = 1.5f;
+
+        /// <summary>How far either foot lands from the body's line of travel.</summary>
+        private const float FOOTPRINT_HALF_STANCE = 0.22f;
+
+        /// <summary>Opacity one footprint adds. Several passes over a spot wear it bare.</summary>
+        private const byte FOOTPRINT_ALPHA = 46;
+
+        private const float CUT_SCUFF_RADIUS = 0.7f;
+        private const byte CUT_SCUFF_ALPHA = 90;
+
+        private const float TACKLE_SCUFF_RADIUS = 1.4f;
+        private const byte TACKLE_SCUFF_ALPHA = 150;
+
+        /// <summary>The grass never disappears entirely, so the yard lines stay readable.</summary>
+        private const byte WEAR_MAX_ALPHA = 205;
+
+        /// <summary>Bare sandy earth. Light against the green on purpose: it has to read from the broadcast camera.</summary>
+        private static readonly Color32 DirtColor = new Color32(196, 168, 118, 0);
+
+        private Texture2D _wearTexture;
+        private Sprite _wearSprite;
+        private Color32[] _wearPixels;
+        private int _wearWidth;
+        private int _wearHeight;
+        private bool _wearDirty;
+        private float _footprintCountdown;
+
+        /// <summary>Which foot each player lands next. One bit per formation slot.</summary>
+        private uint _leftFootNext;
+
+        private ISubscriber<Systems_TackleMessage> _tackleSubscriber;
+        private IDisposable _tackleSubscription;
+
         private Systems_BallModel _ball;
         private Systems_PlayerRegistry _registry;
         private Systems_PresentationBudget _budget;
@@ -118,8 +182,10 @@ namespace PoFootball.Views
             Systems_BallModel ball,
             Systems_PlayerRegistry registry,
             Systems_PresentationBudget budget,
-            IPublisher<Systems_TurfCutMessage> cutPublisher)
+            IPublisher<Systems_TurfCutMessage> cutPublisher,
+            ISubscriber<Systems_TackleMessage> tackleSubscriber)
         {
+            _tackleSubscriber = tackleSubscriber;
             _ball = ball;
             _registry = registry;
             _budget = budget;
@@ -134,14 +200,212 @@ namespace PoFootball.Views
                 return;
             }
 
+            // Before the particle material is asked for: the wear layer does not
+            // need it, and a missing material should cost the spray, not the field.
+            BuildWearLayer();
+            _tackleSubscription = _tackleSubscriber?.Subscribe(OnTackle);
+
             if (!Systems_ParticleMaterial.TryLoad(
                     nameof(Systems_TurfScuffView), "Cuts are drawn flat.", out Material source))
             {
-                enabled = false;
                 return;
             }
 
             BuildParticles(source);
+        }
+
+        private void OnDestroy()
+        {
+            _tackleSubscription?.Dispose();
+            _tackleSubscription = null;
+
+            // Runtime-created assets are not collected with the scene.
+            if (_wearSprite != null)
+            {
+                Destroy(_wearSprite);
+            }
+
+            if (_wearTexture != null)
+            {
+                Destroy(_wearTexture);
+            }
+        }
+
+        /// <summary>
+        /// One transparent, field-sized sprite over the grass. Sorting order 0 with
+        /// the turf, a hair nearer the camera so it draws after it — and so under
+        /// the players (1 and 2), the ball and every other effect.
+        /// </summary>
+        private void BuildWearLayer()
+        {
+            _wearWidth = Mathf.CeilToInt(Systems_FieldModel.FIELD_WIDTH / WEAR_TEXEL_METRES);
+            _wearHeight = Mathf.CeilToInt(Systems_FieldModel.TOTAL_LENGTH / WEAR_TEXEL_METRES);
+
+            _wearPixels = new Color32[_wearWidth * _wearHeight];
+
+            for (int texel = 0; texel < _wearPixels.Length; texel++)
+            {
+                _wearPixels[texel] = DirtColor;
+            }
+
+            _wearTexture = new Texture2D(
+                _wearWidth, _wearHeight, TextureFormat.RGBA32, mipChain: false)
+            {
+                name = "TurfWear",
+                filterMode = FilterMode.Bilinear,
+                wrapMode = TextureWrapMode.Clamp
+            };
+
+            _wearTexture.SetPixels32(_wearPixels);
+            _wearTexture.Apply(false);
+
+            _wearSprite = Sprite.Create(
+                _wearTexture,
+                new Rect(0f, 0f, _wearWidth, _wearHeight),
+                new Vector2(0.5f, 0.5f),
+                1f / WEAR_TEXEL_METRES);
+
+            GameObject host = new GameObject("TurfWear");
+            host.transform.SetParent(transform, false);
+            host.transform.position = new Vector3(0f, 0f, -0.01f);
+
+            // The texture is a whole number of texels and the field is not, so the
+            // quad is squeezed the last few centimetres onto the field exactly.
+            host.transform.localScale = new Vector3(
+                Systems_FieldModel.FIELD_WIDTH / (_wearWidth * WEAR_TEXEL_METRES),
+                Systems_FieldModel.TOTAL_LENGTH / (_wearHeight * WEAR_TEXEL_METRES),
+                1f);
+
+            SpriteRenderer renderer = host.AddComponent<SpriteRenderer>();
+            renderer.sprite = _wearSprite;
+            renderer.sortingOrder = 0;
+            renderer.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
+            renderer.receiveShadows = false;
+        }
+
+        /// <summary>
+        /// Published from inside the collision that made the tackle, so this only
+        /// writes bytes; the upload waits for the next footprint tick.
+        /// </summary>
+        private void OnTackle(Systems_TackleMessage message)
+        {
+            if (_wearPixels == null || _ball == null)
+            {
+                return;
+            }
+
+            StampScuff(_ball.Position, TACKLE_SCUFF_RADIUS, TACKLE_SCUFF_ALPHA);
+        }
+
+        /// <summary>
+        /// One footprint per moving player, alternating feet either side of his
+        /// line of travel, then the upload if anything changed since the last one.
+        /// </summary>
+        private void TickWear()
+        {
+            if (_wearPixels == null)
+            {
+                return;
+            }
+
+            _footprintCountdown -= Time.deltaTime;
+
+            if (_footprintCountdown > 0f)
+            {
+                return;
+            }
+
+            _footprintCountdown = FOOTPRINT_INTERVAL;
+
+            if (_registry != null)
+            {
+                float minimumSquared = FOOTPRINT_MIN_SPEED * FOOTPRINT_MIN_SPEED;
+
+                for (int slot = 0; slot < Systems_PlayerRegistry.CAPACITY; slot++)
+                {
+                    Systems_IPlayerHandle player = _registry.Get(slot);
+
+                    if (player == null)
+                    {
+                        continue;
+                    }
+
+                    Vector2 velocity = player.Velocity;
+                    float speedSquared = velocity.sqrMagnitude;
+
+                    if (speedSquared < minimumSquared)
+                    {
+                        continue;
+                    }
+
+                    uint bit = 1u << slot;
+                    float side = (_leftFootNext & bit) != 0u ? -1f : 1f;
+                    _leftFootNext ^= bit;
+
+                    Vector2 heading = velocity / Mathf.Sqrt(speedSquared);
+                    Vector2 foot = player.Position
+                        + (new Vector2(-heading.y, heading.x) * (FOOTPRINT_HALF_STANCE * side));
+
+                    AddWear(foot, FOOTPRINT_ALPHA);
+                }
+            }
+
+            if (_wearDirty)
+            {
+                _wearDirty = false;
+                _wearTexture.SetPixels32(_wearPixels);
+                _wearTexture.Apply(false);
+            }
+        }
+
+        /// <summary>
+        /// A ragged round patch: strongest in the middle, thinned by the private
+        /// RNG so no two scuffs are the same disc.
+        /// </summary>
+        private void StampScuff(Vector2 centre, float radius, byte alpha)
+        {
+            int reach = Mathf.CeilToInt(radius / WEAR_TEXEL_METRES);
+
+            for (int offsetY = -reach; offsetY <= reach; offsetY++)
+            {
+                for (int offsetX = -reach; offsetX <= reach; offsetX++)
+                {
+                    Vector2 offset = new Vector2(offsetX, offsetY) * WEAR_TEXEL_METRES;
+                    float falloff = 1f - (offset.magnitude / radius);
+
+                    if (falloff <= 0f)
+                    {
+                        continue;
+                    }
+
+                    AddWear(
+                        centre + offset,
+                        (byte)(alpha * falloff * (0.45f + (0.55f * NextFloat()))));
+                }
+            }
+        }
+
+        /// <summary>Wears one texel a little barer. Off the field marks nothing.</summary>
+        private void AddWear(Vector2 worldPoint, byte alpha)
+        {
+            int texelX = Mathf.FloorToInt(
+                ((worldPoint.x + Systems_FieldModel.HALF_WIDTH) / Systems_FieldModel.FIELD_WIDTH)
+                * _wearWidth);
+
+            int texelY = Mathf.FloorToInt(
+                ((worldPoint.y - Systems_FieldModel.OWN_BACK_LINE_Y) / Systems_FieldModel.TOTAL_LENGTH)
+                * _wearHeight);
+
+            if (texelX < 0 || texelX >= _wearWidth || texelY < 0 || texelY >= _wearHeight)
+            {
+                return;
+            }
+
+            int index = (texelY * _wearWidth) + texelX;
+            int worn = _wearPixels[index].a + alpha;
+
+            _wearPixels[index].a = (byte)(worn > WEAR_MAX_ALPHA ? WEAR_MAX_ALPHA : worn);
+            _wearDirty = true;
         }
 
         private void BuildParticles(Material source)
@@ -219,6 +483,13 @@ namespace PoFootball.Views
 
         private void Update()
         {
+            TickWear();
+
+            if (_particles == null)
+            {
+                return;
+            }
+
             ResolveCarrier();
 
             if (_sprayCountdown > 0f)
@@ -313,6 +584,7 @@ namespace PoFootball.Views
             // Thrown backwards, away from where he is now going. Turf leaves the
             // cleat opposite to the direction the foot drove.
             EmitClods(_carrier.Position, -heading, force);
+            StampScuff(_carrier.Position, CUT_SCUFF_RADIUS, (byte)(CUT_SCUFF_ALPHA * force));
 
             _cutPublisher?.Publish(new Systems_TurfCutMessage(_carrier.Position, force));
         }

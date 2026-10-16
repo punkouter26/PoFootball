@@ -42,6 +42,7 @@ namespace PoFootball.Systems
         private readonly Systems_Referee _referee;
         private readonly Systems_ISpotProvider _spotProvider;
         private readonly Systems_FormationSelection _formations;
+        private readonly Systems_Roster _roster;
         private readonly Systems_ITrainingEpisodeBoundary _episodeBoundary;
         private readonly Systems_PenaltySystem _penalties;
         private readonly IPublisher<Systems_PlaySnappedMessage> _snappedPublisher;
@@ -58,6 +59,12 @@ namespace PoFootball.Systems
         /// </summary>
         private int _deadBallTicksRemaining;
 
+        /// <summary>
+        /// The front the defense called has been put on the field for this snap, or
+        /// there was nothing to put. Cleared by BeginEpisode.
+        /// </summary>
+        private bool _defenseCallApplied;
+
         public Systems_EpisodeDirector(
             Systems_PlayModel play,
             Systems_BallModel ball,
@@ -65,6 +72,7 @@ namespace PoFootball.Systems
             Systems_Referee referee,
             Systems_ISpotProvider spotProvider,
             Systems_FormationSelection formations,
+            Systems_Roster roster,
             Systems_ITrainingEpisodeBoundary episodeBoundary,
             Systems_PenaltySystem penalties,
             IPublisher<Systems_PlaySnappedMessage> snappedPublisher,
@@ -76,6 +84,7 @@ namespace PoFootball.Systems
             _referee = referee;
             _spotProvider = spotProvider;
             _formations = formations;
+            _roster = roster;
             _episodeBoundary = episodeBoundary;
             _penalties = penalties;
             _snappedPublisher = snappedPublisher;
@@ -147,6 +156,16 @@ namespace PoFootball.Systems
                 _play.ClearKickFormationRequest();
                 _formations.UseFormationFor(_play.Kind);
                 FormUp(_play.LineOfScrimmageY, false);
+                return;
+            }
+
+            // Revision 15: the defense's front, the moment the middle linebacker
+            // calls it. The snap does not wait for it — the pre-snap is
+            // PRESNAP_TICKS whatever anybody decides — and a front called after a
+            // kick was is moot, because the kick formation has replaced it.
+            if (_play.Phase == Systems_PlayPhase.PreSnap)
+            {
+                ApplyCalledDefense();
                 return;
             }
 
@@ -235,6 +254,11 @@ namespace PoFootball.Systems
             _formations.UseFormationFor(situation.Kind);
             _penalties.BeginPlay();
 
+            // Who is on the field. A new twenty-two in training, the same ones all
+            // game otherwise; applied by ResetTo in FormUp. See Systems_Roster.
+            _roster.NextPlay();
+            _defenseCallApplied = false;
+
             FormUp(lineOfScrimmageY, true);
 
             Systems_IPlayerHandle quarterback =
@@ -305,6 +329,39 @@ namespace PoFootball.Systems
                     position.y,
                     Systems_FieldModel.OWN_BACK_LINE_Y + INSIDE,
                     Systems_FieldModel.ATTACKING_BACK_LINE_Y - INSIDE));
+        }
+
+        /// <summary>
+        /// Lines the defense up in the front it called, if it called one different
+        /// from the draw. Once per snap, and not on a kick, whose units are the
+        /// special-teams tables rather than any front.
+        /// </summary>
+        private void ApplyCalledDefense()
+        {
+            if (_defenseCallApplied || !_play.DefenseIsCalled || _play.Kind.IsKick())
+            {
+                return;
+            }
+
+            _defenseCallApplied = true;
+
+            if (_play.DefenseCallIndex == (int)_formations.Defense
+                || _play.DefenseCallIndex >= Systems_FormationBook.DefensiveFormationCount)
+            {
+                return;
+            }
+
+            _formations.CallDefense((Systems_DefensiveFormation)_play.DefenseCallIndex);
+
+            for (int slotIndex = Systems_FormationBook.SLOTS_PER_SIDE;
+                slotIndex < Systems_PlayerRegistry.CAPACITY;
+                slotIndex++)
+            {
+                Systems_FormationSlot slot = _formations.GetSlot(slotIndex);
+
+                _registry.Get(slotIndex).ResetTo(ClampToField(
+                    new Vector2(slot.OffsetX, _play.LineOfScrimmageY + slot.OffsetY)));
+            }
         }
 
         public void Dispose()

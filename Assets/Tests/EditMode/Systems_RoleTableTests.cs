@@ -280,7 +280,7 @@ namespace PoFootball.Tests
             {
                 float terminalVelocity = Systems_RoleTable.DriveForceOf(role)
                     / Systems_RoleTable.MassOf(role)
-                    / Systems_SimConstants.LINEAR_DAMPING;
+                    / Systems_RoleTable.LinearDampingOf(role);
 
                 Assert.That(
                     terminalVelocity,
