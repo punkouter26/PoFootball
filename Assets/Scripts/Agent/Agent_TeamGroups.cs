@@ -142,6 +142,16 @@ namespace PoFootball.Agents
             }
 
             _defense.AddGroupReward(reward);
+
+            // The coordinator's one-step episode: the defense's result for the play
+            // it called a front on. Nothing owed on a kick, where it called none.
+            Agent_FootballPlayer captain =
+                _registry.Get(Systems_FormationBook.DEFENSIVE_CAPTAIN_SLOT_INDEX) as Agent_FootballPlayer;
+
+            if (captain != null && captain.Coordinator != null)
+            {
+                captain.Coordinator.Settle(reward);
+            }
         }
 
         /// <summary>

@@ -139,20 +139,6 @@ namespace PoFootball.Agents
 
         private const int LATERAL_PITCH = 1;
 
-        /// <summary>
-        /// The Defense brain's second branch: which front to line up in. Index 1
-        /// since revision 15 put the pitch, which every non-quarterback brain has,
-        /// at index 0 on the Defense brain too.
-        /// </summary>
-        private const int DEFENSE_CALL_BRANCH = 1;
-
-        /// <summary>
-        /// One series per front, written when it is called. The collapse this is
-        /// here to show is the one Call/Entropy exists for on the other side of
-        /// the ball: a defense that lines up in one front on every down.
-        /// </summary>
-        private static readonly string[] DefenseCallStatKeys = BuildDefenseCallStatKeys();
-
         // --- Heuristic play-call thresholds ----------------------------------
         //
         // These shape ChooseCall only. They are NOT part of the action contract and
@@ -207,7 +193,12 @@ namespace PoFootball.Agents
         /// ten carry the branch because they share the brain, pinned to "no call".
         /// </summary>
         private bool _isDefenseCaptain;
-        private bool _hasDefenseCall;
+
+        /// <summary>
+        /// The defensive coordinator, which the middle linebacker's player creates
+        /// and nobody else has. Null on every other player. Revision 16.
+        /// </summary>
+        internal Agent_DefensiveCoordinator Coordinator { get; private set; }
         private bool _isBlocker;
 
         /// <summary>
@@ -413,8 +404,6 @@ namespace PoFootball.Agents
             CacheRole();
             _hasQuarterbackActions =
                 Systems_RoleTable.HasQuarterbackActions(Systems_RoleTable.BrainOf(_role));
-            _hasDefenseCall =
-                Systems_RoleTable.HasDefenseCallActions(Systems_RoleTable.BrainOf(_role));
             _isDefenseCaptain =
                 _formationSlotIndex == Systems_FormationBook.DEFENSIVE_CAPTAIN_SLOT_INDEX;
 
@@ -455,6 +444,19 @@ namespace PoFootball.Agents
             }
 
             ConfigureBody();
+        }
+
+        /// <summary>
+        /// The middle linebacker's player builds the defensive coordinator — once,
+        /// after every Awake and every injection, so the Academy is already set up
+        /// for this mode and the play model is in hand. Revision 16.
+        /// </summary>
+        private void Start()
+        {
+            if (_isDefenseCaptain && Coordinator == null && _play != null)
+            {
+                Coordinator = Agent_DefensiveCoordinator.Create(transform, _play, Formations, _field);
+            }
         }
 
         /// <summary>
@@ -694,12 +696,6 @@ namespace PoFootball.Agents
                 // while carrying with somebody to pitch to.
                 actionMask.SetActionEnabled(LATERAL_BRANCH, LATERAL_PITCH, CanLateral());
 
-                // Revision 15: the Defense brain's front, on its second branch.
-                if (_hasDefenseCall)
-                {
-                    WriteDefenseCallMask(actionMask);
-                }
-
                 return;
             }
 
@@ -753,68 +749,6 @@ namespace PoFootball.Agents
             return _play.CanCallKick
                 && _play.PreSnapTick + Systems_SimConstants.DECISION_PERIOD
                     < Systems_SimConstants.KICK_CALL_WINDOW_TICKS;
-        }
-
-        /// <summary>
-        /// The front is called by one player, once, before the snap — and that is
-        /// the only decision on which the branch is free. Everywhere else it is
-        /// pinned to "no call", for the reason the quarterback's is: a sample that
-        /// cannot matter should carry no gradient. Inside the window "no call" is
-        /// masked instead, so the call cannot be declined.
-        /// </summary>
-        private void WriteDefenseCallMask(IDiscreteActionMask actionMask)
-        {
-            bool canCall = _isDefenseCaptain
-                && _play != null
-                && _play.Phase == Systems_PlayPhase.PreSnap
-                && !_play.DefenseIsCalled;
-
-            for (int callIndex = 0;
-                callIndex < Agent_ActionContract.DEFENSE_CALL_BRANCH_SIZE;
-                callIndex++)
-            {
-                actionMask.SetActionEnabled(
-                    DEFENSE_CALL_BRANCH, callIndex, canCall ? callIndex != 0 : callIndex == 0);
-            }
-        }
-
-        /// <summary>
-        /// Index 0 is "no call", so a zeroed buffer — what ML-Agents hands back
-        /// between EndEpisode and the next decision — calls nothing, as on the
-        /// quarterback's branch.
-        /// </summary>
-        private void CallDefense(int branchIndex)
-        {
-            if (branchIndex <= 0
-                || branchIndex > Agent_ActionContract.DEFENSE_CALL_SLOTS
-                || _play.DefenseIsCalled)
-            {
-                return;
-            }
-
-            _play.CallDefense(branchIndex - 1);
-
-            if (Academy.IsInitialized && Academy.Instance.IsCommunicatorOn)
-            {
-                StatsRecorder stats = Academy.Instance.StatsRecorder;
-
-                for (int front = 0; front < DefenseCallStatKeys.Length; front++)
-                {
-                    stats.Add(DefenseCallStatKeys[front], front == branchIndex - 1 ? 1f : 0f);
-                }
-            }
-        }
-
-        private static string[] BuildDefenseCallStatKeys()
-        {
-            string[] keys = new string[Agent_ActionContract.DEFENSE_CALL_SLOTS];
-
-            for (int front = 0; front < keys.Length; front++)
-            {
-                keys[front] = "DefenseCall/" + (Systems_DefensiveFormation)front;
-            }
-
-            return keys;
         }
 
         /// <summary>
@@ -898,8 +832,8 @@ namespace PoFootball.Agents
             }
 
             // BEFORE THE SNAP NOTHING MOVES (revision 14) — the bodies are set, and
-            // the only decisions anybody can make are the quarterback's kick-or-go
-            // and the middle linebacker's front.
+            // the only decision anybody can make is the quarterback's kick-or-go. The
+            // front is the coordinator's (Agent_DefensiveCoordinator).
             // See Systems_SimConstants.PRESNAP_TICKS for why the bodies are frozen
             // rather than driven.
             if (_play.Phase == Systems_PlayPhase.PreSnap)
@@ -909,11 +843,6 @@ namespace PoFootball.Agents
                     HandlePreSnapCall(actions);
                 }
 
-                // ...and the middle linebacker's front (revision 15).
-                if (_isDefenseCaptain)
-                {
-                    CallDefense(actions.DiscreteActions[DEFENSE_CALL_BRANCH]);
-                }
 
                 return;
             }
@@ -1690,12 +1619,6 @@ namespace PoFootball.Agents
                     discreteActions[PLAY_CALL_BRANCH] = (int)ChooseKickCall();
                 }
 
-                // The scripted defense calls the front it was drawn, so the scripted
-                // game is the one it was before the front could be called at all.
-                if (_isDefenseCaptain)
-                {
-                    discreteActions[DEFENSE_CALL_BRANCH] = (int)Formations.Defense + 1;
-                }
 
                 return;
             }

@@ -31,6 +31,13 @@ namespace PoFootball.Models
     {
         Offense = 0,
         Defense = 1,
-        Quarterback = 2
+        Quarterback = 2,
+
+        /// <summary>
+        /// The defensive coordinator: no body, one decision a play, the front
+        /// (revision 16). Not a player brain — no role maps to it; see
+        /// Agent_DefensiveCoordinator for why the front left the Defense brain.
+        /// </summary>
+        DefenseCall = 3
     }
 }

@@ -85,6 +85,7 @@ except ImportError:  # pragma: no cover - environment problem, not a logic path
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
 SENSOR_CS = REPO_ROOT / "Assets/Scripts/Sensor/Sensor_FootballState.cs"
+DEFENSE_CALL_SENSOR_CS = REPO_ROOT / "Assets/Scripts/Sensor/Sensor_DefenseCallState.cs"
 RAY_CS = REPO_ROOT / "Assets/Scripts/Sensor/Sensor_RayContract.cs"
 ACTION_CS = REPO_ROOT / "Assets/Scripts/Agent/Agent_ActionContract.cs"
 ROLE_TABLE_CS = REPO_ROOT / "Assets/Scripts/Systems/Model/Systems_RoleTable.cs"
@@ -188,6 +189,16 @@ def read_defense_behavior() -> str:
     return group
 
 
+def _read_defense_call_observations() -> int:
+    """The coordinator's vector width (revision 16): the situation plus the formation one-hot."""
+    slots = _read_int_const(DEFENSE_CALL_SENSOR_CS, "OFFENSE_FORMATION_SLOTS")
+    text = DEFENSE_CALL_SENSOR_CS.read_text(encoding="utf-8")
+    match = re.search(r"OBSERVATION_SIZE\s*=\s*(\d+)\s*\+\s*OFFENSE_FORMATION_SLOTS", text)
+    if not match:
+        raise ContractError("could not read OBSERVATION_SIZE from Sensor_DefenseCallState.cs")
+    return int(match.group(1)) + slots
+
+
 def read_ray_observation_size() -> int:
     """
     Width of the RayPerceptionSensor2D observation, from Sensor_RayContract.
@@ -231,7 +242,8 @@ def expected_contract() -> dict:
         "other_branches": other_branches,
         "behaviors": read_behavior_names(),
         "quarterback_behavior": read_quarterback_behavior(),
-        "defense_branches": other_branches + [defense_call_slots + 1],
+        "defense_branches": [defense_call_slots + 1],
+        "defense_call_observations": _read_defense_call_observations(),
         "defense_behavior": read_defense_behavior(),
     }
 
@@ -308,9 +320,13 @@ def validate(behavior: str, path: Path, contract: dict) -> list[str]:
     problems: list[str] = []
 
     is_quarterback = behavior == contract["quarterback_behavior"]
+    is_coordinator = behavior == contract["defense_behavior"]
 
-    wanted_observations = sorted(
-        [contract["ray_observations"], contract["vector_observations"]]
+    # The coordinator has no body and so no rays: its vector is all it sees.
+    wanted_observations = (
+        [contract["defense_call_observations"]]
+        if is_coordinator
+        else sorted([contract["ray_observations"], contract["vector_observations"]])
     )
     if actual["observation_widths"] != wanted_observations:
         problems.append(
@@ -320,15 +336,17 @@ def validate(behavior: str, path: Path, contract: dict) -> list[str]:
         )
 
     wanted_continuous = (
-        contract["quarterback_continuous"] if is_quarterback else contract["base_continuous"]
+        0 if is_coordinator
+        else contract["quarterback_continuous"] if is_quarterback
+        else contract["base_continuous"]
     )
     if actual["continuous"] != wanted_continuous:
         problems.append(
             f"continuous actions {actual['continuous']} != expected {wanted_continuous}"
         )
 
-    # Revision 15: the quarterback has [call, throw], the Defense brain the pitch
-    # and then its front, every other brain the pitch alone.
+    # Revision 16: the quarterback has [call, throw], the coordinator the front,
+    # every other brain the pitch alone.
     is_defense = behavior == contract["defense_behavior"]
 
     if is_quarterback:
@@ -350,7 +368,7 @@ def validate(behavior: str, path: Path, contract: dict) -> list[str]:
                 "this brain cannot call a play at all, so every down decodes to "
                 "whatever index 0 means"
                 if is_quarterback
-                else "this brain cannot pitch the ball or call its front"
+                else "the coordinator cannot call a front"
                 if is_defense
                 else "this brain cannot pitch the ball (revision 14)"
             )

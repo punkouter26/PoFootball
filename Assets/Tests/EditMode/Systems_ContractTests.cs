@@ -129,9 +129,9 @@ namespace PoFootball.Tests
         // --- Action contract ---------------------------------------------------
 
         /// <summary>
-        /// The quarterback's brain carries two discrete branches (call, throw), the
-        /// defense's two (the pitch, then the front), the offense's one (the
-        /// pitch). Revision 15, the merge of the two revision 14s.
+        /// The quarterback's brain carries two discrete branches (call, throw); the
+        /// offense's and the defense's one each, the pitch; the coordinator's one,
+        /// the front, and no continuous actions at all. Revision 16.
         /// </summary>
         [Test]
         public void EachBrain_HasItsOwnDiscreteBranches()
@@ -140,20 +140,30 @@ namespace PoFootball.Tests
             {
                 ActionSpec spec = Agent_ActionContract.For(group);
                 bool isQuarterback = group == Systems_BrainGroup.Quarterback;
-                bool isDefense = group == Systems_BrainGroup.Defense;
+                bool isCoordinator = group == Systems_BrainGroup.DefenseCall;
 
-                // Revision 14: every other brain carries the one pitch branch.
                 Assert.That(
                     spec.NumDiscreteActions,
-                    Is.EqualTo(isQuarterback || isDefense ? 2 : 1),
+                    Is.EqualTo(isQuarterback ? 2 : 1),
                     $"{group} discrete branch count");
 
+                if (isCoordinator)
+                {
+                    Assert.That(
+                        spec.BranchSizes[0], Is.EqualTo(Agent_ActionContract.DEFENSE_CALL_BRANCH_SIZE),
+                        "the coordinator's one branch is the front");
+                    Assert.That(spec.NumContinuousActions, Is.Zero, "the coordinator has no body to drive");
+                    continue;
+                }
+
+                // Revision 14: every other brain carries the one pitch branch.
                 if (!isQuarterback)
                 {
                     Assert.That(
                         spec.BranchSizes[0], Is.EqualTo(Agent_ActionContract.LATERAL_BRANCH_SIZE),
                         $"{group} pitch branch size");
                 }
+
                 Assert.That(
                     spec.NumContinuousActions,
                     Is.EqualTo(isQuarterback
@@ -171,12 +181,17 @@ namespace PoFootball.Tests
         [Test]
         public void TheDefenseCallBranch_HasOneIndexPerFront()
         {
+            // The coordinator's formation one-hot is a literal promote_brain.py reads.
+            Assert.That(
+                Sensor_DefenseCallState.OFFENSE_FORMATION_SLOTS,
+                Is.EqualTo(Systems_FormationBook.OffensiveFormationCount));
+
             Assert.That(
                 Agent_ActionContract.DEFENSE_CALL_SLOTS,
                 Is.EqualTo(Systems_FormationBook.DefensiveFormationCount));
 
             Assert.That(
-                Agent_ActionContract.For(Systems_BrainGroup.Defense).BranchSizes[1],
+                Agent_ActionContract.For(Systems_BrainGroup.DefenseCall).BranchSizes[0],
                 Is.EqualTo(Agent_ActionContract.DEFENSE_CALL_BRANCH_SIZE));
 
             Assert.That(

@@ -63,6 +63,8 @@ namespace PoFootball.Models
                     return "Offense";
                 case Systems_BrainGroup.Defense:
                     return "Defense";
+                case Systems_BrainGroup.DefenseCall:
+                    return "DefenseCall";
                 default:
                     return "Quarterback";
             }
@@ -322,14 +324,22 @@ namespace PoFootball.Models
         }
 
         /// <summary>
-        /// The defensive brain carries one discrete branch: which front to line up
-        /// in. Every defender shares the brain and so the branch, but it is read
-        /// from one player only (Systems_FormationBook.DEFENSIVE_CAPTAIN_SLOT_INDEX)
-        /// and pinned to "no call" by the action mask for the other ten.
+        /// The brain that calls the defense's front. Its own since revision 16 —
+        /// the defensive coordinator, Agent_DefensiveCoordinator — after the branch
+        /// it had on the Defense brain collapsed onto one front.
         /// </summary>
         public static bool HasDefenseCallActions(Systems_BrainGroup group)
         {
-            return group == Systems_BrainGroup.Defense;
+            return group == Systems_BrainGroup.DefenseCall;
+        }
+
+        /// <summary>
+        /// Whether a brain drives a body on the field. Every one but the
+        /// coordinator, which calls the front and plays nothing.
+        /// </summary>
+        public static bool IsPlayerBrain(Systems_BrainGroup group)
+        {
+            return group != Systems_BrainGroup.DefenseCall;
         }
 
         /// <summary>

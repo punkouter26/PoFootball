@@ -339,10 +339,19 @@ namespace PoFootball.Agents
         ///
         /// No brain of either revision 14 loads here. football_base16 was trained on
         /// the first of them, after the crowd rule (Systems_Referee.TrackCrowd), and
-        /// can be promoted only from commit 1417808. Config/FootballBase17.yaml is
+        /// can be promoted only from commit 1417808. Config/FootballBase17.yaml was
         /// this revision's config.
+        ///
+        /// Revision 16 (2026-10-16) moves the front out of the Defense brain. Read
+        /// off a second branch sampled from one of eleven players, it got a sliver
+        /// of a gradient that is otherwise steering, and football_base17 settled on
+        /// the zero blitz for 100% of plays by 2M steps. It is now a fourth brain,
+        /// DefenseCall (Agent_DefensiveCoordinator): no body, 12 observations
+        /// (Sensor_DefenseCallState), no continuous actions, one branch [9], one
+        /// decision a play. The Defense brain goes back to [2], the pitch.
+        /// Config/FootballBase18.yaml is this revision's config.
         /// </summary>
-        public const int CONTRACT_REVISION = 15;
+        public const int CONTRACT_REVISION = 16;
 
         /// <summary>Continuous outputs every brain has: drive and steer.</summary>
         public const int BASE_CONTINUOUS_ACTIONS = 2;
@@ -375,13 +384,10 @@ namespace PoFootball.Agents
 
         public static ActionSpec For(Systems_BrainGroup group)
         {
-            // The pitch first, at the index every non-quarterback brain reads it
-            // from, then the front. Revision 15.
+            // The coordinator: no body to drive, one decision — the front.
             if (Systems_RoleTable.HasDefenseCallActions(group))
             {
-                return new ActionSpec(
-                    BASE_CONTINUOUS_ACTIONS,
-                    new[] { LATERAL_BRANCH_SIZE, DEFENSE_CALL_BRANCH_SIZE });
+                return new ActionSpec(0, new[] { DEFENSE_CALL_BRANCH_SIZE });
             }
 
             if (!Systems_RoleTable.HasQuarterbackActions(group))

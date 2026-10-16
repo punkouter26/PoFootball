@@ -148,6 +148,12 @@ namespace PoFootball.Tests
         {
             foreach (Systems_BrainGroup group in Enum.GetValues(typeof(Systems_BrainGroup)))
             {
+                // The coordinator plays nothing; it is on the field as nobody.
+                if (!Systems_RoleTable.IsPlayerBrain(group))
+                {
+                    continue;
+                }
+
                 bool found = false;
 
                 for (int index = 0; index < Systems_Formation.SlotCount; index++)
