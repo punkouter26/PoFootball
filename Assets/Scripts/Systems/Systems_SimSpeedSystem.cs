@@ -65,6 +65,29 @@ namespace PoFootball.Systems
             Apply();
         }
 
+        /// <summary>
+        /// Back to 1x, unpaused — at the final whistle, where the speed and pause
+        /// buttons leave the screen. A game that ended at 4x or 0.5x otherwise
+        /// played its highlights and moved its camera at that speed with no control
+        /// left to change it.
+        ///
+        /// ONLY IF THE VIEWER MOVED IT. A scale this system never chose — the
+        /// Editor's Sim Speed and realism runs set their own — is not this
+        /// system's to put back, and writing 1 would slow a measurement run to
+        /// real time for every game after the first.
+        /// </summary>
+        public void ResetToNormal()
+        {
+            if (_speedIndex == 0 && !IsPaused)
+            {
+                return;
+            }
+
+            _speedIndex = 0;
+            IsPaused = false;
+            Apply();
+        }
+
         public void Dispose()
         {
             Time.timeScale = 1f;

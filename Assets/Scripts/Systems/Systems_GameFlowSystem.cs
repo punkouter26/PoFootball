@@ -233,10 +233,25 @@ namespace PoFootball.Systems
 
             int pointsScored = 0;
             Systems_TeamId scorer = offense;
+            float markerBefore = _game.FirstDownMarkerY;
 
             Systems_DownResult result = Resolve(
                 message, offense, spotY, ref pointsScored, ref scorer,
                 out Systems_FoulRuling ruling);
+
+            // Kept before the clock can rename it: see Systems_DownResolvedMessage.PlayResult.
+            Systems_DownResult playResult = result;
+
+            // The chains moved on a flag, not a gain: an accepted defensive foul
+            // that left the offense with the ball and a new line to gain.
+            bool penaltyFirstDown = result == Systems_DownResult.Penalty
+                && ruling.Accepted
+                && ruling.FoulTeam != offense
+                && _game.Possession == offense
+                && _game.Down == 1
+                && !Mathf.Approximately(_game.FirstDownMarkerY, markerBefore);
+
+            float returnYards = ReturnYardsOf(message);
 
             bool clockStops = StopsClock(message, ruling);
 
@@ -355,7 +370,10 @@ namespace PoFootball.Systems
                 ruling.Yards,
                 twoMinuteWarning,
                 kind,
-                scorer));
+                scorer,
+                playResult,
+                returnYards,
+                penaltyFirstDown));
 
             Tally(result, message, ruling);
 
@@ -395,6 +413,36 @@ namespace PoFootball.Systems
             {
                 _scrimmagePlays++;
                 _scrimmageYards += yardsGained;
+
+                // THE SPLIT THE MEAN HIDES. Two measured games averaged a healthy
+                // 6-8 yards a play out of runs that LOST a yard and completions that
+                // went seventy: football's mean, nothing like football's plays. A
+                // carry is any scrimmage snap where the ball did not leave the
+                // passer's hand, as in Systems_StatsSystem; a sack is neither.
+                bool thrown = message.Call == Systems_PlayCall.Pass
+                    && (message.PassCompleted
+                        || message.Outcome == Systems_PlayOutcome.Incompletion
+                        || message.Outcome == Systems_PlayOutcome.Interception);
+
+                if (thrown)
+                {
+                    _passAttempts++;
+
+                    if (message.PassCompleted)
+                    {
+                        _completions++;
+                    }
+                }
+                else if (message.Outcome != Systems_PlayOutcome.Sack)
+                {
+                    _rushCarries++;
+                    _rushYards += yardsGained;
+                }
+            }
+
+            if (playResult == Systems_DownResult.FirstDown || penaltyFirstDown)
+            {
+                _firstDowns++;
             }
 
             _outcomeCounts[(int)message.Outcome]++;
@@ -449,6 +497,25 @@ namespace PoFootball.Systems
             float reached = message.PossessionChanged ? message.PossessionChangeY : spotY;
 
             return (ClampToPlayableY(reached) - _game.LineOfScrimmageY) / Systems_FieldModel.YARD;
+        }
+
+        /// <summary>
+        /// How far the side that took the ball away carried it: from where it got
+        /// the ball to where the return ended, toward −Y in the frame of the snap.
+        /// A return that scored ended on the goal line it crossed.
+        /// </summary>
+        private static float ReturnYardsOf(Systems_PlayEndedMessage message)
+        {
+            if (!message.PossessionChanged || message.Side != Systems_TeamSide.Defense)
+            {
+                return 0f;
+            }
+
+            // Measured from the catch, end zone included, as the record books do:
+            // a kickoff taken five deep and run back all the way is 105 yards.
+            float end = Mathf.Max(message.Spot.y, Systems_FieldModel.OWN_GOAL_LINE_Y);
+
+            return Mathf.Max(0f, (message.PossessionChangeY - end) / Systems_FieldModel.YARD);
         }
 
         // =====================================================================
@@ -1649,11 +1716,20 @@ namespace PoFootball.Systems
             // THE THREE NUMBERS THAT SAY WHETHER THIS IS FOOTBALL. Real football
             // runs about 5.5 yards a play, faces a fourth down on roughly one series
             // in three, and scores a touchdown on about one drive in five.
+            float yardsPerCarry = _rushCarries > 0 ? _rushYards / _rushCarries : 0f;
+            float completionRate = _passAttempts > 0 ? _completions / (float)_passAttempts : 0f;
+
+            // The last three were added after a game read 6.4 yards a play from
+            // minus-yardage runs and seventy-yard completions. Appended, so a parser
+            // of the first four (Editor_RealismEval) reads old and new lines alike.
             Debug.Log(
                 $"[PoFootball] REALISM  yards/play {yardsPerPlay:F2}"
                 + $" | 4th downs faced {_fourthDowns}"
                 + $" | TD/drive {touchdownsPerDrive:F2}"
-                + $" | scrimmage plays {_scrimmagePlays}");
+                + $" | scrimmage plays {_scrimmagePlays}"
+                + $" | rush yd/carry {yardsPerCarry:F2}"
+                + $" | first downs {_firstDowns}"
+                + $" | completion {completionRate:F2}");
 
             Systems_Log.Info($"[PoFootball] Down results: {Tally<Systems_DownResult>(_resultCounts)}");
             Systems_Log.Info($"[PoFootball] Play outcomes: {Tally<Systems_PlayOutcome>(_outcomeCounts)}");
@@ -1681,6 +1757,11 @@ namespace PoFootball.Systems
         private int _fourthDowns;
         private int _scrimmagePlays;
         private float _scrimmageYards;
+        private int _rushCarries;
+        private float _rushYards;
+        private int _passAttempts;
+        private int _completions;
+        private int _firstDowns;
         private int _fieldGoalsAttempted;
         private int _fieldGoalsMade;
         private int _extraPointsAttempted;

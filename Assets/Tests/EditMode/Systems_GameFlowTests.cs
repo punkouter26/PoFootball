@@ -1185,6 +1185,60 @@ namespace PoFootball.Tests
         }
 
         [Test]
+        public void ADefensiveFoulThatMovesTheChains_IsBookedAsAPenaltyFirstDown()
+        {
+            ReceiveOpeningKickoff();
+
+            Snap();
+            Flag(Systems_FoulType.DefensiveHolding, Systems_TeamSide.Defense, _game.LineOfScrimmageY);
+            Whistle(OwnYard(StartYardLine + 2f), Systems_PlayOutcome.Tackle, Systems_TeamSide.Offense);
+
+            Assert.That(_resolved.Last.PenaltyFirstDown, Is.True);
+        }
+
+        [Test]
+        public void AnOffsideShortOfTheLineToGain_IsNotAFirstDown()
+        {
+            ReceiveOpeningKickoff();
+
+            Snap();
+            Flag(Systems_FoulType.Offside, Systems_TeamSide.Defense, _game.LineOfScrimmageY, 0);
+            Whistle(_game.LineOfScrimmageY, Systems_PlayOutcome.DeadBallFoul, Systems_TeamSide.Defense);
+
+            Assert.That(_resolved.Last.PenaltyAccepted, Is.True);
+            Assert.That(_resolved.Last.PenaltyFirstDown, Is.False, "1st & 10 became 1st & 5, not a new series");
+        }
+
+        [Test]
+        public void AKickoffReturn_CarriesItsYardageFromTheCatch()
+        {
+            // Fielded two yards deep in the receivers' end zone, returned to the
+            // kicking team's own 72 — the receivers' 28. Thirty yards.
+            Snap();
+            Whistle(
+                OwnYard(72f), Systems_PlayOutcome.Kickoff, Systems_TeamSide.Defense,
+                Systems_PlayCall.None, true,
+                Systems_FieldModel.ATTACKING_GOAL_LINE_Y + (2f * Systems_FieldModel.YARD));
+
+            Assert.That(_resolved.Last.ReturnYards, Is.EqualTo(30f).Within(0.1f));
+            Assert.That(_resolved.Last.YardsGained, Is.EqualTo(0f), "a kick gains the offense nothing");
+        }
+
+        [Test]
+        public void ThePlayThatEndsAQuarter_KeepsItsOwnResultForTheBoxScore()
+        {
+            ReceiveOpeningKickoff();
+            BurnQuarterToZero();
+
+            Whistle(
+                _game.LineOfScrimmageY + (11f * Systems_FieldModel.YARD),
+                Systems_PlayOutcome.Tackle, Systems_TeamSide.Offense);
+
+            Assert.That(_resolved.Last.Result, Is.EqualTo(Systems_DownResult.EndOfQuarter));
+            Assert.That(_resolved.Last.PlayResult, Is.EqualTo(Systems_DownResult.FirstDown));
+        }
+
+        [Test]
         public void ADefensiveFoulOnATouchdown_IsDeclined()
         {
             ReceiveOpeningKickoff();

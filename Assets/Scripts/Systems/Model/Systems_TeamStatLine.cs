@@ -35,6 +35,9 @@ namespace PoFootball.Models
 
         public float RushingYards { get; private set; }
 
+        /// <summary>Times the passer was sacked. Not a carry and not an attempt.</summary>
+        public int Sacks { get; private set; }
+
         /// <summary>Seconds of game clock burned while this team held the ball.</summary>
         public float TimeOfPossession { get; private set; }
 
@@ -70,6 +73,7 @@ namespace PoFootball.Models
             PassingYards = 0f;
             Carries = 0;
             RushingYards = 0f;
+            Sacks = 0;
             TimeOfPossession = 0f;
         }
 
@@ -133,6 +137,20 @@ namespace PoFootball.Models
                 Carries += 1;
                 RushingYards += yards;
             }
+        }
+
+        /// <summary>
+        /// A sack: a play and its lost yards, charged to PASSING the way the NFL
+        /// keeps team passing yards net of sacks. It was booked as a carry, which
+        /// put every sack into the rushing column and is part of why measured games
+        /// showed rushing totals of minus forty.
+        /// </summary>
+        public void AddSack(float yards)
+        {
+            PlaysRun += 1;
+            TotalYards += yards;
+            PassingYards += yards;
+            Sacks += 1;
         }
     }
 }

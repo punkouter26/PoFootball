@@ -130,8 +130,83 @@ namespace PoFootball.Views
                 case Systems_PlayCall.Pass: return "PASS";
                 case Systems_PlayCall.Punt: return "PUNT";
                 case Systems_PlayCall.FieldGoal: return "FIELD GOAL";
-                default: return "KICKOFF";
+                // No call was made: the whistle came before the dropback latched
+                // one. This used to say "KICKOFF", which every false start read as.
+                default: return string.Empty;
             }
+        }
+
+        /// <summary>
+        /// What the play WAS, for the banner and a highlight caption. The kind of
+        /// snap first: a try, a kneel and a spike run on a call the quarterback
+        /// was handed (Systems_PlayModel forces one), and naming that call put
+        /// "FIELD GOAL" under every extra point, "QB KEEP" under every kneel and
+        /// "PASS" under every spike. A flag before the snap is named as such.
+        /// </summary>
+        public static string PlayLabel(
+            Systems_PlayKind kind, Systems_PlayCall call, Systems_PlayOutcome outcome)
+        {
+            if (outcome == Systems_PlayOutcome.DeadBallFoul)
+            {
+                return "PRE-SNAP";
+            }
+
+            switch (kind)
+            {
+                case Systems_PlayKind.Kickoff: return "KICKOFF";
+                case Systems_PlayKind.Punt: return "PUNT";
+                case Systems_PlayKind.FieldGoal: return "FIELD GOAL";
+                case Systems_PlayKind.ExtraPoint: return "EXTRA POINT";
+                case Systems_PlayKind.TwoPoint: return "2-PT TRY";
+                case Systems_PlayKind.KneelDown: return "KNEEL";
+                case Systems_PlayKind.Spike: return "SPIKE";
+                default: return PlayCallLabel(call);
+            }
+        }
+
+        /// <summary>
+        /// The banner's detail line before any flag or timeout is appended:
+        /// "HB RUN   +4 yd", "PUNT   returned 12 yd", "INTERCEPTION ... returned 30 yd".
+        /// A kick's yardage is the return, because a kick gains the kicking team
+        /// nothing on the books and "no gain" under a sixty-yard runback was the
+        /// banner contradicting the play. Allocates; once per resolved down.
+        /// </summary>
+        public static string PlayDetail(
+            Systems_PlayKind kind,
+            Systems_PlayCall call,
+            Systems_PlayOutcome outcome,
+            float yardsGained,
+            float returnYards)
+        {
+            string label = PlayLabel(kind, call, outcome);
+            string returned = ReturnDetail(returnYards);
+
+            if (outcome == Systems_PlayOutcome.DeadBallFoul)
+            {
+                return label;
+            }
+
+            switch (kind)
+            {
+                case Systems_PlayKind.Kickoff:
+                case Systems_PlayKind.Punt:
+                case Systems_PlayKind.FieldGoal:
+                case Systems_PlayKind.ExtraPoint:
+                case Systems_PlayKind.Spike:
+                    return returned.Length == 0 ? label : label + "   " + returned;
+            }
+
+            string yardage = YardageDetail(yardsGained);
+            string head = label.Length == 0 ? yardage : label + "   " + yardage;
+
+            return returned.Length == 0 ? head : head + "   " + returned;
+        }
+
+        /// <summary>"returned 23 yd", or nothing for a return of under a yard.</summary>
+        public static string ReturnDetail(float returnYards)
+        {
+            int rounded = Mathf.RoundToInt(returnYards);
+            return rounded <= 0 ? string.Empty : $"returned {rounded} yd";
         }
 
         /// <summary>
@@ -175,6 +250,13 @@ namespace PoFootball.Views
                 case Systems_PlayOutcome.FieldGoalMissed: return "NO GOOD";
                 case Systems_PlayOutcome.Sack: return "SACKED";
                 case Systems_PlayOutcome.Downed: return "DOWN";
+                // The rest only reach here as a period-ending play's caption; the
+                // down result names each of them while the game is on.
+                case Systems_PlayOutcome.Kickoff: return "KICKOFF RETURN";
+                case Systems_PlayOutcome.KickRecovered: return "KICK RECOVERED";
+                case Systems_PlayOutcome.KickBlocked: return "BLOCKED";
+                case Systems_PlayOutcome.Touchback: return "TOUCHBACK";
+                case Systems_PlayOutcome.DeadBallFoul: return "FLAG";
                 default: return "TACKLED";
             }
         }
@@ -245,6 +327,19 @@ namespace PoFootball.Views
         /// few times a game. The banner after the kick still spells it out
         /// (PlayCallLabel), where there is room.
         /// </summary>
+        public static string PlayCall(Systems_PlayKind kind, Systems_PlayCall call)
+        {
+            // The kinds whose call is forced, named for what they are. Literals.
+            switch (kind)
+            {
+                case Systems_PlayKind.ExtraPoint: return call == Systems_PlayCall.None ? string.Empty : "PAT";
+                case Systems_PlayKind.KneelDown: return call == Systems_PlayCall.None ? string.Empty : "KNEEL";
+                case Systems_PlayKind.Spike: return call == Systems_PlayCall.None ? string.Empty : "SPIKE";
+            }
+
+            return PlayCall(call);
+        }
+
         public static string PlayCall(Systems_PlayCall call)
         {
             switch (call)

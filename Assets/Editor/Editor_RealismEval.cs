@@ -13,7 +13,7 @@ using UnityEngine.SceneManagement;
 namespace PoFootball.EditorTools
 {
     /// <summary>
-    /// Plays three full games of SCN_GAME at 8x and writes their REALISM lines to
+    /// Plays four full games of SCN_GAME at 8x and writes their REALISM lines to
     /// results/realism/realism-&lt;stamp&gt;.json, for
     /// `Tools/promote_brain.py --check-realism` to judge.
     ///
@@ -26,12 +26,18 @@ namespace PoFootball.EditorTools
     ///
     /// HEADLESS AS WELL. `Unity.exe -batchmode -projectPath . -executeMethod
     /// PoFootball.EditorTools.Editor_RealismEval.RunBatch` (no -quit) plays the same
-    /// three games and exits 0, or 1 if a game never reached the whistle. Batch mode
+    /// four games and exits 0, or 1 if a game never reached the whistle. Batch mode
     /// turns the presentation off through Systems_PresentationBudget, which changes
     /// nothing a policy sees.
     ///
-    /// The games go through Systems_SceneRouter.LoadGame, the same route REMATCH
-    /// takes, so each starts with a fresh container and a fresh per-game seed.
+    /// THE SAME FOUR SEEDS EVERY RUN. The games go through
+    /// Systems_SceneRouter.ReplayGame, the route SAME GAME takes, on
+    /// <see cref="SEEDS"/> — so each starts with a fresh container and two runs of
+    /// this tool on the same code produce the same four games. It used to draw a
+    /// fresh seed per game, and CLAUDE.md's own measurements put one config's
+    /// single games anywhere from 4.5 to 13 yards a play: two runs could disagree
+    /// by more than any change being judged. "Judge balance on fixed seeds" is
+    /// now what this does rather than something to remember.
     /// Fixed delta time is untouched: 8x is Editor_SimSpeed's measurement mode.
     /// State lives in SessionState because entering play mode may reload the domain.
     /// </summary>
@@ -39,7 +45,10 @@ namespace PoFootball.EditorTools
     internal static class Editor_RealismEval
     {
         private const string GAME_SCENE_PATH = "Assets/Scenes/SCN_GAME.unity";
-        private const int GAMES = 3;
+        /// <summary>The games, in order. Four, as CLAUDE.md's fixed-seed comparisons use.</summary>
+        private static readonly uint[] SEEDS = { 1u, 2u, 3u, 4u };
+
+        private static int GAMES => SEEDS.Length;
         private const float SIM_SPEED = 8f;
 
         /// <summary>
@@ -53,11 +62,13 @@ namespace PoFootball.EditorTools
         private const string KEY_BATCH = "PoFootball.Realism.Batch";
         private const string KEY_GAME_STARTED = "PoFootball.Realism.GameStarted";
         private const string KEY_EXIT_CODE = "PoFootball.Realism.ExitCode";
+        private const string KEY_SEEDED = "PoFootball.Realism.Seeded";
 
         /// <summary>Must match the Debug.Log in Systems_GameFlowSystem's final whistle.</summary>
         private static readonly Regex RealismLine = new Regex(
-            @"\[PoFootball\] REALISM\s+yards/play ([\d.]+) \| 4th downs faced (\d+) "
-            + @"\| TD/drive ([\d.]+) \| scrimmage plays (\d+)");
+            @"\[PoFootball\] REALISM\s+yards/play (-?[\d.]+) \| 4th downs faced (\d+) "
+            + @"\| TD/drive ([\d.]+) \| scrimmage plays (\d+)"
+            + @"(?: \| rush yd/carry (-?[\d.]+) \| first downs (\d+) \| completion ([\d.]+))?");
 
         static Editor_RealismEval()
         {
@@ -75,7 +86,7 @@ namespace PoFootball.EditorTools
 
         private static bool IsRunning => SessionState.GetInt(KEY_REMAINING, 0) > 0;
 
-        [MenuItem("Tools/PoFootball/Evaluate Realism (3 games)")]
+        [MenuItem("Tools/PoFootball/Evaluate Realism (4 games)")]
         private static void RunFromMenu()
         {
             Begin(false);
@@ -104,6 +115,7 @@ namespace PoFootball.EditorTools
             SessionState.SetString(KEY_RESULTS, string.Empty);
             SessionState.SetBool(KEY_BATCH, batch);
             SessionState.SetInt(KEY_EXIT_CODE, 0);
+            SessionState.SetBool(KEY_SEEDED, false);
             MarkGameStarted();
 
             EditorSceneManager.OpenScene(GAME_SCENE_PATH);
@@ -121,6 +133,15 @@ namespace PoFootball.EditorTools
             {
                 // After Editor_SimSpeed, which applies its own setting on the same event.
                 EditorApplication.delayCall += ApplySimSpeed;
+
+                // The scene that play mode opened is on whatever seed it drew; the
+                // first measured game is the reload onto SEEDS[0].
+                if (!SessionState.GetBool(KEY_SEEDED, false))
+                {
+                    SessionState.SetBool(KEY_SEEDED, true);
+                    EditorApplication.delayCall += LoadNextSeededGame;
+                }
+
                 return;
             }
 
@@ -173,12 +194,18 @@ namespace PoFootball.EditorTools
                 return;
             }
 
+            int played = GAMES - SessionState.GetInt(KEY_REMAINING, 0);
+
             string game = string.Join(
                 ",",
                 match.Groups[1].Value,
                 match.Groups[2].Value,
                 match.Groups[3].Value,
-                match.Groups[4].Value);
+                match.Groups[4].Value,
+                OrMissing(match.Groups[5]),
+                OrMissing(match.Groups[6]),
+                OrMissing(match.Groups[7]),
+                SEEDS[Math.Min(played, GAMES - 1)].ToString(CultureInfo.InvariantCulture));
 
             SessionState.SetString(KEY_RESULTS, SessionState.GetString(KEY_RESULTS, string.Empty) + game + ";");
 
@@ -191,13 +218,31 @@ namespace PoFootball.EditorTools
             {
                 // Deferred: this runs inside the final whistle's own log call.
                 MarkGameStarted();
-                EditorApplication.delayCall += Systems_SceneRouter.LoadGame;
+                EditorApplication.delayCall += LoadNextSeededGame;
                 return;
             }
 
             // IsRunning is already false here, so the play-mode exit Finish causes is
             // not mistaken for an abandoned run. The results are still in SessionState.
             EditorApplication.delayCall += Finish;
+        }
+
+        /// <summary>The next game on its fixed seed, through the SAME GAME route.</summary>
+        private static void LoadNextSeededGame()
+        {
+            if (!IsRunning || !EditorApplication.isPlaying)
+            {
+                return;
+            }
+
+            int played = GAMES - SessionState.GetInt(KEY_REMAINING, 0);
+            Systems_SceneRouter.ReplayGame(SEEDS[Math.Min(played, GAMES - 1)]);
+        }
+
+        /// <summary>A group the line did not carry — one written before the split was logged.</summary>
+        private static string OrMissing(Group group)
+        {
+            return group.Success ? group.Value : "null";
         }
 
         private static void Finish()
@@ -256,6 +301,7 @@ namespace PoFootball.EditorTools
             SessionState.EraseInt(KEY_REMAINING);
             SessionState.EraseString(KEY_RESULTS);
             SessionState.EraseString(KEY_GAME_STARTED);
+            SessionState.EraseBool(KEY_SEEDED);
         }
 
         private static string WriteReport(string results)
@@ -279,7 +325,11 @@ namespace PoFootball.EditorTools
                     .Append($"\"yards_per_play\": {fields[0]}, ")
                     .Append($"\"fourth_downs\": {fields[1]}, ")
                     .Append($"\"touchdowns_per_drive\": {fields[2]}, ")
-                    .Append($"\"scrimmage_plays\": {fields[3]}")
+                    .Append($"\"scrimmage_plays\": {fields[3]}, ")
+                    .Append($"\"rush_yards_per_carry\": {fields[4]}, ")
+                    .Append($"\"first_downs\": {fields[5]}, ")
+                    .Append($"\"completion_rate\": {fields[6]}, ")
+                    .Append($"\"seed\": {fields[7]}")
                     .Append(gameIndex < games.Length - 1 ? "},\n" : "}\n");
             }
 

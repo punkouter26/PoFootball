@@ -1432,6 +1432,75 @@ namespace PoFootball.Tests
                 "forward progress, not the ceiling");
         }
 
+        /// <summary>
+        /// The scrum: nobody on the defense has hold of the carrier, his own blockers
+        /// are being driven into him, and the whole pile creeps backwards with every
+        /// body jostling well above STALL_SPEED. Neither forward progress (no
+        /// contact) nor the stall (too fast) could end it; it ran to the ceiling.
+        /// </summary>
+        [Test]
+        public void ACarrierDrivenBackInACrowdWithoutBeingTouched_IsDownWhereHeWasStopped()
+        {
+            _skill.WrapUpsToBreak = 100000;
+            MoveEveryoneFarAway();
+
+            StubPlayer back = Player(Systems_Formation.HALFBACK_SLOT_INDEX);
+            back.Position = new Vector2(0f, -4f);
+            _quarterback.SetCarrier(false);
+            back.SetCarrier(true);
+            _ball.AttachTo(back.Id, back.Position, Systems_TeamSide.Offense);
+            _play.LatchCall(Systems_PlayCall.HandoffHalfback);
+
+            // In front of him, inside the crowd range and outside tackling reach.
+            StubPlayer lineman = Player(11);
+
+            for (int tick = 0; tick < 300 && _play.Phase == Systems_PlayPhase.Live; tick++)
+            {
+                back.Position += new Vector2(0f, -0.005f);
+                back.Velocity = new Vector2(tick % 2 == 0 ? 3f : -3f, 0f);
+                lineman.Position = back.Position + new Vector2(0f, 2.2f);
+
+                _referee.FixedTick();
+            }
+
+            Assert.That(_play.Outcome, Is.EqualTo(Systems_PlayOutcome.Tackle));
+            Assert.That(_play.DeadBallSpot.y, Is.EqualTo(-4f).Within(0.05f), "spotted where he was stopped");
+            Assert.That(
+                _play.PhysicsTick,
+                Is.LessThan(Systems_SimConstants.STALL_TICKS + 10),
+                "the crowd rule, not the ceiling");
+        }
+
+        /// <summary>The other side of the same rule: a carrier still going forward in a crowd plays on.</summary>
+        [Test]
+        public void ACarrierGainingGroundInACrowd_PlaysOn()
+        {
+            _skill.WrapUpsToBreak = 100000;
+            MoveEveryoneFarAway();
+
+            StubPlayer back = Player(Systems_Formation.HALFBACK_SLOT_INDEX);
+            back.Position = new Vector2(0f, -4f);
+            _quarterback.SetCarrier(false);
+            back.SetCarrier(true);
+            _ball.AttachTo(back.Id, back.Position, Systems_TeamSide.Offense);
+            _play.LatchCall(Systems_PlayCall.HandoffHalfback);
+
+            StubPlayer lineman = Player(11);
+
+            for (int tick = 0; tick < Systems_SimConstants.STALL_TICKS * 3; tick++)
+            {
+                // Two metres a second: above STALL_SPEED, so the old stall rule has
+                // nothing to say either, and well above the crowd rule's 0.3 m.
+                back.Position += new Vector2(0f, 0.04f);
+                back.Velocity = new Vector2(0f, 2f);
+                lineman.Position = back.Position + new Vector2(2.2f, 0f);
+
+                _referee.FixedTick();
+            }
+
+            Assert.That(_play.Phase, Is.EqualTo(Systems_PlayPhase.Live));
+        }
+
         [Test]
         public void AThrowAtNobodyFromThePocket_IsIntentionalGrounding()
         {

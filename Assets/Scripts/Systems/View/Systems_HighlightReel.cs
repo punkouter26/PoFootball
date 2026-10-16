@@ -375,7 +375,9 @@ namespace PoFootball.Views
             _indexLabel.text = "HIGHLIGHT " + (index + 1) + "/" + _count;
             _detailLabel.text = Systems_DisplayText.ResultBanner(
                     CaptionResult(highlight), highlight.Outcome)
-                + "   " + Systems_DisplayText.YardageDetail(highlight.YardsGained);
+                + "   " + Systems_DisplayText.PlayDetail(
+                    highlight.Kind, highlight.Call, highlight.Outcome,
+                    highlight.YardsGained, highlight.ReturnYards);
 
             SetPlaying(true);
         }
@@ -386,22 +388,15 @@ namespace PoFootball.Views
         /// that is the right banner at the time and the wrong caption on a
         /// highlight: the reason it is a highlight is what happened on it.
         /// </summary>
+        /// <remarks>
+        /// The down's own result is carried on the message since the period-ending
+        /// play stopped being guessed from its outcome here — which captioned a
+        /// game-winning extra point "FIELD GOAL IS GOOD" and both a two-point try
+        /// and a defensive one "TOUCHDOWN".
+        /// </remarks>
         private static Systems_DownResult CaptionResult(Systems_ReplayHighlight highlight)
         {
-            if (highlight.Result != Systems_DownResult.EndOfGame
-                && highlight.Result != Systems_DownResult.EndOfQuarter)
-            {
-                return highlight.Result;
-            }
-
-            switch (highlight.Outcome)
-            {
-                case Systems_PlayOutcome.Touchdown: return Systems_DownResult.Touchdown;
-                case Systems_PlayOutcome.Interception: return Systems_DownResult.Interception;
-                case Systems_PlayOutcome.FumbleLost: return Systems_DownResult.FumbleLost;
-                case Systems_PlayOutcome.Safety: return Systems_DownResult.Safety;
-                default: return Systems_DownResult.NextDown;
-            }
+            return highlight.PlayResult;
         }
 
         private void OnOpenPressed()

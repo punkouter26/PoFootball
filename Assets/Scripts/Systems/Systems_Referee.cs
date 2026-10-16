@@ -75,6 +75,16 @@ namespace PoFootball.Systems
         // long he has been held without beating it.
         private int _progressCarrierId = -1;
         private bool _inContactStint;
+
+        /// <summary>
+        /// The crowd stint: a carrier with an opponent within reach of him, touched
+        /// or not. See TrackCrowd.
+        /// </summary>
+        private bool _inCrowd;
+        private float _crowdFrom;
+        private float _crowdFurthest;
+        private float _crowdFurthestY;
+        private int _crowdTicks;
         private float _furthestProgress;
         private float _furthestProgressY;
         private float _heldUpFrom;
@@ -122,6 +132,8 @@ namespace PoFootball.Systems
             _progressCarrierId = -1;
             _inContactStint = false;
             _heldUpTicks = 0;
+            _inCrowd = false;
+            _crowdTicks = 0;
             _flinchSlot = -1;
         }
 
@@ -381,6 +393,11 @@ namespace PoFootball.Systems
                 && (_play.PhysicsTick <= Systems_SimConstants.THROW_WINDOW_TICKS
                     || (_play.Kind.IsKick() && !_play.WasKicked));
 
+            if (TrackCrowd(carrier, stillLegalToThrow))
+            {
+                return;
+            }
+
             if (stillLegalToThrow
                 || carrier.Velocity.sqrMagnitude
                     >= Systems_SimConstants.STALL_SPEED * Systems_SimConstants.STALL_SPEED)
@@ -439,6 +456,8 @@ namespace PoFootball.Systems
                 // forward progress and his stall clock both start now.
                 _progressCarrierId = carrier.Id;
                 _inContactStint = false;
+                _inCrowd = false;
+                _crowdTicks = 0;
                 _heldUpTicks = 0;
                 _lastCarrierMovingTick = _play.PhysicsTick;
                 return false;
@@ -501,6 +520,107 @@ namespace PoFootball.Systems
 
             EndCarrierDown(carrier, spot, Systems_PlayOutcome.Tackle);
             return true;
+        }
+
+        /// <summary>
+        /// STOPPED IN A CROWD (2026-10-16). A carrier with an opponent within
+        /// twice tackling reach who gains less than FORWARD_PROGRESS_GAIN_METRES in
+        /// STALL_TICKS is down, spotted at the furthest point he reached in the
+        /// crowd. Returns whether the whistle went.
+        ///
+        /// WHY THE TWO RULES ABOVE MISSED IT. Forward progress starts on CONTACT, and
+        /// in a pile the carrier is often touching only his own blockers, with the
+        /// defense driving them into him. The stall rule reads the carrier's SPEED,
+        /// and a body jostled in a scrum never sits under STALL_SPEED for long even
+        /// while the scrum as a whole creeps backwards. So a scrum of nine was
+        /// measured shoving a fullback from four metres behind the line to thirteen,
+        /// at a quarter of a metre a second, for nine seconds, with nothing able to
+        /// end it but the trainer's 600-tick ceiling — 14% of training plays and
+        /// rising by 450k steps, and the reason a scripted game's runs averaged
+        /// minus two yards and backed-up offenses kept conceding safeties. An
+        /// official whistles that pile the moment it stops going forward.
+        ///
+        /// Measured on DISPLACEMENT, not speed, which is what makes it immune to the
+        /// jostle. Longer than forward progress's 0.7 s because nobody has hold of
+        /// him: a back jinking with a defender closing is still a live play for a
+        /// moment. Exempt while the quarterback may still throw, as the stall is.
+        /// </summary>
+        private bool TrackCrowd(Systems_IPlayerHandle carrier, bool exempt)
+        {
+            if (exempt || !IsOpponentNear(carrier))
+            {
+                _inCrowd = false;
+                _crowdTicks = 0;
+                return false;
+            }
+
+            Vector2 position = carrier.Position;
+            float progress = carrier.Side == Systems_TeamSide.Offense ? position.y : -position.y;
+
+            if (!_inCrowd)
+            {
+                _inCrowd = true;
+                _crowdFrom = progress;
+                _crowdFurthest = progress;
+                _crowdFurthestY = position.y;
+                _crowdTicks = 0;
+            }
+
+            if (progress > _crowdFurthest)
+            {
+                _crowdFurthest = progress;
+                _crowdFurthestY = position.y;
+            }
+
+            if (_crowdFurthest > _crowdFrom + Systems_SimConstants.FORWARD_PROGRESS_GAIN_METRES)
+            {
+                _crowdFrom = _crowdFurthest;
+                _crowdTicks = 0;
+            }
+
+            _crowdTicks++;
+
+            if (_crowdTicks < Systems_SimConstants.STALL_TICKS)
+            {
+                return false;
+            }
+
+            Vector2 spot = new Vector2(position.x, _crowdFurthestY);
+            _play.SetBallY(spot.y);
+
+            int tacklerId = LowestSlotIn(_contactMask);
+
+            _tacklePublisher.Publish(new Systems_TackleMessage(
+                tacklerId < 0 ? NearestOpponentId(carrier) : tacklerId, carrier.Id, 0f, _play.NetYards));
+
+            EndCarrierDown(carrier, spot, Systems_PlayOutcome.Tackle);
+            return true;
+        }
+
+        private int NearestOpponentId(Systems_IPlayerHandle carrier)
+        {
+            int nearest = -1;
+            float nearestSquared = float.MaxValue;
+
+            for (int slotIndex = 0; slotIndex < Systems_PlayerRegistry.CAPACITY; slotIndex++)
+            {
+                Systems_IPlayerHandle other = _registry.Get(slotIndex);
+
+                if (other == null || other.Side == carrier.Side)
+                {
+                    continue;
+                }
+
+                float squared = (other.Position - carrier.Position).sqrMagnitude;
+
+                if (squared < nearestSquared)
+                {
+                    nearestSquared = squared;
+                    nearest = other.Id;
+                }
+            }
+
+            return nearest;
         }
 
         private bool IsOpponentNear(Systems_IPlayerHandle carrier)

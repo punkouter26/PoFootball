@@ -62,6 +62,7 @@ namespace PoFootball.Models
         public readonly float TimeOfPossession;
         public readonly float YardsPerPlay;
         public readonly float CompletionPercentage;
+        public readonly int Sacks;
 
         public Systems_TeamSummary(
             Systems_TeamId team,
@@ -78,7 +79,8 @@ namespace PoFootball.Models
             int completions,
             float timeOfPossession,
             float yardsPerPlay,
-            float completionPercentage)
+            float completionPercentage,
+            int sacks = 0)
         {
             Team = team;
             Points = points;
@@ -95,6 +97,7 @@ namespace PoFootball.Models
             TimeOfPossession = timeOfPossession;
             YardsPerPlay = yardsPerPlay;
             CompletionPercentage = completionPercentage;
+            Sacks = sacks;
         }
 
         public static Systems_TeamSummary From(Systems_TeamStatLine line)
@@ -114,7 +117,8 @@ namespace PoFootball.Models
                 line.Completions,
                 line.TimeOfPossession,
                 line.YardsPerPlay,
-                line.CompletionPercentage);
+                line.CompletionPercentage,
+                line.Sacks);
         }
     }
 }

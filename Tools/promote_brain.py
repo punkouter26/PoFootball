@@ -40,9 +40,9 @@ A brain can fit the contract and still have learned the wrong game:
                              pileup-explosion guard should essentially never fire;
                              a policy that trips it has learned to exploit a solver
                              blow-up, and is refused above SPEED_CLAMP_CEILING.
-    REALISM                  --check-realism, AFTER promotion: three games played
+    REALISM                  --check-realism, AFTER promotion: four games played
                              with the promoted brains by Unity's
-                             Tools > PoFootball > Evaluate Realism (3 games), judged
+                             Tools > PoFootball > Evaluate Realism (4 games), judged
                              against the real-football bands CLAUDE.md gives, and
                              recorded in the version's MANIFEST.md.
 
@@ -105,6 +105,14 @@ SPEED_CLAMP_WINDOW = 5
 REALISM_BANDS = {
     "yards_per_play": (4.5, 6.5),
     "touchdowns_per_drive": (0.15, 0.40),
+    # Added 2026-10-15, after a scripted game read 6.4 yards a play out of runs that
+    # LOST a yard and completions that went seventy -- football's mean, nothing like
+    # football's plays. Real football: ~4.3 a carry, ~65% completions, a first down
+    # on roughly 0.3 of scrimmage snaps. Reports written before these were logged
+    # carry nulls and are judged on the first two bands only.
+    "rush_yards_per_carry": (3.0, 6.0),
+    "completion_rate": (0.50, 0.80),
+    "first_downs_per_play": (0.15, 0.45),
 }
 REALISM_MIN_GAMES = 3
 
@@ -415,9 +423,22 @@ def check_realism(report_path: Path, target_dir: Path | None) -> int:
         print(f"FAILED: {len(games)} games in {report_path.name}; need {REALISM_MIN_GAMES}")
         return 2
 
+    for game in games:
+        first_downs = game.get("first_downs")
+        plays = game.get("scrimmage_plays") or 0
+        game["first_downs_per_play"] = (
+            first_downs / plays if first_downs is not None and plays > 0 else None)
+
+    def mean_of(key):
+        values = [game.get(key) for game in games]
+        if any(value is None for value in values):
+            return None
+        return sum(values) / len(values)
+
     means = {
-        key: sum(game[key] for game in games) / len(games)
-        for key in ("yards_per_play", "touchdowns_per_drive", "fourth_downs")
+        key: mean_of(key)
+        for key in ("yards_per_play", "touchdowns_per_drive", "fourth_downs",
+                    "rush_yards_per_carry", "completion_rate", "first_downs_per_play")
     }
 
     verdict_lines = []
@@ -425,6 +446,10 @@ def check_realism(report_path: Path, target_dir: Path | None) -> int:
 
     for key, (low, high) in REALISM_BANDS.items():
         value = means[key]
+        if value is None:
+            verdict_lines.append(
+                f"- {key.replace('_', ' ')}: not in this report (band {low:.2f}-{high:.2f}, not judged)")
+            continue
         inside = low <= value <= high
         failed |= not inside
         verdict_lines.append(

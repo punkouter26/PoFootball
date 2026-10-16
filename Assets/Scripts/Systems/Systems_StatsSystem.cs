@@ -98,7 +98,7 @@ namespace PoFootball.Systems
             if (IsKick(message.Call)
                 || message.Kind == Systems_PlayKind.Kickoff
                 || message.Kind.IsTry()
-                || message.Result == Systems_DownResult.Penalty)
+                || message.PlayResult == Systems_DownResult.Penalty)
             {
                 offense.AddTimeOfPossession(message.ClockSecondsBurned);
                 offense.SetPoints(_game.ScoreOf(message.Offense));
@@ -108,7 +108,15 @@ namespace PoFootball.Systems
                 return;
             }
 
-            offense.AddPlay(yards, wasThrown, completed);
+            if (message.Outcome == Systems_PlayOutcome.Sack)
+            {
+                offense.AddSack(yards);
+            }
+            else
+            {
+                offense.AddPlay(yards, wasThrown, completed);
+            }
+
             offense.AddTimeOfPossession(message.ClockSecondsBurned);
 
             // Scores are read off the game model rather than accumulated from
@@ -158,10 +166,29 @@ namespace PoFootball.Systems
             Systems_TeamStatLine offense,
             Systems_TeamStatLine defense)
         {
-            switch (message.Result)
+            // The down's own result, not the one announced: the play a quarter or
+            // the game ended on is announced as END OF QUARTER or FINAL, and a
+            // first down or a turnover on it went uncounted.
+            if (message.PenaltyFirstDown)
+            {
+                offense.AddFirstDown();
+            }
+
+            switch (message.PlayResult)
             {
                 case Systems_DownResult.FirstDown:
                     offense.AddFirstDown();
+                    break;
+
+                // A punt the receivers touched and the kickers fell on is a fumble
+                // the receivers lost. An onside kickoff recovered is not — nobody
+                // on the receiving team ever had it — which is how the NFL keeps it.
+                case Systems_DownResult.KickRecovered:
+                    if (message.Kind == Systems_PlayKind.Punt)
+                    {
+                        defense.AddTurnover();
+                    }
+
                     break;
 
                 // The scoring team, which since revision 14 is not always the

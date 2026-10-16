@@ -159,9 +159,6 @@ namespace PoFootball.Views
             string.Empty, "BALL", "THROW", "SPRINT", "BRAKE", "RUN", "SET"
         };
 
-        /// <summary>How long a result banner stays up before fading itself out.</summary>
-        private const float BANNER_SECONDS = 2.2f;
-
         private Systems_GameModel _game;
 
         /// <summary>
@@ -251,6 +248,7 @@ namespace PoFootball.Views
         /// starting there would leave the chip unbuilt until the first call.
         /// </summary>
         private Systems_PlayCall _lastCall = (Systems_PlayCall)(-1);
+        private Systems_PlayKind _lastKind = (Systems_PlayKind)(-1);
 
         // The carrier chip: who has the ball, how fast, how tired. Each guarded on
         // its own last value, so a frame in which nothing visibly changed writes
@@ -592,21 +590,27 @@ namespace PoFootball.Views
             }
 
             Systems_PlayCall call = _play.Call;
+            Systems_PlayKind kind = _play.Kind;
 
-            if (call == _lastCall)
+            if (call == _lastCall && kind == _lastKind)
             {
                 return;
             }
 
             _lastCall = call;
+            _lastKind = kind;
 
-            if (call == Systems_PlayCall.None)
+            // Named by the kind of snap where its call is forced — PAT, KNEEL,
+            // SPIKE — rather than "FG", "QB KEEP" and "PASS". Literals throughout.
+            string label = Systems_DisplayText.PlayCall(kind, call);
+
+            if (label.Length == 0)
             {
                 _callChip.style.visibility = Visibility.Hidden;
                 return;
             }
 
-            _callLabel.text = Systems_DisplayText.PlayCall(call);
+            _callLabel.text = label;
             _callChip.style.visibility = Visibility.Visible;
         }
 
@@ -1022,7 +1026,13 @@ namespace PoFootball.Views
 
             ReleasePointerSlot(slot, evt.pointerId);
 
-            if (tapped && TryPanelToWorld(evt.position, out Vector2 world))
+            // Not during the dead ball. That is when the instant replay runs, and
+            // the replay draws stand-ins while the real bodies — the ones TapAt
+            // searches — stand hidden somewhere else, so a tap on a player the
+            // viewer could see picked one the viewer could not.
+            bool deadBall = _play != null && _play.Phase == Systems_PlayPhase.Dead;
+
+            if (tapped && !deadBall && TryPanelToWorld(evt.position, out Vector2 world))
             {
                 _spectatorSystem.TapAt(world);
             }
@@ -1780,16 +1790,30 @@ namespace PoFootball.Views
                 return;
             }
 
-            if (_snapDriveIndex != _countedDriveIndex)
+            // A KICKOFF AND A TRY BELONG TO NO DRIVE. Neither advances
+            // Systems_GameModel.DriveIndex, so both were added to the drive of
+            // whoever had the ball last: the opening kickoff read "DRIVE 1 play,
+            // 0 yd", and every extra point and the kickoff after it padded the
+            // scoring drive. A punt or a field goal is the end of the drive it
+            // finished, which is how a broadcast counts it.
+            if (IsPartOfDrive(message.Kind))
             {
-                _countedDriveIndex = _snapDriveIndex;
-                _drivePlays = 0;
-                _driveYards = 0f;
-            }
+                if (_snapDriveIndex != _countedDriveIndex)
+                {
+                    _countedDriveIndex = _snapDriveIndex;
+                    _drivePlays = 0;
+                    _driveYards = 0f;
+                }
 
-            _drivePlays++;
-            _driveYards += message.YardsGained;
-            _bannerDrive.text = Systems_DisplayText.DriveSummary(_drivePlays, _driveYards);
+                _drivePlays++;
+                _driveYards += message.YardsGained;
+                _bannerDrive.text = Systems_DisplayText.DriveSummary(_drivePlays, _driveYards);
+                _bannerDrive.style.display = DisplayStyle.Flex;
+            }
+            else
+            {
+                _bannerDrive.style.display = DisplayStyle.None;
+            }
 
             _bannerHeadline.text =
                 Systems_DisplayText.ResultBanner(message.Result, message.Outcome);
@@ -1797,16 +1821,22 @@ namespace PoFootball.Views
             _bannerHeadline.style.color = BannerColorFor(message);
 
             _bannerDetail.text =
-                $"{Systems_DisplayText.PlayCallLabel(message.Call)}   "
-                + Systems_DisplayText.YardageDetail(message.YardsGained)
+                Systems_DisplayText.PlayDetail(
+                    message.Kind, message.Call, message.Outcome,
+                    message.YardsGained, message.ReturnYards)
                 + Systems_DisplayText.FoulDetail(
                     message.Foul, message.FoulTeam, message.PenaltyAccepted, message.PenaltyYards)
                 + Systems_DisplayText.TimeoutDetail(message.TimeoutCalled, message.TimeoutTeam)
                 + Systems_DisplayText.TwoMinuteWarningDetail(message.TwoMinuteWarning);
 
-            // The overlay owns its own timer on the panel's scheduler. Nothing here
-            // ticks; nothing here allocates a task.
-            _bannerOverlay.ShowFor(BANNER_SECONDS);
+            // UP UNTIL THE NEXT SNAP, NOT FOR A FIXED TIME. It was 2.2 s of real time
+            // on the panel's scheduler while the dead ball it describes is
+            // DEAD_BALL_TICKS of SIMULATION time: at 4x it was gone in half a
+            // second, before a penalty or a two-minute warning on it could be read,
+            // and on pause it vanished while the dead ball stood still. OnSnapped
+            // takes it down, so it now lasts exactly as long as the dead ball at
+            // any speed, and holds while paused.
+            _bannerOverlay.Show();
 
             // Field position and possession can change without the down number
             // changing — a turnover resets to 1st down from 1st down — so refresh
@@ -1818,8 +1848,10 @@ namespace PoFootball.Views
         {
             switch (message.Result)
             {
+                // The scorer's colour, not the offense's: a pick-six or a kick
+                // returned all the way is the other team's touchdown.
                 case Systems_DownResult.Touchdown:
-                    return Systems_UiTheme.ColorOf(message.Offense);
+                    return Systems_UiTheme.ColorOf(message.ScoringTeam);
                 case Systems_DownResult.Interception:
                 case Systems_DownResult.TurnoverOnDowns:
                 case Systems_DownResult.Safety:
@@ -1836,6 +1868,11 @@ namespace PoFootball.Views
                 default:
                     return Systems_UiTheme.TextPrimary;
             }
+        }
+
+        private static bool IsPartOfDrive(Systems_PlayKind kind)
+        {
+            return kind != Systems_PlayKind.Kickoff && !kind.IsTry();
         }
 
         private void OnGameOver(Systems_GameOverMessage message)
@@ -1898,6 +1935,9 @@ namespace PoFootball.Views
             {
                 _transport.style.display = DisplayStyle.None;
             }
+
+            // ...and with the buttons gone, so must whatever they were set to.
+            _simSpeed?.ResetToNormal();
 
             _spectatorSystem?.ReleaseFocus();
             _spectatorSystem?.ResetView();

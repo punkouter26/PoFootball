@@ -141,6 +141,15 @@ brains, so a shape check refuses an older brain as well as the stamp.
   and `Systems_PlayModel.ReturnOutcome` carry it.
 - **A pile is down by forward progress**; a carrier standing still with nobody near
   has given himself up (`Downed`). `TimeExpired` is the trainer's ceiling only.
+  **Since 2026-10-16 a carrier STOPPED IN A CROWD is down too** —
+  `Systems_Referee.TrackCrowd`: an opponent within 3 m and under 0.3 m gained in
+  `STALL_TICKS`, spotted at his furthest point. Forward progress needed a
+  defender's CONTACT and the stall read the carrier's jostling SPEED, so a scrum
+  shoved backwards through the carrier's own blockers was whistled by nothing but
+  the 600-tick ceiling: 14% of training plays by 450k steps, minus-two-yard runs
+  and conceded safeties in a scripted game. Still revision 14 — no brain was ever
+  promoted from the old rule, and the one run trained on it (`football_base16`'s
+  first 40 minutes) was wiped by its `--force` restart.
 - **Throwaways and intentional grounding**, and a `Sack` outcome.
 - **The officials** (`Systems_PenaltySystem`) flag holding, pass interference,
   roughing, facemask, block in the back, kick-catch interference and grounding from
@@ -321,24 +330,38 @@ tensorboard --logdir results
 `Systems_GameFlowSystem` logs a verdict line at every final whistle:
 
 ```
-[PoFootball] REALISM  yards/play 6.24 | 4th downs faced 10 | TD/drive 0.36 | scrimmage plays 71
+[PoFootball] REALISM  yards/play 6.24 | 4th downs faced 10 | TD/drive 0.36 | scrimmage plays 71 | rush yd/carry 4.10 | first downs 22 | completion 0.64
 ```
 
 Reference values from real football: **~5.5 yards a play, a fourth down on roughly
-one series in three, and 0.20-0.35 touchdowns per drive.**
+one series in three, and 0.20-0.35 touchdowns per drive** — and, since 2026-10-16,
+**~4.3 yards a carry, ~65% completions and a first down on ~0.3 of scrimmage
+snaps**. The last three exist because a scripted game read 6.4 yards a play out of
+runs that LOST two yards and completions that went seventy: the mean was football's
+and the plays were not.
 
 Balance changes are judged on that line and nothing else — four were reasoned about
 confidently during the revision 8 work and two of them made the game measurably
 worse. **Single games are very noisy** (4.48 to 7.37 yards/play on one config), so
-compare three-game means.
+compare means over the same seeds.
 
-`Tools > PoFootball > Evaluate Realism (3 games)` (`Editor_RealismEval`) plays three
-games at 8x and writes `results/realism/realism-<stamp>.json`; headless, run
+`Tools > PoFootball > Evaluate Realism (4 games)` (`Editor_RealismEval`) plays the
+four FIXED seeds 1-4 at 8x — the same four games on the same code, every run — and
+writes `results/realism/realism-<stamp>.json`; headless, run
 `Unity.exe -batchmode -projectPath . -executeMethod
 PoFootball.EditorTools.Editor_RealismEval.RunBatch` without `-quit`.
-`Tools/promote_brain.py --version NN --check-realism <file>` judges the three-game
-means (yards/play 4.5-6.5, TD/drive 0.15-0.40) and records the verdict in that
+`Tools/promote_brain.py --version NN --check-realism <file>` judges the means
+(yards/play 4.5-6.5, TD/drive 0.15-0.40, rush yd/carry 3.0-6.0, completion
+0.50-0.80, first downs per scrimmage play 0.15-0.45; a report written before the
+last three were logged is judged on the first two) and records the verdict in that
 version's MANIFEST.md.
+
+The scripted players FAIL the new bands — four seeds, 2026-10-16, crowd rule in:
+6.41 yd/play and 0.24 TD/drive inside the old bands, but -1.45 yd/carry and 0.04
+first downs a play (`results/realism/realism-20261016-003418.json`). Their run game
+loses because the defensive line reaches the mesh before the back does; a shallower,
+downhill mesh was measured on the same seeds and changed nothing (-2.07 against
+-1.71), so it was not kept.
 
 `Tools > PoFootball > Sim Speed > 8x` (editor-only, `Assets/Editor/Editor_SimSpeed.cs`)
 turns a full game from ~10 minutes into ~100 seconds. It raises `Time.timeScale`

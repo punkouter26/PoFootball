@@ -761,21 +761,38 @@ namespace PoFootball.Views
             PlayAt(_whistle, 0.7f, 1f, BallPoint());
         }
 
+        /// <summary>
+        /// Keyed on the down's own result, so the touchdown that wins it in
+        /// overtime — announced as FINAL — still gets its fanfare. Every kind of
+        /// score has a cue since revision 14 put the kicks and the tries on the
+        /// field: a field goal or a try sounds like a first down, a smaller roar
+        /// than six, and every way of losing the ball sounds like a turnover.
+        /// </summary>
         private void OnDownResolved(Systems_DownResolvedMessage message)
         {
-            switch (message.Result)
+            switch (message.PlayResult)
             {
                 case Systems_DownResult.Touchdown:
                     PlayFlat(_touchdown, 1f, 1f);
                     break;
 
+                case Systems_DownResult.FieldGoalGood:
+                case Systems_DownResult.TwoPointGood:
+                    PlayFlat(_touchdown, 0.7f, 1.12f);
+                    break;
+
                 case Systems_DownResult.FirstDown:
+                case Systems_DownResult.ExtraPointGood:
                     PlayFlat(_firstDown, 0.8f, 1f);
                     break;
 
                 case Systems_DownResult.Interception:
                 case Systems_DownResult.TurnoverOnDowns:
                 case Systems_DownResult.Safety:
+                case Systems_DownResult.FumbleLost:
+                case Systems_DownResult.BlockedKick:
+                case Systems_DownResult.KickRecovered:
+                case Systems_DownResult.DefensiveTry:
                     PlayFlat(_turnover, 0.9f, 1f);
                     break;
             }

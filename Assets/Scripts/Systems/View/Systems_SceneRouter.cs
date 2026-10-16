@@ -44,6 +44,12 @@ namespace PoFootball.Views
 
         private static Systems_GameSummary _pendingSummary;
 
+        /// <summary>
+        /// A game has ended and its result is waiting for the menu — so leaving now
+        /// throws nothing away.
+        /// </summary>
+        public static bool HasFinishedGame => _pendingSummary != null;
+
         public static void LoadMenu()
         {
             Load(MENU_SCENE);

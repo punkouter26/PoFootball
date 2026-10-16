@@ -54,12 +54,17 @@
 #
 # THE TRAINER SETTINGS ARE FootballBase15's apart from time_horizon, which grows
 # by the four pre-snap decisions (Systems_PlayModel.MAX_DECISIONS, pinned by
-# Systems_ContractTests), and the budget, which is base15's original 7M / 700k.
+# Systems_ContractTests), and the budget. The first leg was 6.5M / 650k, sized to
+# the ten-hour overnight window it was launched into on 2026-10-15 (it took 8.4 h,
+# ~215 steps/s); the lessons moved at 1.3M and 2.9M Offense steps. On 2026-10-16 it
+# was RESUMED for a second ten-hour leg at 14M / 1.4M. Curriculum thresholds are
+# fractions of max_steps, so the resume lands at 6.5/14 = 0.46 of it -- still past
+# FullGame's 0.45 -- and the lessons do not move backwards.
 #
 # AFTER IT FINISHES:
 #   .venv\Scripts\python.exe Tools\promote_brain.py --run football_base16 `
 #     --version 03 --num-envs 4
-#   then Unity: Tools > PoFootball > Build Brain Table, Evaluate Realism (3 games),
+#   then Unity: Tools > PoFootball > Build Brain Table, Evaluate Realism (4 games),
 #   and promote_brain.py --version 03 --check-realism <report>.
 
 behaviors:
@@ -94,7 +99,7 @@ behaviors:
 
     keep_checkpoints: 20
     checkpoint_interval: 100000
-    max_steps: 7000000
+    max_steps: 14000000
 
     # One whole play: (MAX_PHYSICS_TICKS 600 + PRESNAP_TICKS 20) / DECISION_PERIOD 5.
     # Pinned by Systems_ContractTests.
@@ -109,7 +114,7 @@ behaviors:
   Quarterback:
     <<: *football_brain
     trainer_type: ppo
-    max_steps: 700000
+    max_steps: 1400000
     checkpoint_interval: 10000      # the QB steps 10x slower
     hyperparameters:
       batch_size: 256

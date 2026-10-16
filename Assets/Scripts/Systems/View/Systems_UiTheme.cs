@@ -34,7 +34,7 @@ namespace PoFootball.Views
     public static class Systems_UiTheme
     {
         // --- Palette ---------------------------------------------------------
-        private static readonly Color Surface = new Color(0.043f, 0.059f, 0.051f, 1f);
+        public static readonly Color Surface = new Color(0.043f, 0.059f, 0.051f, 1f);
         public static readonly Color SurfaceRaised = new Color(0.086f, 0.106f, 0.094f, 1f);
         public static readonly Color SurfaceScrim = new Color(0.02f, 0.03f, 0.025f, 0.92f);
 
@@ -544,7 +544,7 @@ namespace PoFootball.Views
             element.style.borderBottomRightRadius = amount;
         }
 
-        private static void SetBorder(VisualElement element, int width, Color color)
+        public static void SetBorder(VisualElement element, int width, Color color)
         {
             element.style.borderLeftWidth = width;
             element.style.borderRightWidth = width;

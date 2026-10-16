@@ -81,6 +81,26 @@ namespace PoFootball.Systems
         /// </summary>
         public readonly Systems_TeamId ScoringTeam;
 
+        /// <summary>
+        /// What the down itself came to, before the clock had its say. Equal to
+        /// <see cref="Result"/> except on the play a period or the game ended on:
+        /// the HUD announces that as END OF QUARTER or FINAL, but the box score
+        /// still owes the first down or the turnover that happened on it, and the
+        /// crowd still owes the touchdown its roar.
+        /// </summary>
+        public readonly Systems_DownResult PlayResult;
+
+        /// <summary>
+        /// Yards the side that took the ball away carried it after it got it — a
+        /// kick return, an interception or fumble return. Zero when the ball never
+        /// changed hands. Never negative: a returner who gave ground was still
+        /// returned for nothing.
+        /// </summary>
+        public readonly float ReturnYards;
+
+        /// <summary>An accepted foul by the defense moved the chains.</summary>
+        public readonly bool PenaltyFirstDown;
+
         public Systems_DownResolvedMessage(
             Systems_DownResult result,
             Systems_TeamId offense,
@@ -99,7 +119,10 @@ namespace PoFootball.Systems
             float penaltyYards = 0f,
             bool twoMinuteWarning = false,
             Systems_PlayKind kind = Systems_PlayKind.Scrimmage,
-            Systems_TeamId? scoringTeam = null)
+            Systems_TeamId? scoringTeam = null,
+            Systems_DownResult? playResult = null,
+            float returnYards = 0f,
+            bool penaltyFirstDown = false)
         {
             Result = result;
             Offense = offense;
@@ -119,6 +142,9 @@ namespace PoFootball.Systems
             TwoMinuteWarning = twoMinuteWarning;
             Kind = kind;
             ScoringTeam = scoringTeam ?? offense;
+            PlayResult = playResult ?? result;
+            ReturnYards = returnYards;
+            PenaltyFirstDown = penaltyFirstDown;
         }
     }
 }

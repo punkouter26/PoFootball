@@ -78,6 +78,12 @@ namespace PoFootball.Views
         /// <summary>Above the HUD and above the old diagnostic panel, so it is never occluded.</summary>
         private const float PANEL_SORT_ORDER = 300f;
 
+        private const string MENU_LABEL = "MENU";
+        private const string MENU_CONFIRM_LABEL = "QUIT GAME?";
+
+        /// <summary>How long an armed MENU waits for the second tap, in real milliseconds.</summary>
+        private const long MENU_CONFIRM_MS = 3000;
+
         private const float BYTES_PER_MEGABYTE = 1024f * 1024f;
 
         /// <summary>Longest log line the sheet quotes back. Beyond this it is a stack trace, not a message.</summary>
@@ -143,8 +149,11 @@ namespace PoFootball.Views
         private int _sampleCursor;
         private float _refreshCountdown;
 
-        private long _lastMonoHeap;
         private float _allocPerSecond;
+
+        private Button _menuChip;
+        private bool _menuArmed;
+        private IVisualElementScheduledItem _menuDisarm;
 
         private int _errorCount;
         private int _warningCount;
@@ -171,6 +180,14 @@ namespace PoFootball.Views
         private ProfilerRecorder _batcherDraws;
         private ProfilerRecorder _agentStep;
         private ProfilerRecorder _physicsStep;
+
+        /// <summary>
+        /// Managed bytes allocated in each frame, summed into <see cref="_gcBytesInWindow"/>
+        /// and read out as a rate every REFRESH_INTERVAL.
+        /// </summary>
+        private ProfilerRecorder _gcAllocated;
+        private long _gcBytesInWindow;
+        private float _gcWindowSeconds;
 
         /// <summary>
         /// One diagnosed problem. Severity is the sort key and nothing else — the
@@ -275,12 +292,6 @@ namespace PoFootball.Views
             StopInstruments();
         }
 
-        protected override void Start()
-        {
-            _lastMonoHeap = UnityEngine.Profiling.Profiler.GetMonoUsedSizeLong();
-            base.Start();
-        }
-
         // --- Layout ------------------------------------------------------------
 
         protected override void BuildUi()
@@ -327,8 +338,11 @@ namespace PoFootball.Views
             title.style.letterSpacing = 2f;
             bar.Add(title);
 
-            // TOP-RIGHT.
-            bar.Add(BuildChip("MENU", OnMenuPressed));
+            // TOP-RIGHT. Inert on the menu itself, where it has nowhere to go, and
+            // shown as such rather than as a button that does nothing.
+            _menuChip = BuildChip(MENU_LABEL, OnMenuPressed);
+            _menuChip.SetEnabled(!Systems_StatusHudBootstrap.IsMenuScene(gameObject.scene));
+            bar.Add(_menuChip);
 
             // TOP-CENTRE, AND ABSOLUTE RATHER THAN A THIRD FLEX CHILD. A child
             // between two others is centred only while those two happen to be the
@@ -467,7 +481,37 @@ namespace PoFootball.Views
                 return;
             }
 
+            // TWO TAPS TO ABANDON A GAME. The chip sits in the corner beside the
+            // score, where a thumb reaching for the scoreboard lands, and one tap
+            // threw away a game in progress with no way back. The first tap arms
+            // it; a second within MENU_CONFIRM_MS leaves. A finished game has
+            // nothing to lose, so it leaves at once.
+            if (!_menuArmed && !Systems_SceneRouter.HasFinishedGame)
+            {
+                ArmMenu();
+                return;
+            }
+
             Systems_SceneRouter.LoadMenu();
+        }
+
+        private void ArmMenu()
+        {
+            _menuArmed = true;
+            _menuChip.text = MENU_CONFIRM_LABEL;
+            _menuChip.style.backgroundColor = Systems_UiTheme.Negative;
+
+            // Real time, on the panel's scheduler: a confirmation is about the
+            // viewer's hand, not the simulation, so pause and 4x leave it alone.
+            _menuDisarm?.Pause();
+            _menuDisarm = _menuChip.schedule.Execute(DisarmMenu).StartingIn(MENU_CONFIRM_MS);
+        }
+
+        private void DisarmMenu()
+        {
+            _menuArmed = false;
+            _menuChip.text = MENU_LABEL;
+            _menuChip.style.backgroundColor = Systems_UiTheme.SurfaceRaised;
         }
 
         /// <summary>
@@ -519,6 +563,9 @@ namespace PoFootball.Views
             _samples[_sampleCursor] = Time.unscaledDeltaTime * 1000f;
             _sampleCursor = (_sampleCursor + 1) % SAMPLE_CAPACITY;
 
+            _gcBytesInWindow += Reading(_gcAllocated);
+            _gcWindowSeconds += Time.unscaledDeltaTime;
+
             if (_sampleCount < SAMPLE_CAPACITY)
             {
                 _sampleCount++;
@@ -550,12 +597,12 @@ namespace PoFootball.Views
             }
 
             long monoHeap = UnityEngine.Profiling.Profiler.GetMonoUsedSizeLong();
-            long delta = monoHeap - _lastMonoHeap;
-            _lastMonoHeap = monoHeap;
 
-            // A negative delta means a collection ran inside the window. Reporting
-            // that as a negative allocation rate would be nonsense; zero is honest.
-            _allocPerSecond = Mathf.Max(0f, delta / REFRESH_INTERVAL);
+            // Bytes the engine counted as allocated over the frames since the last
+            // refresh, as a rate over the real time they took.
+            _allocPerSecond = _gcWindowSeconds > 0f ? _gcBytesInWindow / _gcWindowSeconds : 0f;
+            _gcBytesInWindow = 0L;
+            _gcWindowSeconds = 0f;
 
             RefreshFps(median);
 
@@ -696,7 +743,13 @@ namespace PoFootball.Views
                     + "ninety set-pass calls each.");
             }
 
-            if (_allocPerSecond > 8192f)
+            // NOT IN THE EDITOR. There the frame is shared with the Editor's own
+            // windows, and every allocation counter — the heap's growth, the
+            // profiler's per-frame tally — counts theirs too: this read 2-4 MB/s on
+            // every Editor session while a profiler capture of the game's own player
+            // loop put it near 57 KB/s. A finding that is always true in the Editor
+            // says nothing; on a device it means what it says.
+            if (!Application.isEditor && _allocPerSecond > 8192f)
             {
                 Add(ref count, 85,
                     "Something allocates every frame: "
@@ -760,8 +813,7 @@ namespace PoFootball.Views
                     + "released — most likely an undisposed MessagePipe subscription.");
             }
 
-            if (UnityEngine.Screen.cutouts != null
-                && UnityEngine.Screen.cutouts.Length > 0
+            if (HasOnScreenTopCutout()
                 && Mathf.Approximately(Root.resolvedStyle.paddingTop, 0f))
             {
                 Add(ref count, 65,
@@ -943,7 +995,7 @@ namespace PoFootball.Views
             AppendFixed(_builder, monoHeap / BYTES_PER_MEGABYTE, 1);
             _builder.Append(" MB, ");
             AppendFixed(_builder, _allocPerSecond / 1024f, 0);
-            _builder.Append(" KB/s\n");
+            _builder.Append(Application.isEditor ? " KB/s (Editor's included)\n" : " KB/s\n");
 
             _builder.Append(SystemInfo.graphicsDeviceType);
             _builder.Append("   |   ");
@@ -979,6 +1031,43 @@ namespace PoFootball.Views
             _sheetRaw.text = _builder.ToString();
         }
 
+        /// <summary>
+        /// A cutout that is actually on this screen, in its top half. The Editor
+        /// reports the last simulated device's cutouts against whatever size the
+        /// Game view happens to be — a notch at y = 2566 on a 1920-pixel screen —
+        /// and Systems_ScreenView already refuses a safe area like that. This
+        /// finding did not, and told every Editor session its HUD was under a notch
+        /// that was not there.
+        /// </summary>
+        private static bool HasOnScreenTopCutout()
+        {
+            Rect[] cutouts = UnityEngine.Screen.cutouts;
+
+            if (cutouts == null)
+            {
+                return false;
+            }
+
+            float width = UnityEngine.Screen.width;
+            float height = UnityEngine.Screen.height;
+
+            for (int index = 0; index < cutouts.Length; index++)
+            {
+                Rect cutout = cutouts[index];
+
+                bool onScreen = cutout.xMin >= -0.5f && cutout.yMin >= -0.5f
+                    && cutout.xMax <= width + 0.5f && cutout.yMax <= height + 0.5f;
+
+                // Screen space has its origin at the bottom left.
+                if (onScreen && cutout.yMin >= height * 0.5f)
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
         // --- Instruments -------------------------------------------------------
 
         private void StartInstruments()
@@ -996,6 +1085,18 @@ namespace PoFootball.Views
 
             _agentStep = StartTimer(AGENT_STEP_MARKER);
             _physicsStep = StartTimer(PHYSICS_STEP_MARKER);
+
+            // THE ALLOCATION RATE IS READ FROM THE PROFILER, NOT FROM THE HEAP. It
+            // used to be the growth of Profiler.GetMonoUsedSizeLong between refreshes,
+            // and in the Editor that heap is the Editor's: the sheet reported 3,760
+            // KB/s of "something allocates every frame" while a profiler capture of
+            // the same seconds put the game at about 57 KB/s, most of it URP's render
+            // graph, which a player does not run. This counter is the engine's own
+            // per-frame tally, available in release players.
+            _gcAllocated = ProfilerRecorder.StartNew(
+                ProfilerCategory.Memory, "GC Allocated In Frame");
+            _gcBytesInWindow = 0L;
+            _gcWindowSeconds = 0f;
         }
 
         private void StopInstruments()
@@ -1008,6 +1109,7 @@ namespace PoFootball.Views
             _batcherDraws.Dispose();
             _agentStep.Dispose();
             _physicsStep.Dispose();
+            _gcAllocated.Dispose();
         }
 
         /// <summary>

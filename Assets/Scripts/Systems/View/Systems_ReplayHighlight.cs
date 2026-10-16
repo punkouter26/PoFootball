@@ -51,6 +51,16 @@ namespace PoFootball.Views
 
         public float YardsGained { get; private set; }
 
+        /// <summary>What the down came to before a period ending renamed it.</summary>
+        public Systems_DownResult PlayResult { get; private set; }
+
+        public Systems_PlayKind Kind { get; private set; }
+
+        public Systems_PlayCall Call { get; private set; }
+
+        /// <summary>Yards the side that took the ball away ran it back.</summary>
+        public float ReturnYards { get; private set; }
+
         /// <summary>False if the colours could not be read when the play was snapped; the ghosts then keep the real renderers' look.</summary>
         public bool HasTeamColors { get; private set; }
 
@@ -76,6 +86,10 @@ namespace PoFootball.Views
             Result = message.Result;
             Outcome = message.Outcome;
             YardsGained = message.YardsGained;
+            PlayResult = message.PlayResult;
+            Kind = message.Kind;
+            Call = message.Call;
+            ReturnYards = message.ReturnYards;
             HasTeamColors = hasTeamColors;
             OffenseColor = offenseColor;
             DefenseColor = defenseColor;

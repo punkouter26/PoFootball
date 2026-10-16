@@ -774,9 +774,14 @@ namespace PoFootball.Views
         /// <summary>See Systems_ReplayHighlight for what this adds up and why.</summary>
         private float ScoreOf(Systems_DownResolvedMessage message)
         {
-            float score = Mathf.Abs(message.YardsGained) + _playPeakClosing;
+            // A return counts its yards like a run does. It did not: a kick gains
+            // the offense nothing on the books, so a sixty-yard runback scored as
+            // a short hit and could only make the reel by scoring.
+            float score = Mathf.Abs(message.YardsGained) + message.ReturnYards + _playPeakClosing;
 
-            if (message.Outcome == Systems_PlayOutcome.Touchdown)
+            // A touchdown, not a try. A two-point conversion ends in the end zone
+            // too, and with the bonus a two-yard try outranked a forty-yard run.
+            if (message.Outcome == Systems_PlayOutcome.Touchdown && !message.Kind.IsTry())
             {
                 score += TOUCHDOWN_BONUS;
             }

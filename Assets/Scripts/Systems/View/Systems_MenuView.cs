@@ -323,40 +323,112 @@ namespace PoFootball.Views
 
             UnsignedIntegerField seedField = new UnsignedIntegerField("SEED")
             {
-                value = Systems_GameSettings.Seed
+                value = Systems_GameSettings.Seed,
+
+                // Committed on Enter or on leaving the field, not per keystroke:
+                // every write is a PlayerPrefs.Save, and a half-typed "12" on the
+                // way to "123" is not a seed anybody chose.
+                isDelayed = true
             };
             seedField.style.fontSize = Systems_UiTheme.TEXT_BODY;
             seedField.style.color = Systems_UiTheme.TextPrimary;
             seedField.style.minHeight = Systems_UiTheme.TAP_TARGET;
             seedField.labelElement.style.color = Systems_UiTheme.TextMuted;
             seedField.labelElement.style.minWidth = 180;
+
+            // The game's faces, not the runtime theme's default: the field was the
+            // one control on the screen still set in the system font.
+            Systems_UiTheme.ApplyFont(seedField.labelElement, Systems_UiTheme.Typeface.Body, Systems_UiTheme.TEXT_BODY);
+            VisualElement input = UQueryExtensions.Q(seedField, className: TextInputBaseField<uint>.inputUssClassName);
+
+            if (input != null)
+            {
+                Systems_UiTheme.ApplyFont(input, Systems_UiTheme.Typeface.Body, Systems_UiTheme.TEXT_BODY);
+
+                // The runtime theme's input is a pale box; with the game's light
+                // text on it the seed was all but invisible. The same dark well as
+                // the segments above it, and the same corners.
+                input.style.backgroundColor = Systems_UiTheme.SurfaceOverField;
+                input.style.color = Systems_UiTheme.TextPrimary;
+                input.style.unityTextAlign = TextAnchor.MiddleLeft;
+                Systems_UiTheme.SetBorder(input, 0, Color.clear);
+                Systems_UiTheme.SetRadius(input, Systems_UiTheme.RADIUS);
+                Systems_UiTheme.SetPadding(input, Systems_UiTheme.SPACE_XS, Systems_UiTheme.SPACE_M);
+            }
+
             seedField.SetEnabled(Systems_GameSettings.SeedFixed);
-            seedField.RegisterValueChangedCallback(
-                change => Systems_GameSettings.Seed = change.newValue);
+            seedField.RegisterValueChangedCallback(change =>
+            {
+                Systems_GameSettings.Seed = change.newValue;
 
-            Button mode = null;
-
-            mode = Systems_UiTheme.Button(
-                SeedModeLabel(Systems_GameSettings.SeedFixed),
-                Systems_UiTheme.SurfaceOverField,
-                () =>
+                // Zero is not a seed (it means "draw one"), so the setting stores
+                // the default instead — and the field has to say so, or it shows a
+                // 0 that the next game will not be played on.
+                if (Systems_GameSettings.Seed != change.newValue)
                 {
-                    Systems_GameSettings.SeedFixed = !Systems_GameSettings.SeedFixed;
-                    mode.text = SeedModeLabel(Systems_GameSettings.SeedFixed);
-                    seedField.SetEnabled(Systems_GameSettings.SeedFixed);
-                });
-            mode.style.color = Systems_UiTheme.TextPrimary;
-            mode.style.fontSize = Systems_UiTheme.TEXT_BODY;
-            mode.style.marginBottom = Systems_UiTheme.SPACE_M;
+                    seedField.SetValueWithoutNotify(Systems_GameSettings.Seed);
+                }
+            });
 
-            pane.Add(mode);
+            // TWO SEGMENTS, ONE LIT, rather than one button whose label flipped. A
+            // label that changes when pressed reads as an instruction ("press for
+            // NEW GAME") as easily as a state, and nothing about it said which.
+            VisualElement modeRow = Systems_UiTheme.Row();
+            modeRow.style.marginBottom = Systems_UiTheme.SPACE_M;
+
+            Button newGame = null;
+            Button sameGame = null;
+
+            System.Action<bool> select = isFixed =>
+            {
+                Systems_GameSettings.SeedFixed = isFixed;
+                StyleSegment(newGame, !isFixed);
+                StyleSegment(sameGame, isFixed);
+                seedField.SetEnabled(isFixed);
+            };
+
+            newGame = Systems_UiTheme.Button("NEW GAME", Systems_UiTheme.SurfaceOverField, () => select(false));
+            sameGame = Systems_UiTheme.Button("SAME GAME", Systems_UiTheme.SurfaceOverField, () => select(true));
+
+            newGame.style.flexGrow = 1f;
+            newGame.style.flexBasis = 0f;
+            newGame.style.marginRight = Systems_UiTheme.SPACE_XS;
+            sameGame.style.flexGrow = 1f;
+            sameGame.style.flexBasis = 0f;
+
+            StyleSegment(newGame, !Systems_GameSettings.SeedFixed);
+            StyleSegment(sameGame, Systems_GameSettings.SeedFixed);
+
+            modeRow.Add(newGame);
+            modeRow.Add(sameGame);
+
+            Label modeHint = Systems_UiTheme.Text(
+                "EVERY TIME", Systems_UiTheme.TEXT_CAPTION, Systems_UiTheme.TextMuted);
+            modeHint.style.unityTextAlign = TextAnchor.MiddleCenter;
+            modeHint.style.marginBottom = Systems_UiTheme.SPACE_S;
+
+            pane.Add(modeRow);
+            pane.Add(modeHint);
             pane.Add(seedField);
             return pane;
         }
 
-        private static string SeedModeLabel(bool isFixed)
+        /// <summary>The lit segment in the accent, the other one quiet.</summary>
+        private static void StyleSegment(Button segment, bool selected)
         {
-            return isFixed ? "SAME GAME EVERY TIME" : "NEW GAME EVERY TIME";
+            segment.style.backgroundColor = selected
+                ? Systems_UiTheme.Accent
+                : Systems_UiTheme.SurfaceOverField;
+            segment.style.color = selected
+                ? Systems_UiTheme.Surface
+                : Systems_UiTheme.TextMuted;
+            segment.style.fontSize = Systems_UiTheme.TEXT_BODY;
+        }
+
+        private static string LevelText(float level)
+        {
+            int percent = Mathf.RoundToInt(level * 100f);
+            return percent == 0 ? "OFF" : percent + "%";
         }
 
         private static VisualElement LevelRow(string name, float level, System.Action<float> write)
@@ -374,10 +446,23 @@ namespace PoFootball.Views
             // stock knob is about ten units across — a target for a mouse.
             slider.style.height = Systems_UiTheme.STATUS_CHIP_HEIGHT;
             Systems_UiTheme.StyleSlider(slider);
-            slider.RegisterValueChangedCallback(change => write(change.newValue));
+
+            // The level as a number, so "off" and "nearly off" are not the same
+            // knob position to a viewer, and two devices can be set alike.
+            Label value = Systems_UiTheme.Text(
+                LevelText(level), Systems_UiTheme.TEXT_CAPTION, Systems_UiTheme.TextMuted);
+            value.style.width = 110;
+            value.style.unityTextAlign = TextAnchor.MiddleRight;
+
+            slider.RegisterValueChangedCallback(change =>
+            {
+                write(change.newValue);
+                value.text = LevelText(change.newValue);
+            });
 
             row.Add(label);
             row.Add(slider);
+            row.Add(value);
             return row;
         }
 
@@ -407,7 +492,11 @@ namespace PoFootball.Views
                 Systems_UiTheme.TextPrimary, FontStyle.Bold);
             title.style.letterSpacing = 4f;
 
-            Label subtitle = Systems_UiTheme.Caption("SELF-TAUGHT 2D FOOTBALL");
+            // SELF-PLAYING, NOT SELF-TAUGHT. True of what is on the field whether
+            // the players are trained brains or the built-in heuristic — and until
+            // a brain table matches the contract they are the heuristic, which
+            // "self-taught" promised otherwise. The DEBUG sheet says which.
+            Label subtitle = Systems_UiTheme.Caption("SELF-PLAYING 2D FOOTBALL");
             subtitle.style.marginTop = Systems_UiTheme.SPACE_M;
 
             block.Add(title);

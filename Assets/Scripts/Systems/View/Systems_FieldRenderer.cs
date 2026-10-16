@@ -43,6 +43,31 @@ namespace PoFootball.Views
     {
         private const string TURF_MATERIAL_RESOURCE = "M_PoFootballTurf";
 
+        /// <summary>Name of the ground quad built behind the pitch at runtime.</summary>
+        private const string SURROUND_NAME = "FieldSurround";
+
+        /// <summary>
+        /// The surround's size as a multiple of the field. Three is past anything the
+        /// widest shot can reach from a goal line, with the pan limit on top.
+        /// </summary>
+        private const float SURROUND_SCALE = 3f;
+
+        /// <summary>
+        /// The apron: darker and flatter than either mow stripe, so the playing
+        /// surface still reads as the lit, marked rectangle it is. Authored in sRGB
+        /// and brighter than it looks here, because the project renders in linear
+        /// space and through a tonemapper: the turf's own 0.055 green reaches the
+        /// screen bright only because the stadium lights multiply it, and this is
+        /// unlit — at that value it came out black.
+        /// </summary>
+        private static readonly Color SurroundColor = new Color(0.12f, 0.29f, 0.16f, 1f);
+
+        /// <summary>Built-in, always included (GraphicsSettings fileID 10753), unlit.</summary>
+        private const string UNLIT_SPRITE_SHADER = "Sprites/Default";
+
+        /// <summary>Made at runtime for the surround, so it is this component's to destroy.</summary>
+        private Material _surroundMaterial;
+
         /// <summary>Name of the legacy marking parent under the field root.</summary>
         private const string LEGACY_LINES_NODE = "Lines";
 
@@ -150,6 +175,7 @@ namespace PoFootball.Views
             FitToField();
             PushFieldMetrics();
             HideLegacyMarkings();
+            BuildSurround();
         }
 
         private void Start()
@@ -163,6 +189,11 @@ namespace PoFootball.Views
         private void OnDestroy()
         {
             _snappedSubscription?.Dispose();
+
+            if (_surroundMaterial != null)
+            {
+                Destroy(_surroundMaterial);
+            }
         }
 
         /// <summary>
@@ -192,6 +223,63 @@ namespace PoFootball.Views
             transform.localScale = new Vector3(
                 Systems_FieldModel.FIELD_WIDTH / spriteSize.x,
                 Systems_FieldModel.TOTAL_LENGTH / spriteSize.y,
+                1f);
+        }
+
+        /// <summary>
+        /// The ground beyond the back lines and the sidelines: one flat quad behind
+        /// the pitch in the apron's dark green.
+        ///
+        /// WHY IT EXISTS. Systems_BroadcastCameraView lets the shot centre on a goal
+        /// line, because on a portrait screen that is the only way to keep a ball in
+        /// the end zone in frame — and with the view 72-92 m tall, that puts thirty
+        /// metres past the back line on screen. Nothing was drawn there, so every
+        /// kickoff into the end zone, every goal-line stand and the final whistle
+        /// on a touchdown sat under a black slab a third of the screen tall, the
+        /// kicking team lost under the scoreboard. Clamping the camera off it would
+        /// have dropped the ball out of frame instead; painting the ground is the
+        /// fix that keeps both.
+        ///
+        /// One extra draw call, built once, on the field's own sprite.
+        ///
+        /// UNLIT, ON PURPOSE. The pipeline's default sprite material is lit, and the
+        /// stadium rig's lights are aimed at the pitch: the first version of this
+        /// was drawn, and drawn black, so the void was still a void. Sprites/Default
+        /// ignores Light2D and shows the apron colour as authored; it is one of the
+        /// built-ins GraphicsSettings always includes, so Shader.Find is safe in a
+        /// player build.
+        /// </summary>
+        private void BuildSurround()
+        {
+            if (_renderer.sprite == null)
+            {
+                return;
+            }
+
+            GameObject surround = new GameObject(SURROUND_NAME);
+            surround.transform.SetParent(transform.parent, false);
+            surround.transform.localPosition = new Vector3(
+                transform.localPosition.x, transform.localPosition.y, transform.localPosition.z);
+
+            SpriteRenderer surroundRenderer = surround.AddComponent<SpriteRenderer>();
+            surroundRenderer.sprite = _renderer.sprite;
+
+            Shader unlit = Shader.Find(UNLIT_SPRITE_SHADER);
+
+            if (unlit != null)
+            {
+                _surroundMaterial = new Material(unlit) { name = SURROUND_NAME };
+                surroundRenderer.sharedMaterial = _surroundMaterial;
+            }
+
+            surroundRenderer.color = SurroundColor;
+            surroundRenderer.sortingLayerID = _renderer.sortingLayerID;
+            surroundRenderer.sortingOrder = _renderer.sortingOrder - 1;
+
+            Vector2 spriteSize = _renderer.sprite.bounds.size;
+            surround.transform.localScale = new Vector3(
+                (Systems_FieldModel.FIELD_WIDTH * SURROUND_SCALE) / spriteSize.x,
+                (Systems_FieldModel.TOTAL_LENGTH * SURROUND_SCALE) / spriteSize.y,
                 1f);
         }
 

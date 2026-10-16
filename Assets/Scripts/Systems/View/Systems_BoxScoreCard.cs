@@ -64,6 +64,7 @@ namespace PoFootball.Views
                 "PASSING",
                 $"{home.Completions}/{home.PassAttempts}",
                 $"{away.Completions}/{away.PassAttempts}"));
+            card.Add(StatRow("SACKED", $"{home.Sacks}", $"{away.Sacks}"));
             card.Add(StatRow("1ST DOWNS", $"{home.FirstDowns}", $"{away.FirstDowns}"));
             card.Add(StatRow(
                 "YDS/PLAY",
