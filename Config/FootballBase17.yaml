@@ -35,9 +35,12 @@
 #   Kick/PuntNetYards       40 is par.  Play/FlagRate should fall.
 #
 # THE TRAINER SETTINGS are FootballBase16's (archived) with time_horizon
-# (MAX_PHYSICS_TICKS 600 + PRESNAP_TICKS 20) / DECISION_PERIOD 5 = 124, and the
-# 12.7M / 1.27M budget the other branch carried. No self-play: this is the
-# baseline; Config/FootballSelf01.yaml is this file plus self_play blocks.
+# (MAX_PHYSICS_TICKS 600 + PRESNAP_TICKS 20) / DECISION_PERIOD 5 = 124. The budget
+# is 7.5M / 750k, sized to the ten-hour window it was launched into on 2026-10-16
+# (football_base16 ran ~215 steps/s on this machine); the other branch carried
+# 12.7M / 1.27M, which is a resume away. Curriculum thresholds are fractions of
+# max_steps, so the lessons move at 1.5M and 3.4M Offense steps. No self-play: this
+# is the baseline; Config/FootballSelf01.yaml is this file plus self_play blocks.
 #
 # AFTER IT FINISHES:
 #   .venv\Scripts\python.exe Tools\promote_brain.py --run football_base17 `
@@ -77,7 +80,7 @@ behaviors:
 
     keep_checkpoints: 20
     checkpoint_interval: 100000
-    max_steps: 12700000             # base15 was extended to this and was still climbing at 7M
+    max_steps: 7500000              # the ten-hour window; base15 was still climbing at 7M
 
     # One whole play: (MAX_PHYSICS_TICKS 600 + PRESNAP_TICKS 20) / DECISION_PERIOD 5.
     # Pinned by Systems_ContractTests.
@@ -92,7 +95,7 @@ behaviors:
   Quarterback:
     <<: *football_brain
     trainer_type: ppo
-    max_steps: 1270000
+    max_steps: 750000
     checkpoint_interval: 10000      # the QB steps 10x slower; at 100000 a stop before 100k lost the whole brain
     hyperparameters:
       batch_size: 256
