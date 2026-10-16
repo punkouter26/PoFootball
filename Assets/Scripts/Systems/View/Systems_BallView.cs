@@ -269,7 +269,8 @@ namespace PoFootball.Views
             // is, is the single most important thing on the field, so it is now
             // visible on every frame of every play and rides on top of whoever is
             // carrying it.
-            bool inFlight = _ball.IsInFlight;
+            // A kick is in the air too (revision 14), and its height is real.
+            bool inFlight = _ball.IsAirborne;
 
             if (_renderer != null)
             {

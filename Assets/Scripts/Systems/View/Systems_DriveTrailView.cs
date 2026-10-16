@@ -251,8 +251,8 @@ namespace PoFootball.Views
         {
             if (IsKick(message.Outcome))
             {
-                // Resolved by the rules from the line of scrimmage; nobody carried
-                // anything anywhere. It still ends the drive, below.
+                // The kick is the other team's field position, not this drive's
+                // progress, so it gets no rib. It still ends the drive, below.
                 CloseDriveIfOver();
                 return;
             }
@@ -326,9 +326,14 @@ namespace PoFootball.Views
 
         private static bool IsKick(Systems_PlayOutcome outcome)
         {
+            // Revision 14 plays the kickoff too, and a kick can end blocked or
+            // back in the kicking team's hands.
             return outcome == Systems_PlayOutcome.Punt
                 || outcome == Systems_PlayOutcome.FieldGoalGood
-                || outcome == Systems_PlayOutcome.FieldGoalMissed;
+                || outcome == Systems_PlayOutcome.FieldGoalMissed
+                || outcome == Systems_PlayOutcome.Kickoff
+                || outcome == Systems_PlayOutcome.KickRecovered
+                || outcome == Systems_PlayOutcome.KickBlocked;
         }
 
         private void AddRib(Rib rib)

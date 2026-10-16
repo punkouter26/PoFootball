@@ -43,7 +43,38 @@ namespace PoFootball.Models
 
         FieldGoalMissed = 10,
 
-        /// <summary>Ball stripped on the tackle; the defense takes over at the spot.</summary>
-        FumbleLost = 11
+        /// <summary>Ball stripped and the defense came up with it; it takes over where the return ended.</summary>
+        FumbleLost = 11,
+
+        // --- Revision 14 -----------------------------------------------------
+
+        /// <summary>A kickoff returned and downed. The receiving team's drive begins.</summary>
+        Kickoff = 12,
+
+        /// <summary>The kicking team came up with its own kick: an onside kick, a muffed punt.</summary>
+        KickRecovered = 13,
+
+        /// <summary>A kick blocked and the other side has it.</summary>
+        BlockedKick = 14,
+
+        /// <summary>Dead in the end zone off the other side's play: the ball at the 20, or the 35 off a kickoff.</summary>
+        Touchback = 15,
+
+        /// <summary>A flag decided the down. Systems_DownResolvedMessage says which.</summary>
+        Penalty = 16,
+
+        ExtraPointGood = 17,
+
+        ExtraPointMissed = 18,
+
+        TwoPointGood = 19,
+
+        TwoPointFailed = 20,
+
+        /// <summary>The defense returned a try the length of the field: two points to it.</summary>
+        DefensiveTry = 21,
+
+        /// <summary>A pass play where the quarterback was brought down before he threw.</summary>
+        Sack = 22
     }
 }

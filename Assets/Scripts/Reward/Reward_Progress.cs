@@ -45,10 +45,19 @@ namespace PoFootball.Rewards
         /// holds its baseline at the release point instead, so a catch is paid
         /// the whole air distance on the tick it is made, and a miss or a pick —
         /// both of which end the play on the spot — is paid nothing.
+        ///
+        /// NOR WHILE A KICK IS IN THE AIR OR THE BALL IS ON THE GROUND (revision
+        /// 14). Forty-five yards of punt is field position, which the terminal
+        /// reward prices; it is not the offense driving the ball, and paying it
+        /// densely would make every punt worth more than a drive. The caller also
+        /// re-baselines whenever the ball changes sides
+        /// (Systems_BallModel.PossessionEpoch), so the distance across a turnover
+        /// or a kick is never paid to anybody — only the return that follows it.
         /// </summary>
         public static bool CountsAsProgress(Systems_BallState ballState)
         {
-            return ballState != Systems_BallState.InFlight;
+            return ballState == Systems_BallState.Held
+                || ballState == Systems_BallState.Incomplete;
         }
     }
 }

@@ -1,0 +1,165 @@
+# PoFootball -- the first config against CONTRACT_REVISION 14.
+#
+# Pairs 1:1 with run-id `football_base16` (UNITY_RULES section 1).
+#
+# Launch (CUDA_VISIBLE_DEVICES=-1 is MANDATORY on this machine -- see CLAUDE.md):
+#   $env:CUDA_VISIBLE_DEVICES = "-1"
+#   mlagents-learn Config/FootballBase16.yaml --run-id=football_base16 `
+#     --env=Builds/FootballEnv/PoFootball.exe --no-graphics `
+#     --base-port=5400 --num-envs=4
+#
+# REBUILD Builds/FootballEnv FIRST (Tools > PoFootball > Build Training Env).
+# Revision 14 CHANGES THE SHAPES -- 45 observations, a pitch branch on the
+# Offense and Defense brains -- so a stale env is refused by the handshake this
+# time, but the rebuild is still on you.
+#
+# WHY THIS EXISTS: revision 14 plays the whole game. Through revision 13 the
+# kicking game was dice at the rules layer, a fumble or an interception ended the
+# play on the spot, nobody could pitch the ball or throw it away, a pile ended on
+# a stall timer, and there were no fouls. Now (Agent_ActionContract has the list):
+#
+#   Kicks           punts, field goals, kickoffs and the try after a touchdown
+#                   are SNAPS: formations line up for them, the ball flies, is
+#                   fielded, fair-caught, muffed, blocked, returned, or downed.
+#                   A fourth-down kick is called by the quarterback BEFORE the
+#                   snap; the scrimmage call still latches at the dropback.
+#   Returns         an interception or a recovered fumble is a return, not a
+#                   whistle; the defense of the snap carries the ball toward -Y.
+#   Loose balls     a stripped ball, a muff, a dropped pitch are live; either
+#                   side may fall on one.
+#   Laterals        every brain but the quarterback's has a pitch branch; the
+#                   quarterback's throw branch pitches when a pass is not on.
+#   Throwaways      a pass aimed at nobody is a throwaway, and intentional
+#                   grounding unless it is from outside the box past the line.
+#   Forward progress a pile that stops is down where it was stopped.
+#   Penalties       holding, pass interference, roughing, facemask, block in the
+#                   back, kick-catch interference, grounding -- detected from the
+#                   bodies and called with an official's chance. In TRAINING a
+#                   flag costs reward (Systems_SimConstants.FOUL_REWARD); nothing
+#                   enforces the yardage.
+#   Pre-snap        the teams stand set for PRESNAP_TICKS; the bodies are frozen,
+#                   so no policy can false-start and training draws no flinches.
+#
+# Five draws per episode from Systems_RandomSpotProvider instead of three: about
+# 8% of FULL-lesson snaps are kickoffs and 6% are tries.
+#
+# WHAT TO READ IN THIS RUN:
+#   Call/Punt, Call/FieldGoal   still the kick decision, now taken pre-snap.
+#   Kick/PuntNetYards           the coverage against the returner; 40 is par.
+#   Kick/KickoffReceivingYardLine  35 is a touchback.
+#   Play/PossessionChangeRate   interceptions and fumbles that became returns.
+#   Play/FlagRate               should FALL as the brains stop drawing flags.
+#   Play/TimeExpiredRate        the trainer's ceiling only, now. Should be ~0
+#                               once anyone is tackling.
+#
+# THE TRAINER SETTINGS ARE FootballBase15's apart from time_horizon, which grows
+# by the four pre-snap decisions (Systems_PlayModel.MAX_DECISIONS, pinned by
+# Systems_ContractTests), and the budget, which is base15's original 7M / 700k.
+#
+# AFTER IT FINISHES:
+#   .venv\Scripts\python.exe Tools\promote_brain.py --run football_base16 `
+#     --version 03 --num-envs 4
+#   then Unity: Tools > PoFootball > Build Brain Table, Evaluate Realism (3 games),
+#   and promote_brain.py --version 03 --check-realism <report>.
+
+behaviors:
+  # MA-POCA for the two ten- and eleven-man groups; see archive/FootballBase11.yaml
+  # for why, and Systems_BrainGroup for why there are three behaviours, not six.
+  Offense: &football_brain
+    trainer_type: poca
+
+    hyperparameters:
+      batch_size: 1024
+      buffer_size: 20480
+      learning_rate: 3.0e-4
+      beta: 5.0e-3
+      epsilon: 0.2
+      lambd: 0.95
+      num_epoch: 3
+      learning_rate_schedule: constant
+      beta_schedule: constant
+      epsilon_schedule: constant
+
+    network_settings:
+      normalize: false            # Sensor_FootballState emits [-1, 1] already;
+                                  # Systems_ContractTests asserts this stays off.
+      hidden_units: 256
+      num_layers: 2
+      vis_encode_type: simple
+
+    reward_signals:
+      extrinsic:
+        gamma: 0.99
+        strength: 1.0
+
+    keep_checkpoints: 20
+    checkpoint_interval: 100000
+    max_steps: 7000000
+
+    # One whole play: (MAX_PHYSICS_TICKS 600 + PRESNAP_TICKS 20) / DECISION_PERIOD 5.
+    # Pinned by Systems_ContractTests.
+    time_horizon: 124
+
+    summary_freq: 50000
+    threaded: false               # deterministic ordering (UNITY_RULES section 2)
+
+  Defense:
+    <<: *football_brain
+
+  Quarterback:
+    <<: *football_brain
+    trainer_type: ppo
+    max_steps: 700000
+    checkpoint_interval: 10000      # the QB steps 10x slower
+    hyperparameters:
+      batch_size: 256
+      buffer_size: 2048
+      learning_rate: 3.0e-4
+      beta: 5.0e-2                # ten times the movement brains; see Base11
+      epsilon: 0.2
+      lambd: 0.95
+      num_epoch: 5
+      learning_rate_schedule: constant
+      beta_schedule: constant
+      epsilon_schedule: constant
+
+environment_parameters:
+  spot_lesson:
+    curriculum:
+      - name: RedZone
+        completion_criteria:
+          measure: progress
+          behavior: Offense
+          signal_smoothing: false
+          min_lesson_length: 0
+          threshold: 0.2
+        value: 0.0
+      - name: OpenFieldEarlyDowns
+        completion_criteria:
+          measure: progress
+          behavior: Offense
+          signal_smoothing: false
+          min_lesson_length: 0
+          threshold: 0.45
+        value: 1.0
+      # Kickoffs and tries are drawn only in this lesson (Systems_RandomSpotProvider).
+      - name: FullGame
+        value: 2.0
+
+env_settings:
+  # --env, --num-envs and --base-port go on the command line (see the header).
+  # Record --num-envs in the run's MANIFEST.md; promote_brain.py does it for you.
+  seed: 1
+
+engine_settings:
+  time_scale: 20                  # physics stays at dt=0.02; this only speeds the clock
+  quality_level: 0
+  target_frame_rate: -1
+  capture_frame_rate: 60
+
+torch_settings:
+  device: cpu                     # Not sufficient alone: launch with
+                                  # CUDA_VISIBLE_DEVICES=-1 (see CLAUDE.md).
+
+checkpoint_settings:
+  results_dir: results

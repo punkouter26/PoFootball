@@ -23,11 +23,7 @@ namespace PoFootball.Systems
         /// reset, before any body has been moved. The play's state is still exactly
         /// as the whistle left it.
         /// </summary>
-        void EndEpisode(
-            Systems_PlayOutcome outcome,
-            float netYards,
-            bool passCompleted,
-            bool reachedLineToGain);
+        void EndEpisode(in Systems_PlayResult result);
     }
 
     /// <summary>
@@ -39,11 +35,7 @@ namespace PoFootball.Systems
     /// </summary>
     public sealed class Systems_NullEpisodeBoundary : Systems_ITrainingEpisodeBoundary
     {
-        public void EndEpisode(
-            Systems_PlayOutcome outcome,
-            float netYards,
-            bool passCompleted,
-            bool reachedLineToGain)
+        public void EndEpisode(in Systems_PlayResult result)
         {
         }
     }
@@ -78,18 +70,13 @@ namespace PoFootball.Systems
             _teamSink = sink;
         }
 
-        public void EndEpisode(
-            Systems_PlayOutcome outcome,
-            float netYards,
-            bool passCompleted,
-            bool reachedLineToGain)
+        public void EndEpisode(in Systems_PlayResult result)
         {
             if (_teamSink == null)
             {
                 for (int slotIndex = 0; slotIndex < Systems_PlayerRegistry.CAPACITY; slotIndex++)
                 {
-                    TrainingHandle(slotIndex)?.ApplyTerminalReward(
-                        outcome, netYards, passCompleted, reachedLineToGain);
+                    TrainingHandle(slotIndex)?.ApplyTerminalReward(in result);
                 }
             }
             else
@@ -97,11 +84,8 @@ namespace PoFootball.Systems
                 // Once per side, not once per player. The sink fans it out through
                 // the multi-agent groups, which is what makes it a GROUP reward and
                 // therefore what the centralized critic actually attributes.
-                _teamSink.AddTeamTerminal(
-                    Systems_TeamSide.Offense, outcome, netYards, passCompleted, reachedLineToGain);
-
-                _teamSink.AddTeamTerminal(
-                    Systems_TeamSide.Defense, outcome, netYards, passCompleted, reachedLineToGain);
+                _teamSink.AddTeamTerminal(Systems_TeamSide.Offense, in result);
+                _teamSink.AddTeamTerminal(Systems_TeamSide.Defense, in result);
             }
 
             for (int slotIndex = 0; slotIndex < Systems_PlayerRegistry.CAPACITY; slotIndex++)

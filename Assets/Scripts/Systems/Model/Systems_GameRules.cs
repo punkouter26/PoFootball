@@ -8,6 +8,14 @@ namespace PoFootball.Models
     /// against, so these values are safe to tune between builds without
     /// invalidating a trained brain. Anything that changes how a body moves belongs
     /// in Systems_SimConstants and is frozen for the life of a policy.
+    ///
+    /// REVISION 14 MOVED THE KICKING GAME OUT OF HERE. The punt's flat forty yards,
+    /// the field goal's 55-yard cliff, the kickoff's touchback chance and return
+    /// spread, the onside recovery chance and the two-point success rate were all
+    /// rules-layer stand-ins for plays nobody played. The plays are played now, and
+    /// what decides them — distances, hang times, scatter — is execution, so it
+    /// lives in Systems_SimConstants with everything else a brain is fitted against.
+    /// What is left here is where the ball is spotted afterwards.
     /// </summary>
     public static class Systems_GameRules
     {
@@ -19,13 +27,11 @@ namespace PoFootball.Models
         /// ten minutes by the same factor QUARTER_SECONDS scales a quarter by
         /// (300 / 900), which puts it at 200.
         ///
-        /// Overtime here is SUDDEN DEATH — the first score of any kind wins. The
-        /// real rule is more elaborate (both teams get a possession unless the first
-        /// is a touchdown) and modelling it would need a notion of "possession
-        /// owed" that nothing else in this game has. Sudden death is the honest
-        /// simplification: it ends the game, it rewards scoring, and it removes the
-        /// tie — which is what was actually wrong. A game measured 28-28 and simply
-        /// stopped.
+        /// SINCE REVISION 14 THIS IS THE NFL'S OVERTIME, NOT SUDDEN DEATH. Each team
+        /// gets a possession — a touchdown on the first no longer ends it — unless
+        /// the first possession ends in a score by the defense. After both have had
+        /// the ball, the next score wins. A period that expires level is a tie.
+        /// Systems_GameFlowSystem's overtime bookkeeping has the detail.
         /// </summary>
         public const float OVERTIME_SECONDS = 200f;
 
@@ -36,10 +42,15 @@ namespace PoFootball.Models
         /// The arithmetic: nearly all of a play's cost is HUDDLE_SECONDS, and a play
         /// is only live for a few seconds on top of that. At the 12 s huddle two
         /// lines below — roughly 15 s of game clock per down — this is about twenty
-        /// plays a quarter and eighty in a game. It was forty-odd at the 25 s huddle
-        /// this used to carry, which was too few for a drive to develop.
+        /// plays a quarter and eighty in a game.
         /// </summary>
         public const float QUARTER_SECONDS = 300f;
+
+        /// <summary>
+        /// Every clock threshold below is a real one scaled by this: a five-minute
+        /// quarter is a third of a fifteen-minute one.
+        /// </summary>
+        public const float CLOCK_SCALE = QUARTER_SECONDS / 900f;
 
         /// <summary>
         /// Clock burned between snaps while the clock runs — the huddle. Without
@@ -49,16 +60,16 @@ namespace PoFootball.Models
         /// CUT FROM 25 TO 12, AND THAT IS WHAT SETS THE LENGTH OF A GAME. A measured
         /// full game came in at 45 plays across 9 drives — an NFL game is about 130
         /// — because at 25 s a quarter can only physically contain eleven or twelve
-        /// snaps. Every drive was three to five plays, which is why so few of them
-        /// ever reached a fourth down, and a viewer barely saw the playbook.
-        ///
-        /// 12 s is a no-huddle pace rather than a leisurely one, and it roughly
-        /// doubles the game to the eighty or ninety snaps that let drives actually
-        /// develop. It costs nothing in real time — the wall-clock length of a game
-        /// is DEAD_BALL_TICKS plus live play, not this — so the game gets longer in
-        /// football and stays the same length in minutes.
+        /// snaps. 12 s roughly doubles the game to the eighty or ninety snaps that
+        /// let drives actually develop.
         /// </summary>
         public const float HUDDLE_SECONDS = 12f;
+
+        /// <summary>
+        /// What a hurry-up to the line costs when a team is about to spike it: the
+        /// time to line up and snap without a huddle.
+        /// </summary>
+        public const float HURRY_UP_SECONDS = 4f;
 
         /// <summary>Seconds per physics tick. Mirrors the pinned fixed timestep.</summary>
         public const float SECONDS_PER_TICK = 0.02f;
@@ -69,14 +80,34 @@ namespace PoFootball.Models
         ///
         /// Sized to outlast Systems_HudView.BANNER_SECONDS (2.2 s) with room either
         /// side, because the banner is the only place a viewer is ever told what
-        /// just happened. Shorter and the announcement is cut off; much longer and
-        /// the game stops feeling like it is being played.
-        ///
-        /// The game clock does not run during it. Football charges the interval
-        /// between plays as HUDDLE_SECONDS at the whistle, which is already counted
-        /// — burning this as well would bill the offense twice for the same gap.
+        /// just happened.
         /// </summary>
         public const int DEAD_BALL_TICKS = 140;
+
+        /// <summary>
+        /// The two-minute warning — an automatic stoppage at 2:00 of the second and
+        /// fourth quarters, scaled. Revision 14.
+        /// </summary>
+        public const float TWO_MINUTE_WARNING_SECONDS = 120f * CLOCK_SCALE;
+
+        /// <summary>
+        /// A carrier who goes out of bounds stops the clock only inside the last two
+        /// minutes of the first half and the last five of the second; otherwise it
+        /// restarts when the ball is spotted, which here means the huddle is
+        /// charged as for any other play. Through revision 13 it always stopped,
+        /// which handed a team running out the clock a free timeout every time it
+        /// went to the sideline.
+        /// </summary>
+        public const float OUT_OF_BOUNDS_STOPS_CLOCK_FIRST_HALF_SECONDS = 120f * CLOCK_SCALE;
+
+        /// <summary>The second-half counterpart, and overtime's.</summary>
+        public const float OUT_OF_BOUNDS_STOPS_CLOCK_SECOND_HALF_SECONDS = 300f * CLOCK_SCALE;
+
+        /// <summary>Physics ticks from the snap to a kneel-down being over.</summary>
+        public const int KNEEL_TICKS = 25;
+
+        /// <summary>Physics ticks from the snap to the spike hitting the turf.</summary>
+        public const int SPIKE_TICKS = 12;
 
         // --- Timeouts --------------------------------------------------------
         /// <summary>Timeouts each team has per half, as in the real game.</summary>
@@ -89,8 +120,7 @@ namespace PoFootball.Models
         /// Seconds left in a half under which a team that needs the clock starts
         /// spending timeouts. A timeout is worth exactly HUDDLE_SECONDS here — it
         /// is the huddle that does not get charged — so three of them inside this
-        /// window buy back most of it. Matches ONSIDE_SECONDS_REMAINING: the two
-        /// are the same judgement, that the game has reached its last minute.
+        /// window buy back most of it.
         /// </summary>
         public const float TIMEOUT_WINDOW_SECONDS = 60f;
 
@@ -102,33 +132,22 @@ namespace PoFootball.Models
         // --- Scoring ---------------------------------------------------------
         public const int TOUCHDOWN_POINTS = 6;
 
-        /// <summary>
-        /// The try after a touchdown is awarded rather than simulated. There is no
-        /// kicking model in this sim and inventing a random one would put noise
-        /// into the score that no policy can influence.
-        ///
-        /// It stays awarded even now that FIELD_GOAL_MAX_YARDS exists, and the two
-        /// are consistent rather than contradictory: a real extra point is a 33-yard
-        /// kick, comfortably inside the 55-yard range below, so simulating it would
-        /// return "good" every single time anyway.
-        /// </summary>
+        /// <summary>A kicked try. Played since revision 14, from EXTRA_POINT_YARD_LINE.</summary>
         public const int EXTRA_POINT_POINTS = 1;
 
         public const int SAFETY_POINTS = 2;
 
         /// <summary>
-        /// Points for a two-point try that converts. The try is still resolved at
-        /// the rules layer rather than snapped — see <see cref="EXTRA_POINT_POINTS"/>
-        /// — but WHICH try a team takes is a decision the score and the clock
-        /// make, and until this existed a team down eight late could not level it.
+        /// A try from the two that reaches the end zone. Played since revision 14;
+        /// WHICH try a team takes is still the score's and the clock's decision.
         /// </summary>
         public const int TWO_POINT_POINTS = 2;
 
         /// <summary>
-        /// Share of two-point tries that convert. The NFL's long-run rate sits just
-        /// under one in two.
+        /// What the defense scores by returning a try the whole way — an interception,
+        /// a fumble, a blocked kick taken back to the other end.
         /// </summary>
-        public const float TWO_POINT_SUCCESS_CHANCE = 0.48f;
+        public const int DEFENSIVE_TRY_POINTS = 2;
 
         public const int FIELD_GOAL_POINTS = 3;
 
@@ -142,70 +161,52 @@ namespace PoFootball.Models
         public const float FIELD_GOAL_SNAP_YARDS = 17f;
 
         /// <summary>
-        /// Longest field goal that goes in. Beyond it the attempt is short.
-        ///
-        /// DETERMINISTIC ON PURPOSE, AND THIS IS A REAL SIMPLIFICATION. Actual NFL
-        /// kickers are a curve, not a cliff: roughly 95% inside 30 yards, 85% from
-        /// 30-39, 75% from 40-49, 60% from 50-59, and about 35% from 60 and out. A
-        /// sampled curve would be more faithful and would also inject variance the
-        /// offense cannot influence — exactly the objection EXTRA_POINT_POINTS
-        /// already raises against simulating the try. 55 sits in the middle of the
-        /// real 50-59 band, so "inside 55" stands in for "makeable" while keeping
-        /// the outcome a pure function of field position, which is something a
-        /// policy can actually learn to exploit.
+        /// Longest attempt the quarterback may call. It used to be the longest that
+        /// went in — a cliff — and since revision 14 the kick itself decides that
+        /// (Systems_SimConstants.KICKER_CARRY_YARDS); this only keeps a quarterback
+        /// from calling a sixty-five-yarder.
         /// </summary>
         public const float FIELD_GOAL_MAX_YARDS = 55f;
 
-        /// <summary>
-        /// Net yards a punt gains, measured from the line of scrimmage to where the
-        /// receiving team next snaps it. NFL net punting averages sit in the high
-        /// thirties to low forties; 40 is the round number in the middle of that.
-        ///
-        /// Flat rather than a function of field position, so the DECISION to punt is
-        /// what gets learned rather than the execution of it. A punter who is better
-        /// when backed up is a detail this sim has no model for.
-        /// </summary>
-        public const float PUNT_NET_YARDS = 40f;
+        /// <summary>The opponent's yard line a kicked try is snapped from: a 33-yard kick.</summary>
+        public const float EXTRA_POINT_YARD_LINE = 15f;
+
+        /// <summary>The opponent's yard line a two-point try is snapped from.</summary>
+        public const float TWO_POINT_YARD_LINE = 2f;
 
         // --- Field position after a dead ball --------------------------------
         /// <summary>
-        /// Where a punt that reaches the end zone is spotted: the receiving team's
-        /// own 20. Deliberately NOT the same constant as a kickoff touchback —
-        /// they are different rules and different yard lines, and this sim used to
-        /// run both through one 25.
+        /// Where a touchback that is not a kickoff's is spotted: the team's own 20.
+        /// A punt into the end zone, an interception downed in it, a fumble out of
+        /// the back. Deliberately NOT the same constant as a kickoff touchback.
         /// </summary>
-        public const float PUNT_TOUCHBACK_YARD_LINE = 20f;
+        public const float TOUCHBACK_YARD_LINE = 20f;
 
         /// <summary>
         /// Where a kickoff touchback is spotted: the receiving team's own 35, per
-        /// the 2025 dynamic-kickoff rule. Used at the start of each half and after
-        /// every score.
+        /// the 2025 dynamic-kickoff rule.
         /// </summary>
         public const float KICKOFF_TOUCHBACK_YARD_LINE = 35f;
 
-        /// <summary>
-        /// Share of kickoffs that are simply taken as a touchback. High, because
-        /// under the 2025 dynamic-kickoff rule that is what most of them are.
-        /// </summary>
-        public const float KICKOFF_TOUCHBACK_CHANCE = 0.7f;
-
-        /// <summary>Spread of a returned kickoff around the touchback spot, yards.</summary>
-        public const float KICKOFF_RETURN_SPREAD_YARDS = 9f;
+        /// <summary>The kicking team's own yard line a kickoff is taken from.</summary>
+        public const float KICKOFF_YARD_LINE = 35f;
 
         /// <summary>
-        /// Chance the kicking team recovers an onside kick. Real rates are about one
-        /// in five once the receiving team knows it is coming, and it always does
-        /// here — this is only ever called when trailing late.
+        /// The conceding team's own yard line its free kick after a safety is taken
+        /// from. Revision 14 plays it; before, the scoring side was simply handed the
+        /// ball on its own 40, which is where the return usually ends.
         /// </summary>
-        public const float ONSIDE_RECOVERY_CHANCE = 0.20f;
+        public const float SAFETY_FREE_KICK_YARD_LINE = 20f;
+
+        /// <summary>A kickoff out of bounds untouched: the receiving team's own 40.</summary>
+        public const float KICKOFF_OUT_OF_BOUNDS_YARD_LINE = 40f;
 
         /// <summary>
-        /// Where the receiving team takes over after an onside kick that FAILS: the
-        /// kicking team's own 45, because a short kick hands over excellent field
-        /// position. That cost is the entire reason an onside kick is a desperation
-        /// call rather than a free roll.
+        /// A missed field goal is spotted at the spot of the kick or here, whichever
+        /// is further from the kicking team's goal — the defense never takes over
+        /// inside its own 20 off a miss.
         /// </summary>
-        public const float ONSIDE_FAILED_YARD_LINE = 45f;
+        public const float MISSED_FIELD_GOAL_MIN_YARD_LINE = 20f;
 
         /// <summary>
         /// A team trailing by more than this with the clock nearly gone will try an
@@ -221,19 +222,15 @@ namespace PoFootball.Models
         public const float ONSIDE_SECONDS_REMAINING = 60f;
 
         /// <summary>
-        /// Where the team that was awarded a safety takes over.
-        ///
-        /// The conceding team free-kicks from its own 20 and that kick is returned,
-        /// so the scoring side starts around its own 40 in practice. This sim used
-        /// to hand the scoring team the ball on its OWN 20 — punishing the side that
-        /// had just made a play, and making a safety close to a wash.
-        /// </summary>
-        public const float SAFETY_FREE_KICK_RESULT_YARD_LINE = 40f;
-
-        /// <summary>
         /// A drive may not start inside an end zone, so every computed line of
         /// scrimmage is clamped this many yards clear of both goal lines.
         /// </summary>
         public const float MIN_YARDS_FROM_GOAL_LINE = 1f;
+
+        // --- Penalty enforcement -----------------------------------------------
+        /// <summary>
+        /// Pass interference in the end zone: the ball at the one, first and goal.
+        /// </summary>
+        public const float END_ZONE_INTERFERENCE_YARD_LINE = 1f;
     }
 }

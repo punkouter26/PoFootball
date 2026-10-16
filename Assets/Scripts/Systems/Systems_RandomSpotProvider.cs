@@ -18,12 +18,17 @@ namespace PoFootball.Systems
     ///
     /// AND IT IS NOW STAGED, WHICH IS EXACTLY THAT. Config/FootballBase12.yaml
     /// carries a three-lesson curriculum over the spot_lesson environment
-    /// parameter. The lessons narrow the RANGES the three draws land in; they never
+    /// parameter. The lessons narrow the RANGES the draws land in; they never
     /// change how many draws an episode makes, so a given seed still produces one
-    /// fixed sequence of underlying numbers and LESSON_FULL reproduces the
-    /// pre-curriculum distribution call for call. With no lesson source installed —
-    /// any config without the parameter, or a scene without Agent_Curriculum — it
-    /// is LESSON_FULL.
+    /// fixed sequence of underlying numbers. With no lesson source installed — any
+    /// config without the parameter, or a scene without Agent_Curriculum — it is
+    /// LESSON_FULL.
+    ///
+    /// REVISION 14 DRAWS THE KIND OF SNAP TOO. The kicking game is played now, so a
+    /// trainer that only ever snapped scrimmage downs would never put a kickoff, a
+    /// return or a try in front of a policy. Five draws per episode instead of
+    /// three — which makes this a new sequence, as the note above says a change here
+    /// must be, and it belongs to Config/FootballBase16.yaml.
     /// </summary>
     public sealed class Systems_RandomSpotProvider : Systems_ISpotProvider
     {
@@ -41,6 +46,22 @@ namespace PoFootball.Systems
         public const int LESSON_FULL = 2;
 
         private const float RED_ZONE_YARDS = 20f;
+
+        /// <summary>
+        /// Share of FULL-lesson episodes that are a kickoff. About one snap in
+        /// eleven in a real game is one; a little under that here, because every
+        /// kickoff is a long play and the scrimmage game is still most of the work.
+        /// </summary>
+        public const float KICKOFF_SHARE = 0.08f;
+
+        /// <summary>Share of FULL-lesson episodes that are a kicked try.</summary>
+        public const float EXTRA_POINT_SHARE = 0.03f;
+
+        /// <summary>Share of FULL-lesson episodes that are a two-point try.</summary>
+        public const float TWO_POINT_SHARE = 0.03f;
+
+        /// <summary>Share of kickoffs that go short.</summary>
+        public const float ONSIDE_SHARE = 0.12f;
 
         private Random _rng;
 
@@ -101,13 +122,69 @@ namespace PoFootball.Systems
                 ? Systems_GameRules.DOWNS_PER_SERIES - 1
                 : Systems_GameRules.DOWNS_PER_SERIES;
 
-            // Three draws, always, in this order — see the class note.
+            // Five draws, always, in this order — see the class note.
+            float kindDraw = _rng.NextFloat();
+            float onsideDraw = _rng.NextFloat();
             float lineOfScrimmageY = _rng.NextFloat(minimumY, Systems_FieldModel.LOS_MAX_Y);
 
             int down = _rng.NextInt(1, lastDown + 1);
             float yardsToGo = _rng.NextFloat(1f, 15f);
 
-            return new Systems_PlaySituation(lineOfScrimmageY, down, yardsToGo);
+            Systems_PlayKind kind = lesson == LESSON_FULL
+                ? KindFor(kindDraw)
+                : Systems_PlayKind.Scrimmage;
+
+            switch (kind)
+            {
+                case Systems_PlayKind.Kickoff:
+                    return new Systems_PlaySituation(
+                        OwnYardLine(Systems_GameRules.KICKOFF_YARD_LINE),
+                        1, Systems_GameRules.YARDS_TO_GAIN,
+                        kind, onsideDraw < ONSIDE_SHARE);
+
+                case Systems_PlayKind.ExtraPoint:
+                    return Try(kind, Systems_GameRules.EXTRA_POINT_YARD_LINE);
+
+                case Systems_PlayKind.TwoPoint:
+                    return Try(kind, Systems_GameRules.TWO_POINT_YARD_LINE);
+
+                default:
+                    return new Systems_PlaySituation(lineOfScrimmageY, down, yardsToGo);
+            }
+        }
+
+        private static Systems_PlayKind KindFor(float draw)
+        {
+            if (draw < KICKOFF_SHARE)
+            {
+                return Systems_PlayKind.Kickoff;
+            }
+
+            if (draw < KICKOFF_SHARE + EXTRA_POINT_SHARE)
+            {
+                return Systems_PlayKind.ExtraPoint;
+            }
+
+            if (draw < KICKOFF_SHARE + EXTRA_POINT_SHARE + TWO_POINT_SHARE)
+            {
+                return Systems_PlayKind.TwoPoint;
+            }
+
+            return Systems_PlayKind.Scrimmage;
+        }
+
+        /// <summary>A try is snapped from the opponent's yard line, first and goal.</summary>
+        private static Systems_PlaySituation Try(Systems_PlayKind kind, float opponentYardLine)
+        {
+            float lineOfScrimmageY = Systems_FieldModel.ATTACKING_GOAL_LINE_Y
+                - (opponentYardLine * Systems_FieldModel.YARD);
+
+            return new Systems_PlaySituation(lineOfScrimmageY, 1, opponentYardLine, kind, false);
+        }
+
+        private static float OwnYardLine(float yardLine)
+        {
+            return Systems_FieldModel.OWN_GOAL_LINE_Y + (yardLine * Systems_FieldModel.YARD);
         }
     }
 }

@@ -145,11 +145,16 @@ namespace PoFootball.Systems
             builder.RegisterMessageBroker<Systems_DownResolvedMessage>(messagePipeOptions);
             builder.RegisterMessageBroker<Systems_GameOverMessage>(messagePipeOptions);
 
-            // The same seeded draw in both modes, unlike the kick and fumble models
-            // below: a brain fitted against tackles that never miss would meet
+            // The same seeded draw in both modes, unlike the fumble model below: a brain fitted against tackles that never miss would meet
             // different dynamics in a played game. See Systems_ISkillModel.
             builder.Register<Systems_ISkillModel, Systems_SeededSkillModel>(
                 Lifetime.Singleton);
+
+            // The officials (revision 14). Both modes, one seeded stream: what gets
+            // flagged is a rule of the game, and a brain fitted where holding was
+            // never called would meet different football in a played game. In
+            // training the flag costs reward; in a game it costs yards.
+            builder.Register<Systems_PenaltySystem>(Lifetime.Singleton);
 
             if (_simMode == Systems_SimMode.Game)
             {
@@ -161,9 +166,10 @@ namespace PoFootball.Systems
                     Systems_ITrainingEpisodeBoundary, Systems_NullEpisodeBoundary>(
                     Lifetime.Singleton);
 
-                // Kicks that are worth watching: a distance-weighted field goal and
-                // a punt that varies. Game only — see Systems_IKickModel.
-                builder.Register<Systems_IKickModel, Systems_ProbabilisticKickModel>(
+                // Somebody jumps now and then, and the play clock can run out. Game
+                // only — the bodies are frozen before the snap, so no policy can
+                // cause either. See Systems_IDisciplineModel.
+                builder.Register<Systems_IDisciplineModel, Systems_SeededDisciplineModel>(
                     Lifetime.Singleton);
 
                 // A strip that is a chance rather than a certainty, for the same
@@ -180,9 +186,9 @@ namespace PoFootball.Systems
                     Systems_ITrainingEpisodeBoundary, Systems_TrainingEpisodeBoundary>(
                     Lifetime.Singleton);
 
-                // The pure function every brain was fitted against: good inside 55,
-                // 40-yard punts, no draw taken. Training dynamics are unchanged.
-                builder.Register<Systems_IKickModel, Systems_DeterministicKickModel>(
+                // Nobody jumps before the snap in training: a foul no policy can
+                // influence would only be noise in the reward.
+                builder.Register<Systems_IDisciplineModel, Systems_NoDisciplineModel>(
                     Lifetime.Singleton);
 
                 // A fumble trigger that is a pure function of the hit, so a policy

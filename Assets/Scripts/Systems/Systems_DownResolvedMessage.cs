@@ -25,7 +25,7 @@ namespace PoFootball.Systems
 
         public readonly float YardsGained;
 
-        /// <summary>Points this play put on the board, including the automatic try.</summary>
+        /// <summary>Points this play put on the board. A try is its own play since revision 14.</summary>
         public readonly int PointsScored;
 
         /// <summary>Down about to be played once the ball is spotted, 1-based.</summary>
@@ -51,10 +51,35 @@ namespace PoFootball.Systems
         /// <summary>Who called it. Meaningless unless <see cref="TimeoutCalled"/>.</summary>
         public readonly Systems_TeamId TimeoutTeam;
 
-        /// <summary>The scoring team went for two rather than taking the kick.</summary>
-        public readonly bool TwoPointAttempted;
+        /// <summary>
+        /// The flag that decided the down, or None. Revision 14: before it no foul
+        /// existed to announce.
+        /// </summary>
+        public readonly Systems_FoulType Foul;
 
-        public readonly bool TwoPointGood;
+        /// <summary>The team flagged. Meaningless when <see cref="Foul"/> is None.</summary>
+        public readonly Systems_TeamId FoulTeam;
+
+        /// <summary>Whether the other team took the penalty rather than the play.</summary>
+        public readonly bool PenaltyAccepted;
+
+        /// <summary>Yards the accepted penalty moved the ball, after half-the-distance.</summary>
+        public readonly float PenaltyYards;
+
+        /// <summary>The clock stopped for the two-minute warning after this play.</summary>
+        public readonly bool TwoMinuteWarning;
+
+        /// <summary>
+        /// What sort of snap it was. A kickoff or a try is not a down, and the box
+        /// score must not book one as a carry.
+        /// </summary>
+        public readonly Systems_PlayKind Kind;
+
+        /// <summary>
+        /// Whose points <see cref="PointsScored"/> are. Not always the offense's
+        /// since revision 14: a pick-six, a safety by a returner, a try taken back.
+        /// </summary>
+        public readonly Systems_TeamId ScoringTeam;
 
         public Systems_DownResolvedMessage(
             Systems_DownResult result,
@@ -68,8 +93,13 @@ namespace PoFootball.Systems
             float clockSecondsBurned,
             bool timeoutCalled = false,
             Systems_TeamId timeoutTeam = Systems_TeamId.Home,
-            bool twoPointAttempted = false,
-            bool twoPointGood = false)
+            Systems_FoulType foul = Systems_FoulType.None,
+            Systems_TeamId foulTeam = Systems_TeamId.Home,
+            bool penaltyAccepted = false,
+            float penaltyYards = 0f,
+            bool twoMinuteWarning = false,
+            Systems_PlayKind kind = Systems_PlayKind.Scrimmage,
+            Systems_TeamId? scoringTeam = null)
         {
             Result = result;
             Offense = offense;
@@ -82,8 +112,13 @@ namespace PoFootball.Systems
             ClockSecondsBurned = clockSecondsBurned;
             TimeoutCalled = timeoutCalled;
             TimeoutTeam = timeoutTeam;
-            TwoPointAttempted = twoPointAttempted;
-            TwoPointGood = twoPointGood;
+            Foul = foul;
+            FoulTeam = foulTeam;
+            PenaltyAccepted = penaltyAccepted;
+            PenaltyYards = penaltyYards;
+            TwoMinuteWarning = twoMinuteWarning;
+            Kind = kind;
+            ScoringTeam = scoringTeam ?? offense;
         }
     }
 }

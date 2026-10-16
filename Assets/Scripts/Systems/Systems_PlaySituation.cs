@@ -1,3 +1,5 @@
+using PoFootball.Models;
+
 namespace PoFootball.Systems
 {
     /// <summary>
@@ -28,11 +30,30 @@ namespace PoFootball.Systems
 
         public readonly float YardsToGo;
 
+        /// <summary>
+        /// What sort of snap: an ordinary down, a kickoff, a try, a clock play.
+        /// Revision 14 — before it every snap was a scrimmage down and the kicking
+        /// game happened between snaps, at the rules layer, unplayed.
+        /// </summary>
+        public readonly Systems_PlayKind Kind;
+
+        /// <summary>On a kickoff, whether the kicking team goes short.</summary>
+        public readonly bool OnsideKick;
+
         public Systems_PlaySituation(float lineOfScrimmageY, int down, float yardsToGo)
+            : this(lineOfScrimmageY, down, yardsToGo, Systems_PlayKind.Scrimmage, false)
+        {
+        }
+
+        public Systems_PlaySituation(
+            float lineOfScrimmageY, int down, float yardsToGo,
+            Systems_PlayKind kind, bool onsideKick)
         {
             LineOfScrimmageY = lineOfScrimmageY;
             Down = down;
             YardsToGo = yardsToGo;
+            Kind = kind;
+            OnsideKick = onsideKick;
         }
     }
 }

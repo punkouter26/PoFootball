@@ -102,8 +102,34 @@ namespace PoFootball.Systems
         /// currently drawn. Offense occupies 0..10 and defense 11..21, which is the
         /// same absolute indexing every agent in the scene already carries.
         /// </summary>
+        /// <summary>
+        /// The kind of snap whose special-teams alignment is on the field, or
+        /// Scrimmage when it is an ordinary one. Revision 14.
+        /// </summary>
+        public Systems_PlayKind SpecialTeams { get; private set; } = Systems_PlayKind.Scrimmage;
+
+        /// <summary>Whether a kicking unit rather than the drawn offense and defense is on the field.</summary>
+        public bool IsSpecialTeams => SpecialTeams != Systems_PlayKind.Scrimmage;
+
+        /// <summary>
+        /// Lines up the kicking units for this kind of snap, or the drawn formations
+        /// if it has none. Separate from DrawNext, which still draws every snap, so
+        /// the formation stream stays aligned however many kicks a game contains.
+        /// </summary>
+        public void UseFormationFor(Systems_PlayKind kind)
+        {
+            SpecialTeams = Systems_FormationBook.HasSpecialTeamsFormation(kind)
+                ? kind
+                : Systems_PlayKind.Scrimmage;
+        }
+
         public Systems_FormationSlot GetSlot(int slotIndex)
         {
+            if (IsSpecialTeams)
+            {
+                return Systems_FormationBook.SpecialTeamsSlot(SpecialTeams, slotIndex);
+            }
+
             return slotIndex < Systems_FormationBook.SLOTS_PER_SIDE
                 ? Systems_FormationBook.OffenseSlot(Offense, slotIndex)
                 : Systems_FormationBook.DefenseSlot(
@@ -117,6 +143,11 @@ namespace PoFootball.Systems
         /// </summary>
         public int CoverageAssignmentFor(int defenderSlotIndex)
         {
+            if (IsSpecialTeams)
+            {
+                return -1;
+            }
+
             return Systems_FormationBook.CoverageAssignmentFor(
                 Defense, defenderSlotIndex);
         }

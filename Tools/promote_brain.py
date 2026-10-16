@@ -26,7 +26,8 @@ Every expected value is READ from the repository rather than typed here, so this
 script cannot itself drift from the contract it is guarding:
 
     OBSERVATION_SIZE, PLAY_CALL_BRANCH_SIZE   Assets/Scripts/Sensor/Sensor_FootballState.cs
-    continuous action counts, THROW_BRANCH_SIZE  Assets/Scripts/Agent/Agent_ActionContract.cs
+    continuous action counts, THROW_BRANCH_SIZE,
+    LATERAL_BRANCH_SIZE (revision 14)         Assets/Scripts/Agent/Agent_ActionContract.cs
     behavior names, which one carries the QB actions  Assets/Scripts/Systems/Model/Systems_RoleTable.cs
     ray sensor observation width               Assets/Scripts/Sensor/Sensor_RayContract.cs
                                                (the scene until revision 10)
@@ -184,12 +185,22 @@ def expected_contract() -> dict:
     qb_continuous = _read_int_const(ACTION_CS, "QUARTERBACK_CONTINUOUS_ACTIONS")
     throw_branch = _read_int_const(ACTION_CS, "THROW_BRANCH_SIZE")
 
+    # Revision 14 gave every brain but the quarterback's one discrete branch: the
+    # pitch. A contract without the constant is an older one, whose other brains
+    # had no discrete output at all.
+    try:
+        lateral_branch = _read_int_const(ACTION_CS, "LATERAL_BRANCH_SIZE")
+        other_branches = [lateral_branch]
+    except ContractError:
+        other_branches = []
+
     return {
         "vector_observations": observation_size,
         "ray_observations": read_ray_observation_size(),
         "base_continuous": base_continuous,
         "quarterback_continuous": qb_continuous,
         "quarterback_branches": [play_call_slots + 1, throw_branch],
+        "other_branches": other_branches,
         "behaviors": read_behavior_names(),
         "quarterback_behavior": read_quarterback_behavior(),
     }
@@ -286,29 +297,38 @@ def validate(behavior: str, path: Path, contract: dict) -> list[str]:
             f"continuous actions {actual['continuous']} != expected {wanted_continuous}"
         )
 
-    wanted_branches = contract["quarterback_branches"]
+    wanted_branches = (
+        contract["quarterback_branches"] if is_quarterback else contract["other_branches"]
+    )
 
-    if is_quarterback:
-        if not actual["has_discrete"]:
-            problems.append(
-                "no discrete_actions output — this brain cannot call a play at all, "
-                "so every down decodes to whatever index 0 means"
+    if not wanted_branches:
+        if actual["has_discrete"]:
+            problems.append("has a discrete_actions output but this brain should have none")
+        return problems
+
+    if not actual["has_discrete"]:
+        problems.append(
+            "no discrete_actions output — "
+            + (
+                "this brain cannot call a play at all, so every down decodes to "
+                "whatever index 0 means"
+                if is_quarterback
+                else "this brain cannot pitch the ball (revision 14)"
             )
-        elif actual["branches_are_exact"]:
-            if actual["branches"] != wanted_branches:
-                problems.append(
-                    f"discrete branches {actual['branches']} != expected {wanted_branches}"
-                )
-        elif actual["branches"] != [sum(wanted_branches)]:
-            # Degraded comparison: only the total width could be read, so this
-            # catches a resized playbook but not two branches that swapped sizes.
+        )
+    elif actual["branches_are_exact"]:
+        if actual["branches"] != wanted_branches:
             problems.append(
-                f"discrete branch total {actual['branches']} "
-                f"!= expected {[sum(wanted_branches)]} "
-                f"(exact sizes unreadable from this .onnx)"
+                f"discrete branches {actual['branches']} != expected {wanted_branches}"
             )
-    elif actual["has_discrete"]:
-        problems.append("has a discrete_actions output but this brain should have none")
+    elif actual["branches"] != [sum(wanted_branches)]:
+        # Degraded comparison: only the total width could be read, so this
+        # catches a resized branch but not two branches that swapped sizes.
+        problems.append(
+            f"discrete branch total {actual['branches']} "
+            f"!= expected {[sum(wanted_branches)]} "
+            f"(exact sizes unreadable from this .onnx)"
+        )
 
     return problems
 

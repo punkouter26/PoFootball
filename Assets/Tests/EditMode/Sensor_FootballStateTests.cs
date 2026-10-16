@@ -14,6 +14,12 @@ namespace PoFootball.Tests
     /// </summary>
     public sealed class Sensor_FootballStateTests
     {
+        /// <summary>
+        /// Floats revision 14 appended after the play-call one-hot: possession, ball
+        /// height, the four-wide play kind, and the pre-snap flag.
+        /// </summary>
+        private const int REVISION_14_TAIL = 1 + 1 + Sensor_FootballState.PLAY_KIND_SLOTS + 1;
+
         private static float[] Collect(
             Systems_PlayerRole role,
             Vector2 position,
@@ -38,7 +44,11 @@ namespace PoFootball.Tests
                 ballState, call, lineOfScrimmageY,
                 1,
                 Systems_GameRules.YARDS_TO_GAIN,
-                physicsTick);
+                physicsTick,
+                0f,
+                isCarrier ? 1f : 0f,
+                Systems_PlayKind.Scrimmage,
+                false);
 
             return buffer;
         }
@@ -109,7 +119,8 @@ namespace PoFootball.Tests
             Systems_PlayerRole role = Systems_PlayerRole.Linebacker;
             float turnRateDegrees = Systems_RoleTable.TurnRateOf(role) * Mathf.Rad2Deg;
 
-            const int spinIndex = Systems_RoleTable.ROLE_COUNT + 16;
+            // Ball state is four floats wide since revision 14, so spin moved two on.
+            const int spinIndex = Systems_RoleTable.ROLE_COUNT + 18;
             const int clockIndex = spinIndex + 1;
 
             float[] half = Collect(
@@ -159,7 +170,8 @@ namespace PoFootball.Tests
         public void ThePlayCall_IsVisibleToTheOffenseAndHiddenFromTheDefense()
         {
             int callStart =
-                Sensor_FootballState.OBSERVATION_SIZE - Sensor_FootballState.PLAY_CALL_SLOTS;
+                Sensor_FootballState.OBSERVATION_SIZE - Sensor_FootballState.PLAY_CALL_SLOTS
+                - REVISION_14_TAIL;
 
             float[] offense = Collect(
                 Systems_PlayerRole.WideReceiver, Vector2.zero, Vector2.zero, 0f, 0f, false,

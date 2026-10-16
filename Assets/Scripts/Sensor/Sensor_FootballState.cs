@@ -26,7 +26,7 @@ namespace PoFootball.Sensors
         /// Must equal BrainParameters.VectorObservationSize or ML-Agents throws at
         /// the first step. Agent_FootballPlayer sets that field from this constant.
         /// </summary>
-        public const int OBSERVATION_SIZE = 36;
+        public const int OBSERVATION_SIZE = 45;
 
         /// <summary>
         /// Number of real play calls, excluding None. Width of the call one-hot.
@@ -69,6 +69,12 @@ namespace PoFootball.Sensors
         private const float LONG_YARDAGE_YARDS = 15f;
 
         /// <summary>
+        /// Width of the play-kind one-hot: kickoff, punt, placekick (field goal or
+        /// extra point), two-point try. An ordinary down is all zeros. Revision 14.
+        /// </summary>
+        public const int PLAY_KIND_SLOTS = 4;
+
+        /// <summary>
         /// Fills <paramref name="buffer"/> with exactly OBSERVATION_SIZE values,
         /// all within [-1, 1].
         ///
@@ -92,7 +98,11 @@ namespace PoFootball.Sensors
             float lineOfScrimmageY,
             int down,
             float yardsToGo,
-            int physicsTick)
+            int physicsTick,
+            float ballHeight,
+            float possession,
+            Systems_PlayKind kind,
+            bool isPreSnap)
         {
             int cursor = 0;
 
@@ -153,9 +163,13 @@ namespace PoFootball.Sensors
                     / Systems_SimConstants.PASS_SPEED_MAX,
                 -1f, 1f);
 
-            // Ball state: 2. Defenders need to see a live ball in the air.
+            // Ball state: 4. Defenders need to see a live ball in the air, and since
+            // revision 14 everybody needs to tell a pass from a kick from a ball on
+            // the ground — the last two are new and nobody owns them.
             buffer[cursor++] = ballState == Systems_BallState.Held ? 1f : 0f;
             buffer[cursor++] = ballState == Systems_BallState.InFlight ? 1f : 0f;
+            buffer[cursor++] = ballState == Systems_BallState.Kicked ? 1f : 0f;
+            buffer[cursor++] = ballState == Systems_BallState.Loose ? 1f : 0f;
 
             // Field geometry: 2. Distance to the goal line and to the line of
             // scrimmage.
@@ -209,6 +223,31 @@ namespace PoFootball.Sensors
                 bool active = isOffense && (int)call == callIndex + 1;
                 buffer[cursor++] = active ? 1f : 0f;
             }
+
+            // Revision 14: 9 more.
+            //
+            // Possession: 1. +1 when my side has the ball, -1 when the other side
+            // does, 0 when nobody does. Through revision 13 the ball could only ever
+            // be the offense's, so "am I carrying" and "am I on offense" between them
+            // said everything; an interception return broke that.
+            buffer[cursor++] = Mathf.Clamp(possession, -1f, 1f);
+
+            // Height of the ball: 1. A punt is not catchable for most of its hang
+            // time, and whether it is coming down yet is what decides where a
+            // returner stands. Zero for anything on the ground or in a hand.
+            buffer[cursor++] = Mathf.Clamp01(
+                ballHeight / Systems_SimConstants.KICK_HEIGHT_OBSERVATION_RANGE);
+
+            // Play kind: 4, public like the down — a punt formation is on the field
+            // for both sides to see, unlike the call, which stays hidden.
+            buffer[cursor++] = kind == Systems_PlayKind.Kickoff ? 1f : 0f;
+            buffer[cursor++] = kind == Systems_PlayKind.Punt ? 1f : 0f;
+            buffer[cursor++] =
+                kind == Systems_PlayKind.FieldGoal || kind == Systems_PlayKind.ExtraPoint ? 1f : 0f;
+            buffer[cursor++] = kind == Systems_PlayKind.TwoPoint ? 1f : 0f;
+
+            // Before the snap: 1. The only window in which a kick may be called.
+            buffer[cursor++] = isPreSnap ? 1f : 0f;
         }
 
         /// <summary>Fills the buffer and pushes it into the sensor in one call.</summary>
@@ -230,13 +269,17 @@ namespace PoFootball.Sensors
             float lineOfScrimmageY,
             int down,
             float yardsToGo,
-            int physicsTick)
+            int physicsTick,
+            float ballHeight,
+            float possession,
+            Systems_PlayKind kind,
+            bool isPreSnap)
         {
             Write(
                 buffer, field, role, position, velocity, rotationDegrees,
                 angularVelocityDegrees, fatigue,
                 isCarrier, ballPosition, ballVelocity, ballState, call, lineOfScrimmageY,
-                down, yardsToGo, physicsTick);
+                down, yardsToGo, physicsTick, ballHeight, possession, kind, isPreSnap);
 
             sensor.AddObservation(buffer);
         }

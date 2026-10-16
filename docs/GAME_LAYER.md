@@ -31,8 +31,9 @@ after it.**
 seeded `Unity.Mathematics.Random`. That draw now sits behind
 `Systems_ISpotProvider`:
 
-- `Systems_RandomSpotProvider` — training. Same seed source, same generator, same
-  single `NextFloat` per episode against the same bounds.
+- `Systems_RandomSpotProvider` — training. Same seed source, same generator; five
+  draws per episode since revision 14, which also chose the KIND of snap — about
+  one in eleven a kickoff, one in sixteen a try.
 - `Systems_GameFlowSystem` — a game. Returns wherever the chains left the ball.
 
 `Systems_SpotProviderTests.RandomProvider_ReproducesTheOriginalInlineDraw`
@@ -42,7 +43,9 @@ because the alternative failure mode is a silently different distribution of
 starting states and an `.onnx` that no longer means what its MANIFEST says.
 
 Nothing else in the simulation was touched. No constant in
-`Systems_SimConstants`, no physics, no observation, no reward.
+`Systems_SimConstants`, no physics, no observation, no reward. (Revision 14
+changed the draw itself, deliberately, with a new contract revision and a new
+config — the only way it may change.)
 
 ---
 
@@ -75,27 +78,40 @@ game.
 
 ## Rules implemented
 
+Revision 14 (2026-10-15) made every snap of a game a played snap. The kicking
+game, the try, returns and fumbles used to be resolved here, between snaps, with
+dice; they are now plays the referee whistles, and this layer only puts the ball
+where the play left it. Most of the rules below live in `Systems_Referee`,
+`Systems_BallSystem` and `Systems_PenaltySystem` — the same in training and in a
+game — and the game layer adds the chains, the score, the clock and the
+enforcement.
+
 | Rule | Behaviour |
 |---|---|
 | Downs | 4 downs, 10 yards, chains tracked against a first-down marker |
-| Touchdown | 7 — six plus an **awarded** try (there is no kicking model, and a random one would put noise in the score no policy can influence) |
-| Field goal | **Distance-weighted odds in a game, a hard cliff at 55 yards in training** — see `Systems_IKickModel`. The seam is the one `Systems_ISpotProvider` already established: training keeps the pure function every policy was fitted against, a played game gets the version worth watching |
-| Punt | Net yards drawn around 40 in a game, flat 40 in training — same seam, same reason |
-| Safety | 2 to the defense, recognised at the rules layer purely from where the ball stopped. The physics layer still has no concept of one. Takes precedence over a strip: a ball loose in your own end zone is a rule this sim has no model for |
-| Interception / turnover on downs | Possession flips, spot mirrored |
-| Incompletion | Ball returns to the previous spot, clock stops |
-| Clock | Ticks live during a play; a **12 s** huddle is charged at the whistle only when the clock kept running. Was 25 s, which capped a quarter at eleven or twelve snaps and made a whole game 45 plays against an NFL game's ~130 |
-| Quarter end | The down finishes first — expiry is remembered and acted on at the whistle |
-| Halftime | Ball to whoever did not receive the opening kickoff, own 35 (`KICKOFF_TOUCHBACK_YARD_LINE`). `Systems_GamePhase.Halftime` is a real state: the clock does not run across the interval, and the first snap of the second half clears it |
-| Overtime | **Sudden death, one period** (`OVERTIME_SECONDS`, 200 s — regulation's 300 scaled the way a quarter is). The first score of any kind wins; a period expiring still level is a tie, as in the NFL regular season. The real possession-owed rule is not modelled |
-| Kickoff | Resolved at the rules layer like a punt, not simulated. Mostly a touchback at the 35; the rest is a return drawn around it. **Onside** when the scoring team is still more than one score down inside the last minute of the fourth — recovery `ONSIDE_RECOVERY_CHANCE`, and a miss hands over the ball at the kicking team's own 45 |
-| Fumble | A tackle can strip the ball — `Systems_IFumbleModel`, same training/game seam as the kick model. Only LOST fumbles are modelled: one the offense recovers is indistinguishable from a tackle here. Chance scales with the hit, the number of tacklers and the carrier's role |
-| Forward pass | Must be thrown from behind the line of scrimmage. Past it the quarterback has tucked it and is a runner — there is no penalty system, so the throw is simply unavailable |
-| Catching | A pass may be caught **behind** the line, so screens and checkdowns exist. Both lines remain ineligible, which is what the old blanket line-of-scrimmage gate was really guarding |
+| Opening kickoff | A played kickoff by Away to Home. Halftime: whoever received to open the game kicks |
+| Kickoff | **Played** (`Systems_PlayKind.Kickoff`). The kicking team is the offense for the snap and kicks from its own 35; the receivers field it and return toward −Y. Into the end zone, or rolled in untouched, is a touchback at the 35; out of bounds untouched, their 40. **Onside** when the scoring team is more than one score down inside the last minute: a short kick the kicking team may recover once it has gone ten yards |
+| Touchdown | 6, then a **played try**: a kick from the 15 (`ExtraPoint`) or a snap from the 2 (`TwoPoint`). The late-game two-point chart picks which. A try is untimed; a defense that returns it scores 2 |
+| Field goal | **Played**. The quarterback calls it before the snap on fourth down; the unit lines up, the ball is held 7 yards back, and it is good if it crosses the end line between the uprights and over the bar — distance and accuracy come from `Systems_ISkillModel.DrawKick`. A miss goes over at the spot of the kick, or the 20 if further out. It can be blocked |
+| Punt | **Played**, called before the snap on fourth down. Punter 14 yards deep, gunners split wide, a returner deep. Fielded, fair-caught (automatic with a cover man within 5 m), muffed, blocked, or left to roll until the cover team downs it; into the end zone is a touchback at the 20 |
+| Safety | 2 to the scoring side, and the conceding team free-kicks from its own 20. Either side can concede one — a returner downed in his own end zone after bringing the ball back in |
+| Interception | **Returned**: the defender who catches it runs it back toward −Y, and can score. Caught in the end zone and downed there, a touchback |
+| Fumble | The tackle can strip the ball (`Systems_IFumbleModel`); the ball is **loose** and either side may fall on it and run. Out of bounds it stays with the side that had it; out the back of an end zone it is a touchback or a safety by who put it there |
+| Lateral | Any carrier may pitch to a team-mate level with or behind him. Dropped, it is a live ball |
+| Forward pass | One, from behind the line of scrimmage — the mask makes an illegal one impossible. A pass aimed at nobody is a **throwaway**: legal from outside the tackle box if it reaches the line, otherwise **intentional grounding** |
+| Sack | A quarterback brought down behind the line on a pass he never threw is a `Sack` outcome |
+| Forward progress | A carrier in contact who stops gaining ground is down where his progress stopped. One standing still in a crowd is down; one standing still in space has given himself up (`Downed`) |
+| Penalties | Detected from the bodies and called with an official's chance (`Systems_PenaltySystem`): false start, offside and delay of game before the snap; holding both ways, pass interference both ways, roughing the passer, facemask, block in the back, kick-catch interference, intentional grounding. The offended team takes the better of the play and the penalty by expected points; half-the-distance applies; fouls on both sides offset. In training a flag costs reward and moves nothing |
+| Clock | Live during a play; a **12 s** huddle is charged at the whistle only when the clock kept running. **Out of bounds stops it only inside the last 2:00 of the first half and the last 5:00 of the second** (scaled to a 5-minute quarter: 40 s and 100 s). A **two-minute warning** at 40 s of the second and fourth quarters. A flag stops it |
+| Clock plays | The team ahead late **kneels** when its downs can run out the clock the other side cannot stop; a team without timeouts and with the clock running late **spikes** it |
+| Timeouts | 3 a half, 2 in overtime, spent inside the last minute by whichever side the clock is hurting |
+| Quarter end | The down finishes first; a touchdown at 0:00 still gets its try |
+| Overtime | **The NFL rule** (`OVERTIME_SECONDS`, 200 s). Both teams are owed a possession, a first-possession touchdown included; a score by the side without the ball ends it; once both have had it the next score wins; level at the end is a tie |
+| Catching | A pass may be caught **behind** the line, so screens and checkdowns exist. Both lines remain ineligible |
 
-Clock and scoring constants live in `Systems_GameRules`, deliberately separate
-from `Systems_SimConstants`. Nothing in `Systems_GameRules` can change what an
-`.onnx` was fitted against, so it is safe to tune between builds.
+Clock and spotting constants live in `Systems_GameRules`. Everything that decides
+how a kick flies, how often a ball is dropped or a flag is thrown, lives in
+`Systems_SimConstants`: it is part of the dynamics a brain is fitted against.
 
 ---
 
@@ -172,6 +188,12 @@ against, which is why `HUDDLE_SECONDS` could be halved without touching the stam
   zoom a 53-yard-wide field needs in portrait, a number would be about four pixels
   tall — unreadable, and 22 more draw calls.
 - **Audio is synthesised, not recorded.** See below.
+- **The coach is scripted.** Kneel-downs, spikes, onside kicks, two-point tries and
+  timeouts are rules in `Systems_GameFlowSystem`, not policies: training has no
+  clock or score for a brain to learn them against.
+- **Before the snap the bodies are frozen.** A false start or an offside is a
+  drawn flinch (`Systems_IDisciplineModel`), refereed physically — never a policy's
+  doing. See Systems_SimConstants.PRESNAP_TICKS for why.
 
 ---
 

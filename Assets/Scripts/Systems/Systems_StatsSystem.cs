@@ -93,7 +93,12 @@ namespace PoFootball.Systems
             // carry down. Systems_GameFlowSystem's REALISM line has always excluded
             // kicks from its average; the box score the viewer actually reads did
             // not, and with three punts in a measured game that is visible.
-            if (IsKick(message.Call))
+            // NOR IS A KICKOFF, A TRY, OR A DOWN THE OFFICIALS WIPED OUT (revision 14).
+            // A penalty that replaced the play leaves no play to book.
+            if (IsKick(message.Call)
+                || message.Kind == Systems_PlayKind.Kickoff
+                || message.Kind.IsTry()
+                || message.Result == Systems_DownResult.Penalty)
             {
                 offense.AddTimeOfPossession(message.ClockSecondsBurned);
                 offense.SetPoints(_game.ScoreOf(message.Offense));
@@ -159,13 +164,15 @@ namespace PoFootball.Systems
                     offense.AddFirstDown();
                     break;
 
+                // The scoring team, which since revision 14 is not always the
+                // offense: a pick-six is the defense's touchdown, and a returner
+                // downed in his own end zone concedes a safety to the offense.
                 case Systems_DownResult.Touchdown:
-                    offense.AddTouchdown();
+                    _boxScore.Team(message.ScoringTeam).AddTouchdown();
                     break;
 
                 case Systems_DownResult.Safety:
-                    // The two points go to the defense, and so does the safety.
-                    defense.AddSafety();
+                    _boxScore.Team(message.ScoringTeam).AddSafety();
                     break;
 
                 case Systems_DownResult.Interception:

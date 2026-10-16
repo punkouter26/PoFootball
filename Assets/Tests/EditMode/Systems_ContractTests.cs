@@ -72,7 +72,11 @@ namespace PoFootball.Tests
                     Systems_BallState.InFlight, Systems_PlayCall.Pass, 4f,
                 1,
                 Systems_GameRules.YARDS_TO_GAIN,
-                120);
+                120,
+                3f,
+                -1f,
+                Systems_PlayKind.Punt,
+                true);
 
                 for (int index = 0; index < buffer.Length; index++)
                 {
@@ -107,7 +111,11 @@ namespace PoFootball.Tests
                 Systems_PlayCall.KeepQuarterback, 0f,
                 1,
                 Systems_GameRules.YARDS_TO_GAIN,
-                120);
+                120,
+                3f,
+                -1f,
+                Systems_PlayKind.Punt,
+                true);
 
             for (int index = Sensor_FootballState.OBSERVATION_SIZE; index < buffer.Length; index++)
             {
@@ -130,9 +138,17 @@ namespace PoFootball.Tests
                 ActionSpec spec = Agent_ActionContract.For(group);
                 bool isQuarterback = group == Systems_BrainGroup.Quarterback;
 
+                // Revision 14: every other brain carries the one pitch branch.
                 Assert.That(
-                    spec.NumDiscreteActions, Is.EqualTo(isQuarterback ? 2 : 0),
+                    spec.NumDiscreteActions, Is.EqualTo(isQuarterback ? 2 : 1),
                     $"{group} discrete branch count");
+
+                if (!isQuarterback)
+                {
+                    Assert.That(
+                        spec.BranchSizes[0], Is.EqualTo(Agent_ActionContract.LATERAL_BRANCH_SIZE),
+                        $"{group} pitch branch size");
+                }
                 Assert.That(
                     spec.NumContinuousActions,
                     Is.EqualTo(isQuarterback
@@ -184,9 +200,20 @@ namespace PoFootball.Tests
                     Enum.IsDefined(typeof(Systems_PlayCall), call), Is.True,
                     $"branch index {index} decodes to no defined call");
 
+                // A kick latches before the snap on fourth down; every other call
+                // at the dropback. Each window refuses the other's calls.
+                bool isKick = call == Systems_PlayCall.Punt || call == Systems_PlayCall.FieldGoal;
+
                 Systems_PlayModel play = new Systems_PlayModel();
-                play.BeginEpisode(0f, 0f, 1, Systems_GameRules.YARDS_TO_GAIN);
-                play.Snap();
+                play.BeginEpisode(
+                    0f, 0f, isKick ? Systems_GameRules.DOWNS_PER_SERIES : 1,
+                    Systems_GameRules.YARDS_TO_GAIN);
+
+                if (!isKick)
+                {
+                    play.Snap();
+                }
+
                 play.LatchCall(call);
 
                 Assert.That(play.Call, Is.EqualTo(call), $"branch index {index} did not latch");
@@ -309,7 +336,9 @@ namespace PoFootball.Tests
             Assert.That(Systems_SimConstants.PASS_LOFT_RATIO, Is.GreaterThan(0f));
 
             Systems_BallModel ball = new Systems_BallModel();
-            ball.Throw(0, Vector2.zero, new Vector2(0f, Systems_SimConstants.PASS_SPEED_MAX));
+            ball.Throw(
+                0, Vector2.zero, new Vector2(0f, Systems_SimConstants.PASS_SPEED_MAX),
+                Systems_PassKind.Forward);
 
             Assert.That(ball.Height, Is.EqualTo(0f), "a ball leaves the hand at ground level");
 

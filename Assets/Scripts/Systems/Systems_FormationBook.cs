@@ -393,6 +393,178 @@ namespace PoFootball.Systems
             return -1;
         }
 
+        // --- Special teams (revision 14) -----------------------------------------
+        //
+        // The kicking game is played now, so it needs units on the field that look
+        // like one. Same squad, same slot order — a slot is a brain and a body, and
+        // a formation only says where they stand — so the punter is the quarterback,
+        // the gunners are the two receivers, and the returners are the safeties.
+        //
+        // Deliberately NOT in WidestSlotX. A kickoff spreads eleven men across the
+        // whole field, and folding that into the snap framing would pull the camera
+        // out for every ordinary down.
+
+        /// <summary>Metres behind the line the punter stands: PUNT_DEPTH_YARDS.</summary>
+        private const float PUNTER_Y = -Systems_SimConstants.PUNT_DEPTH_YARDS * Systems_FieldModel.YARD;
+
+        /// <summary>Metres behind the line the kicker stands for a placekick: PLACEKICK_DEPTH_YARDS.</summary>
+        private const float PLACEKICKER_Y =
+            -Systems_SimConstants.PLACEKICK_DEPTH_YARDS * Systems_FieldModel.YARD;
+
+        private static readonly Systems_FormationSlot[] KickoffTeam =
+        {
+            new Systems_FormationSlot(Systems_PlayerRole.OffensiveLine, -4.0f, -1.0f),
+            new Systems_FormationSlot(Systems_PlayerRole.OffensiveLine, -8.0f, -1.0f),
+            new Systems_FormationSlot(Systems_PlayerRole.OffensiveLine, 4.0f, -1.0f),
+            new Systems_FormationSlot(Systems_PlayerRole.OffensiveLine, 8.0f, -1.0f),
+            new Systems_FormationSlot(Systems_PlayerRole.OffensiveLine, -12.0f, -1.0f),
+            new Systems_FormationSlot(Systems_PlayerRole.TightEnd, 12.0f, -1.0f),
+            new Systems_FormationSlot(Systems_PlayerRole.WideReceiver, -21.0f, -1.0f),
+            new Systems_FormationSlot(Systems_PlayerRole.WideReceiver, 21.0f, -1.0f),
+            // The kicker, on the tee.
+            new Systems_FormationSlot(Systems_PlayerRole.Quarterback, 0.0f, -0.3f),
+            new Systems_FormationSlot(Systems_PlayerRole.Fullback, -16.5f, -1.0f),
+            new Systems_FormationSlot(Systems_PlayerRole.RunningBack, 16.5f, -1.0f),
+        };
+
+        private static readonly Systems_FormationSlot[] KickoffReturnTeam =
+        {
+            // The front line, fifteen yards off the ball.
+            new Systems_FormationSlot(Systems_PlayerRole.DefensiveLine, -13.0f, 13.7f),
+            new Systems_FormationSlot(Systems_PlayerRole.DefensiveLine, -4.5f, 13.7f),
+            new Systems_FormationSlot(Systems_PlayerRole.DefensiveLine, 4.5f, 13.7f),
+            new Systems_FormationSlot(Systems_PlayerRole.DefensiveLine, 13.0f, 13.7f),
+            // The second wave.
+            new Systems_FormationSlot(Systems_PlayerRole.Linebacker, -10.0f, 27.0f),
+            new Systems_FormationSlot(Systems_PlayerRole.Linebacker, 0.0f, 27.0f),
+            new Systems_FormationSlot(Systems_PlayerRole.Linebacker, 10.0f, 27.0f),
+            // The wedge in front of the returners.
+            new Systems_FormationSlot(Systems_PlayerRole.Cornerback, -7.0f, 42.0f),
+            new Systems_FormationSlot(Systems_PlayerRole.Cornerback, 7.0f, 42.0f),
+            // The two returners, deep.
+            new Systems_FormationSlot(Systems_PlayerRole.Safety, -5.0f, 56.0f),
+            new Systems_FormationSlot(Systems_PlayerRole.Safety, 5.0f, 56.0f),
+        };
+
+        private static readonly Systems_FormationSlot[] PuntTeam =
+        {
+            new Systems_FormationSlot(Systems_PlayerRole.OffensiveLine, -3.0f, OFFENSE_LINE_Y),
+            new Systems_FormationSlot(Systems_PlayerRole.OffensiveLine, -1.5f, OFFENSE_LINE_Y),
+            new Systems_FormationSlot(Systems_PlayerRole.OffensiveLine, 0.0f, OFFENSE_LINE_Y),
+            new Systems_FormationSlot(Systems_PlayerRole.OffensiveLine, 1.5f, OFFENSE_LINE_Y),
+            new Systems_FormationSlot(Systems_PlayerRole.OffensiveLine, 3.0f, OFFENSE_LINE_Y),
+            // Wings.
+            new Systems_FormationSlot(Systems_PlayerRole.TightEnd, 4.5f, -1.6f),
+            // Gunners, split wide to get down the field first.
+            new Systems_FormationSlot(Systems_PlayerRole.WideReceiver, -20.0f, OFFENSE_LINE_Y),
+            new Systems_FormationSlot(Systems_PlayerRole.WideReceiver, 20.0f, OFFENSE_LINE_Y),
+            // The punter.
+            new Systems_FormationSlot(Systems_PlayerRole.Quarterback, 0.0f, PUNTER_Y),
+            // The personal protector.
+            new Systems_FormationSlot(Systems_PlayerRole.Fullback, 0.0f, -5.5f),
+            new Systems_FormationSlot(Systems_PlayerRole.RunningBack, -4.5f, -1.6f),
+        };
+
+        private static readonly Systems_FormationSlot[] PuntReturnTeam =
+        {
+            new Systems_FormationSlot(Systems_PlayerRole.DefensiveLine, -2.5f, DEFENSE_LINE_Y),
+            new Systems_FormationSlot(Systems_PlayerRole.DefensiveLine, -0.9f, DEFENSE_LINE_Y),
+            new Systems_FormationSlot(Systems_PlayerRole.DefensiveLine, 0.9f, DEFENSE_LINE_Y),
+            new Systems_FormationSlot(Systems_PlayerRole.DefensiveLine, 2.5f, DEFENSE_LINE_Y),
+            new Systems_FormationSlot(Systems_PlayerRole.Linebacker, -5.0f, 4.0f),
+            new Systems_FormationSlot(Systems_PlayerRole.Linebacker, 0.0f, 5.0f),
+            new Systems_FormationSlot(Systems_PlayerRole.Linebacker, 5.0f, 4.0f),
+            // Jammers on the gunners.
+            new Systems_FormationSlot(Systems_PlayerRole.Cornerback, -19.0f, 2.0f),
+            new Systems_FormationSlot(Systems_PlayerRole.Cornerback, 19.0f, 2.0f),
+            // The returner, deep, and a man in front of him.
+            new Systems_FormationSlot(Systems_PlayerRole.Safety, 0.0f, 40.0f),
+            new Systems_FormationSlot(Systems_PlayerRole.Safety, 2.0f, 22.0f),
+        };
+
+        private static readonly Systems_FormationSlot[] FieldGoalTeam =
+        {
+            new Systems_FormationSlot(Systems_PlayerRole.OffensiveLine, -3.0f, OFFENSE_LINE_Y),
+            new Systems_FormationSlot(Systems_PlayerRole.OffensiveLine, -1.5f, OFFENSE_LINE_Y),
+            new Systems_FormationSlot(Systems_PlayerRole.OffensiveLine, 0.0f, OFFENSE_LINE_Y),
+            new Systems_FormationSlot(Systems_PlayerRole.OffensiveLine, 1.5f, OFFENSE_LINE_Y),
+            new Systems_FormationSlot(Systems_PlayerRole.OffensiveLine, 3.0f, OFFENSE_LINE_Y),
+            new Systems_FormationSlot(Systems_PlayerRole.TightEnd, 4.5f, OFFENSE_LINE_Y),
+            // The receivers as extra wings: nobody is going out on a route.
+            new Systems_FormationSlot(Systems_PlayerRole.WideReceiver, -6.0f, -1.8f),
+            new Systems_FormationSlot(Systems_PlayerRole.WideReceiver, 6.0f, -1.8f),
+            // The kicker, at the hold.
+            new Systems_FormationSlot(Systems_PlayerRole.Quarterback, 0.0f, PLACEKICKER_Y),
+            // The holder beside him.
+            new Systems_FormationSlot(Systems_PlayerRole.Fullback, -1.4f, PLACEKICKER_Y),
+            new Systems_FormationSlot(Systems_PlayerRole.RunningBack, -4.5f, OFFENSE_LINE_Y),
+        };
+
+        private static readonly Systems_FormationSlot[] FieldGoalBlockTeam =
+        {
+            new Systems_FormationSlot(Systems_PlayerRole.DefensiveLine, -2.3f, DEFENSE_LINE_Y),
+            new Systems_FormationSlot(Systems_PlayerRole.DefensiveLine, -0.8f, DEFENSE_LINE_Y),
+            new Systems_FormationSlot(Systems_PlayerRole.DefensiveLine, 0.8f, DEFENSE_LINE_Y),
+            new Systems_FormationSlot(Systems_PlayerRole.DefensiveLine, 2.3f, DEFENSE_LINE_Y),
+            // Edge rushers off both ends of the line.
+            new Systems_FormationSlot(Systems_PlayerRole.Linebacker, -5.5f, DEFENSE_LINE_Y),
+            new Systems_FormationSlot(Systems_PlayerRole.Linebacker, 0.0f, 4.0f),
+            new Systems_FormationSlot(Systems_PlayerRole.Linebacker, 5.5f, DEFENSE_LINE_Y),
+            new Systems_FormationSlot(Systems_PlayerRole.Cornerback, -7.5f, 1.6f),
+            new Systems_FormationSlot(Systems_PlayerRole.Cornerback, 7.5f, 1.6f),
+            // Back in case it is a fake, or it comes up short.
+            new Systems_FormationSlot(Systems_PlayerRole.Safety, 0.0f, 12.0f),
+            new Systems_FormationSlot(Systems_PlayerRole.Safety, 6.0f, 8.0f),
+        };
+
+        /// <summary>Whether this kind of snap lines up in a kicking formation.</summary>
+        public static bool HasSpecialTeamsFormation(Systems_PlayKind kind)
+        {
+            return kind == Systems_PlayKind.Kickoff
+                || kind == Systems_PlayKind.Punt
+                || kind == Systems_PlayKind.FieldGoal
+                || kind == Systems_PlayKind.ExtraPoint;
+        }
+
+        /// <summary>
+        /// Slot 0..21 of the special-teams alignment for this kind of snap. Only for
+        /// kinds <see cref="HasSpecialTeamsFormation"/> accepts.
+        /// </summary>
+        public static Systems_FormationSlot SpecialTeamsSlot(Systems_PlayKind kind, int slotIndex)
+        {
+            Systems_FormationSlot[] offense;
+            Systems_FormationSlot[] defense;
+            SpecialTeamsTables(kind, out offense, out defense);
+
+            return slotIndex < SLOTS_PER_SIDE
+                ? offense[slotIndex]
+                : defense[slotIndex - SLOTS_PER_SIDE];
+        }
+
+        private static void SpecialTeamsTables(
+            Systems_PlayKind kind,
+            out Systems_FormationSlot[] offense,
+            out Systems_FormationSlot[] defense)
+        {
+            switch (kind)
+            {
+                case Systems_PlayKind.Kickoff:
+                    offense = KickoffTeam;
+                    defense = KickoffReturnTeam;
+                    return;
+
+                case Systems_PlayKind.Punt:
+                    offense = PuntTeam;
+                    defense = PuntReturnTeam;
+                    return;
+
+                default:
+                    offense = FieldGoalTeam;
+                    defense = FieldGoalBlockTeam;
+                    return;
+            }
+        }
+
         /// <summary>
         /// How far the widest player in ANY formation lines up from the centre of
         /// the field. Read by Systems_BroadcastCameraView to size the snap shot.
@@ -472,8 +644,45 @@ namespace PoFootball.Systems
             }
 
             CheckSeparation(failures);
+            CheckSpecialTeams(failures);
 
             return failures.Length == 0 ? null : failures.ToString();
+        }
+
+        private static readonly Systems_PlayKind[] SpecialTeamsKinds =
+        {
+            Systems_PlayKind.Kickoff, Systems_PlayKind.Punt, Systems_PlayKind.FieldGoal,
+        };
+
+        /// <summary>The same two invariants for each kicking unit against its own return or block team.</summary>
+        private static void CheckSpecialTeams(StringBuilder failures)
+        {
+            float minimum = Systems_SimConstants.MIN_SPAWN_SEPARATION;
+
+            for (int kindIndex = 0; kindIndex < SpecialTeamsKinds.Length; kindIndex++)
+            {
+                SpecialTeamsTables(
+                    SpecialTeamsKinds[kindIndex],
+                    out Systems_FormationSlot[] offense,
+                    out Systems_FormationSlot[] defense);
+
+                CheckRoleOrder(
+                    failures, new[] { offense }, SpecialTeamsKinds[kindIndex] + " team",
+                    ExpectedOffenseRoles);
+                CheckRoleOrder(
+                    failures, new[] { defense }, SpecialTeamsKinds[kindIndex] + " return team",
+                    ExpectedDefenseRoles);
+
+                if (TooClose(
+                        offense, defense, minimum * minimum,
+                        out int slotA, out int slotB, out float distance))
+                {
+                    failures.Append(SpecialTeamsKinds[kindIndex])
+                        .Append(": slots ").Append(slotA).Append(" and ").Append(slotB)
+                        .Append(" are ").Append(distance.ToString("F2"))
+                        .Append(" m apart, under ").Append(minimum.ToString("F2")).Append("; ");
+                }
+            }
         }
 
         private static readonly Systems_PlayerRole[] ExpectedOffenseRoles =

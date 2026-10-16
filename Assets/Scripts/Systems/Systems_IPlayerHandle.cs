@@ -99,6 +99,13 @@ namespace PoFootball.Systems
         /// and a training scene has no possession to follow.
         /// </summary>
         void SetTeamColor(Color color);
+
+        /// <summary>
+        /// Puts a velocity straight into the body — the involuntary step of a
+        /// player who flinches before the snap (Systems_IDisciplineModel). The only
+        /// motion a set body ever has; Systems_PenaltySystem then referees it.
+        /// </summary>
+        void Nudge(Vector2 velocity);
     }
 
     /// <summary>
@@ -119,17 +126,12 @@ namespace PoFootball.Systems
         /// Applies the sparse end-of-play reward. The agent owns the reward maths
         /// (it references PoFootball.Rewards); the caller only says what happened.
         ///
-        /// passCompleted is carried separately from the outcome because a catch and
-        /// the tackle that ends the play are different events — a completion is not
-        /// one of the Systems_PlayOutcome values and never terminates a play by
-        /// itself, so without it the reward layer can only see the two ways a pass
-        /// goes WRONG.
+        /// The result carries more than the outcome because a catch and the tackle
+        /// that ends the play are different events, and since revision 14 so are a
+        /// turnover and the return that follows it, and a flag and the play it was
+        /// thrown on. See Systems_PlayResult.
         /// </summary>
-        void ApplyTerminalReward(
-            Systems_PlayOutcome outcome,
-            float netYards,
-            bool passCompleted,
-            bool reachedLineToGain);
+        void ApplyTerminalReward(in Systems_PlayResult result);
 
         /// <summary>Ends this agent's ML-Agents episode. Repositioning is the director's job.</summary>
         void EndEpisodeNow();

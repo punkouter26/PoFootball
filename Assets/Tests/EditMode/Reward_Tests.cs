@@ -591,5 +591,131 @@ namespace PoFootball.Tests
         {
             return value < 0f ? -value : value;
         }
+        // --- Revision 14 -------------------------------------------------------
+
+        private static Systems_PlayResult Result(
+            Systems_PlayOutcome outcome,
+            Systems_PlayKind kind,
+            Systems_TeamSide side,
+            float returnYards = 0f,
+            int offenseFouls = 0,
+            int defenseFouls = 0,
+            float receivingYardLine = 35f,
+            float kickNetYards = 40f)
+        {
+            return new Systems_PlayResult(
+                outcome, kind, 0f, false, false, side, returnYards,
+                offenseFouls, 0, defenseFouls, 0, receivingYardLine, kickNetYards);
+        }
+
+        [Test]
+        public void APickSix_CostsTheOffenseMoreThanATouchdownPays()
+        {
+            float pickSix = Reward_Terminal.For(
+                Systems_TeamSide.Offense,
+                Result(Systems_PlayOutcome.Touchdown, Systems_PlayKind.Scrimmage, Systems_TeamSide.Defense));
+
+            float touchdown = Reward_Terminal.For(
+                Systems_TeamSide.Offense,
+                Result(Systems_PlayOutcome.Touchdown, Systems_PlayKind.Scrimmage, Systems_TeamSide.Offense));
+
+            Assert.That(-pickSix, Is.GreaterThan(touchdown));
+        }
+
+        [Test]
+        public void AReturnedInterception_CostsMoreThanOneDownedOnTheSpot()
+        {
+            float returned = Reward_Terminal.For(
+                Systems_TeamSide.Offense,
+                Result(Systems_PlayOutcome.Interception, Systems_PlayKind.Scrimmage,
+                    Systems_TeamSide.Defense, returnYards: 30f));
+
+            float downed = Reward_Terminal.For(
+                Systems_TeamSide.Offense,
+                Result(Systems_PlayOutcome.Interception, Systems_PlayKind.Scrimmage,
+                    Systems_TeamSide.Defense));
+
+            Assert.That(returned, Is.LessThan(downed));
+        }
+
+        [Test]
+        public void AFlag_CostsTheSideThatDrewItWhatItPaysTheOther()
+        {
+            float clean = Reward_Terminal.For(
+                Systems_TeamSide.Offense,
+                Result(Systems_PlayOutcome.Tackle, Systems_PlayKind.Scrimmage, Systems_TeamSide.Offense));
+
+            float offenseFlagged = Reward_Terminal.For(
+                Systems_TeamSide.Offense,
+                Result(Systems_PlayOutcome.Tackle, Systems_PlayKind.Scrimmage,
+                    Systems_TeamSide.Offense, offenseFouls: 1));
+
+            float defenseFlagged = Reward_Terminal.For(
+                Systems_TeamSide.Defense,
+                Result(Systems_PlayOutcome.Tackle, Systems_PlayKind.Scrimmage,
+                    Systems_TeamSide.Offense, defenseFouls: 1));
+
+            Assert.That(offenseFlagged, Is.EqualTo(clean - Systems_SimConstants.FOUL_REWARD).Within(1e-5f));
+            Assert.That(defenseFlagged, Is.EqualTo(-clean - Systems_SimConstants.FOUL_REWARD).Within(1e-5f));
+        }
+
+        [Test]
+        public void ABetterPunt_PaysTheCoverTeamMore()
+        {
+            float short_ = Reward_Terminal.For(
+                Systems_TeamSide.Offense,
+                Result(Systems_PlayOutcome.Punt, Systems_PlayKind.Punt,
+                    Systems_TeamSide.Defense, kickNetYards: 30f));
+
+            float long_ = Reward_Terminal.For(
+                Systems_TeamSide.Offense,
+                Result(Systems_PlayOutcome.Punt, Systems_PlayKind.Punt,
+                    Systems_TeamSide.Defense, kickNetYards: 50f));
+
+            Assert.That(long_, Is.GreaterThan(short_));
+        }
+
+        [Test]
+        public void AKickoffPinnedInsideTheTwenty_BeatsATouchbackForTheKickers()
+        {
+            float pinned = Reward_Terminal.For(
+                Systems_TeamSide.Offense,
+                Result(Systems_PlayOutcome.Kickoff, Systems_PlayKind.Kickoff,
+                    Systems_TeamSide.Defense, receivingYardLine: 18f));
+
+            float touchback = Reward_Terminal.For(
+                Systems_TeamSide.Offense,
+                Result(Systems_PlayOutcome.Touchback, Systems_PlayKind.Kickoff,
+                    Systems_TeamSide.Defense, receivingYardLine: 35f));
+
+            Assert.That(pinned, Is.GreaterThan(touchback));
+        }
+
+        [Test]
+        public void AKickFieldPositionTerm_NeverOutweighsAScore()
+        {
+            float bestKickoff = Reward_Terminal.For(
+                Systems_TeamSide.Offense,
+                Result(Systems_PlayOutcome.Kickoff, Systems_PlayKind.Kickoff,
+                    Systems_TeamSide.Defense, receivingYardLine: 1f));
+
+            Assert.That(bestKickoff, Is.LessThan(Systems_SimConstants.FIELD_GOAL_REWARD));
+        }
+
+        [Test]
+        public void ATry_PaysLessThanTheTouchdownBeforeIt()
+        {
+            float twoPoint = Reward_Terminal.For(
+                Systems_TeamSide.Offense,
+                Result(Systems_PlayOutcome.Touchdown, Systems_PlayKind.TwoPoint, Systems_TeamSide.Offense));
+
+            float extraPoint = Reward_Terminal.For(
+                Systems_TeamSide.Offense,
+                Result(Systems_PlayOutcome.FieldGoalGood, Systems_PlayKind.ExtraPoint, Systems_TeamSide.Offense));
+
+            Assert.That(twoPoint, Is.LessThan(Systems_SimConstants.TOUCHDOWN_REWARD));
+            Assert.That(extraPoint, Is.LessThan(twoPoint));
+            Assert.That(extraPoint, Is.GreaterThan(0f));
+        }
     }
 }

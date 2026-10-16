@@ -1744,8 +1744,8 @@ namespace PoFootball.Views
 
         private void RefreshSituation()
         {
-            _downAndDistance.text = Systems_DisplayText.DownAndDistance(
-                _game.Down, _game.YardsToGo, _game.IsGoalToGo);
+            _downAndDistance.text = Systems_DisplayText.Situation(
+                _game.NextPlayKind, _game.Down, _game.YardsToGo, _game.IsGoalToGo);
 
             _fieldPosition.text = Systems_DisplayText.FieldPosition(_game.LineOfScrimmageY);
 
@@ -1799,8 +1799,10 @@ namespace PoFootball.Views
             _bannerDetail.text =
                 $"{Systems_DisplayText.PlayCallLabel(message.Call)}   "
                 + Systems_DisplayText.YardageDetail(message.YardsGained)
-                + Systems_DisplayText.TryDetail(message.TwoPointAttempted, message.TwoPointGood)
-                + Systems_DisplayText.TimeoutDetail(message.TimeoutCalled, message.TimeoutTeam);
+                + Systems_DisplayText.FoulDetail(
+                    message.Foul, message.FoulTeam, message.PenaltyAccepted, message.PenaltyYards)
+                + Systems_DisplayText.TimeoutDetail(message.TimeoutCalled, message.TimeoutTeam)
+                + Systems_DisplayText.TwoMinuteWarningDetail(message.TwoMinuteWarning);
 
             // The overlay owns its own timer on the panel's scheduler. Nothing here
             // ticks; nothing here allocates a task.
@@ -1821,8 +1823,15 @@ namespace PoFootball.Views
                 case Systems_DownResult.Interception:
                 case Systems_DownResult.TurnoverOnDowns:
                 case Systems_DownResult.Safety:
+                case Systems_DownResult.FumbleLost:
+                case Systems_DownResult.BlockedKick:
+                case Systems_DownResult.Sack:
+                case Systems_DownResult.DefensiveTry:
                     return Systems_UiTheme.Negative;
                 case Systems_DownResult.FirstDown:
+                case Systems_DownResult.KickRecovered:
+                case Systems_DownResult.ExtraPointGood:
+                case Systems_DownResult.TwoPointGood:
                     return Systems_UiTheme.Positive;
                 default:
                     return Systems_UiTheme.TextPrimary;

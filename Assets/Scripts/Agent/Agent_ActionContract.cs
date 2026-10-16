@@ -268,9 +268,34 @@ namespace PoFootball.Agents
         /// somewhere else and its tackles do not always finish, with no shape check
         /// noticing. Assets/Agents/Football_v02 (football_base14) is fitted against
         /// revision 12 and must not load here; every player runs Heuristic until a
-        /// revision 13 run is promoted. Config/FootballBase15.yaml is its config.
+        /// revision 13 run is promoted. Config/FootballBase15.yaml was its config.
+        ///
+        /// Revision 14 PLAYS THE WHOLE GAME, and unlike 11, 12 and 13 it changes the
+        /// SHAPES, so a shape check refuses an older brain as well as this stamp:
+        ///
+        ///     Observations   36 -> 45: ball state widened to four (kicked and loose
+        ///                    are new), possession relative to self, ball height,
+        ///                    the play kind (kickoff, punt, placekick, two-point
+        ///                    try), and a pre-snap flag
+        ///     Offense/Defense  2 continuous -> 2 continuous + one discrete branch
+        ///                    of 2: pitch the ball to a trailing team-mate
+        ///     Quarterback    shapes unchanged, but the call branch is now read in
+        ///                    TWO windows — a kick before the snap, anything else at
+        ///                    the dropback — and the throw branch also pitches when
+        ///                    a forward pass is not on
+        ///
+        /// and the dynamics under them: a pre-snap during which the bodies stand set;
+        /// kicks that are played (Systems_BallSystem.Kick) by formations that line up
+        /// for them; an interception or a recovered fumble is a return rather than a
+        /// whistle; a stripped ball is loose and either side may fall on it; a pile
+        /// is down by forward progress; a pass thrown at nobody is a throwaway or
+        /// intentional grounding; and the officials flag what they see
+        /// (Systems_PenaltySystem). Football_v02 (revision 12) and football_base15
+        /// (revision 13) are both fitted against a different game and must not load.
+        /// football_base15 can still be promoted from commit 981ba23, where it was
+        /// trained. Config/FootballBase16.yaml is this revision's config.
         /// </summary>
-        public const int CONTRACT_REVISION = 13;
+        public const int CONTRACT_REVISION = 14;
 
         /// <summary>Continuous outputs every brain has: drive and steer.</summary>
         public const int BASE_CONTINUOUS_ACTIONS = 2;
@@ -284,11 +309,18 @@ namespace PoFootball.Agents
         /// <summary>Size of the quarterback's throw-trigger branch: hold or release.</summary>
         public const int THROW_BRANCH_SIZE = 2;
 
+        /// <summary>
+        /// Size of every other brain's one discrete branch: keep the ball, or pitch
+        /// it to a team-mate level with or behind. Revision 14. Masked off for
+        /// anybody not carrying, so it costs a brain nothing to learn to ignore.
+        /// </summary>
+        public const int LATERAL_BRANCH_SIZE = 2;
+
         public static ActionSpec For(Systems_BrainGroup group)
         {
             if (!Systems_RoleTable.HasQuarterbackActions(group))
             {
-                return ActionSpec.MakeContinuous(BASE_CONTINUOUS_ACTIONS);
+                return new ActionSpec(BASE_CONTINUOUS_ACTIONS, new[] { LATERAL_BRANCH_SIZE });
             }
 
             return new ActionSpec(

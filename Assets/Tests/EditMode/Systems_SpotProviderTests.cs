@@ -35,14 +35,30 @@ namespace PoFootball.Tests
             for (int episode = 0; episode < 250; episode++)
             {
                 // Same draw order as Systems_RandomSpotProvider.NextSituation:
-                // spot, then down, then distance. The determinism guarantee covers
-                // the whole situation now, not just the spot.
+                // kind, onside, spot, down, distance — five, always, whatever kind
+                // of snap the first one makes it (revision 14).
+                float kindDraw = expected.NextFloat();
+                expected.NextFloat();
                 float expectedY = expected.NextFloat(
                     Systems_FieldModel.LOS_MIN_Y, Systems_FieldModel.LOS_MAX_Y);
                 int expectedDown = expected.NextInt(1, Systems_GameRules.DOWNS_PER_SERIES + 1);
                 float expectedYardsToGo = expected.NextFloat(1f, 15f);
 
                 Systems_PlaySituation situation = provider.NextSituation();
+
+                float notScrimmage = Systems_RandomSpotProvider.KICKOFF_SHARE
+                    + Systems_RandomSpotProvider.EXTRA_POINT_SHARE
+                    + Systems_RandomSpotProvider.TWO_POINT_SHARE;
+
+                if (kindDraw < notScrimmage)
+                {
+                    Assert.That(
+                        situation.Kind, Is.Not.EqualTo(Systems_PlayKind.Scrimmage),
+                        $"episode {episode} should have been a kickoff or a try");
+                    continue;
+                }
+
+                Assert.That(situation.Kind, Is.EqualTo(Systems_PlayKind.Scrimmage));
 
                 Assert.That(
                     situation.LineOfScrimmageY,
@@ -68,6 +84,24 @@ namespace PoFootball.Tests
             for (int episode = 0; episode < 500; episode++)
             {
                 Systems_PlaySituation situation = provider.NextSituation();
+
+                if (situation.Kind.IsTry())
+                {
+                    // Snapped from the opponent's 15 or 2, inside the field.
+                    Assert.That(
+                        situation.LineOfScrimmageY,
+                        Is.LessThan(Systems_FieldModel.ATTACKING_GOAL_LINE_Y));
+                    continue;
+                }
+
+                if (situation.Kind == Systems_PlayKind.Kickoff)
+                {
+                    Assert.That(
+                        (situation.LineOfScrimmageY - Systems_FieldModel.OWN_GOAL_LINE_Y)
+                            / Systems_FieldModel.YARD,
+                        Is.EqualTo(Systems_GameRules.KICKOFF_YARD_LINE).Within(0.01f));
+                    continue;
+                }
 
                 Assert.That(
                     situation.LineOfScrimmageY,

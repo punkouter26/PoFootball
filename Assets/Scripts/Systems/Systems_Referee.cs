@@ -8,26 +8,39 @@ namespace PoFootball.Systems
     /// <summary>
     /// Decides when a play is over. Several independent paths reach a whistle:
     ///
-    ///   - the ball itself, via Systems_BallSystem: an interception or an
-    ///     incompletion ends the play the moment it resolves;
-    ///   - boundary and clock conditions, polled once per FixedUpdate;
-    ///   - a tackle, reported by the carrier the instant a collision occurs.
+    ///   - the ball itself, via Systems_BallSystem: an incompletion, a field goal
+    ///     through or wide, a kick downed or fair-caught, a loose ball out of bounds
+    ///     or fallen on in an end zone;
+    ///   - boundary, progress and clock conditions, polled once per FixedUpdate;
+    ///   - a tackle, reported by the carrier the instant a collision occurs;
+    ///   - a foul before the snap.
     ///
     /// The tackle path is event-driven rather than polled, so a hit is registered
     /// on the exact physics tick it happens (acceptance criterion #2). The polled
     /// path reads positions produced by the previous physics step, which is a
     /// deterministic one-tick lag and well inside the same tolerance.
+    ///
+    /// REVISION 14. Whoever has the ball may be either side now — an interception
+    /// is a return, a kick is fielded by the defense — so every boundary below is
+    /// judged against the CARRIER's goal rather than the offense's: a returner
+    /// scores at −Y, and is down for a safety or a touchback at +Y. The play also
+    /// has a pre-snap now, the kicks are timed from here, and a pile is down by
+    /// forward progress rather than by a stall timer.
     /// </summary>
     public sealed class Systems_Referee : IFixedTickable
     {
+        /// <summary>Pre-snap tick a drawn flinch puts its step into the body.</summary>
+        private const int FLINCH_AT_PRESNAP_TICK = 6;
+
         private readonly Systems_PlayModel _play;
         private readonly Systems_BallModel _ball;
         private readonly Systems_BallSystem _ballSystem;
         private readonly Systems_FieldModel _field;
         private readonly Systems_PlayerRegistry _registry;
-        private readonly Systems_IKickModel _kickModel;
         private readonly Systems_IFumbleModel _fumbleModel;
         private readonly Systems_ISkillModel _skill;
+        private readonly Systems_PenaltySystem _penalties;
+        private readonly Systems_IDisciplineModel _discipline;
         private readonly IPublisher<Systems_PlayEndedMessage> _endedPublisher;
         private readonly IPublisher<Systems_TackleMessage> _tacklePublisher;
         private readonly IPublisher<Systems_ScoreMessage> _scorePublisher;
@@ -36,8 +49,7 @@ namespace PoFootball.Systems
 
         /// <summary>
         /// Last tick the ball carrier was moving at more than STALL_SPEED. The
-        /// dead-ball backstop measures the gap between this and now, so a play only
-        /// expires once the ball has actually stopped — see EvaluateCarrier.
+        /// give-himself-up backstop measures the gap between this and now.
         /// </summary>
         private int _lastCarrierMovingTick;
         private int _contactRunTicks;
@@ -58,15 +70,29 @@ namespace PoFootball.Systems
         /// </summary>
         private uint _contactMask;
 
+        // Forward progress: the carrier this is being measured for, the furthest he
+        // has got toward his goal (in his own direction of attack, metres), and how
+        // long he has been held without beating it.
+        private int _progressCarrierId = -1;
+        private bool _inContactStint;
+        private float _furthestProgress;
+        private float _furthestProgressY;
+        private float _heldUpFrom;
+        private int _heldUpTicks;
+
+        /// <summary>The slot that flinches on this snap, or -1. Drawn once per snap.</summary>
+        private int _flinchSlot = -1;
+
         public Systems_Referee(
             Systems_PlayModel play,
             Systems_BallModel ball,
             Systems_BallSystem ballSystem,
             Systems_FieldModel field,
             Systems_PlayerRegistry registry,
-            Systems_IKickModel kickModel,
             Systems_IFumbleModel fumbleModel,
             Systems_ISkillModel skill,
+            Systems_PenaltySystem penalties,
+            Systems_IDisciplineModel discipline,
             IPublisher<Systems_PlayEndedMessage> endedPublisher,
             IPublisher<Systems_TackleMessage> tacklePublisher,
             IPublisher<Systems_ScoreMessage> scorePublisher)
@@ -76,9 +102,10 @@ namespace PoFootball.Systems
             _ballSystem = ballSystem;
             _field = field;
             _registry = registry;
-            _kickModel = kickModel;
             _fumbleModel = fumbleModel;
             _skill = skill;
+            _penalties = penalties;
+            _discipline = discipline;
             _endedPublisher = endedPublisher;
             _tacklePublisher = tacklePublisher;
             _scorePublisher = scorePublisher;
@@ -92,10 +119,20 @@ namespace PoFootball.Systems
             _contactRunTicks = 0;
             _bodyContactInRun = false;
             _contactMask = 0u;
+            _progressCarrierId = -1;
+            _inContactStint = false;
+            _heldUpTicks = 0;
+            _flinchSlot = -1;
         }
 
         public void FixedTick()
         {
+            if (_play.Phase == Systems_PlayPhase.PreSnap)
+            {
+                TickPreSnap();
+                return;
+            }
+
             if (_play.Phase != Systems_PlayPhase.Live)
             {
                 return;
@@ -103,41 +140,33 @@ namespace PoFootball.Systems
 
             _play.AdvanceTick();
 
-            // A kick is resolved by the rules, not simulated. There is no kicking
-            // model here — the same reason the extra point is awarded rather than
-            // played — so the down is over the instant the quarterback commits to
-            // one, and Systems_GameFlowSystem works out where the ball goes from
-            // the line of scrimmage. Spotting it at the line rather than at the
-            // carrier keeps net yards at zero, which is what a kick actually gains
-            // the offense.
-            if (_play.CallIsLatched && IsKick(_play.Call))
+            if (TickClockPlay())
             {
-                EndPlay(
-                    KickOutcome(_play.Call),
-                    new Vector2(0f, _play.LineOfScrimmageY));
                 return;
             }
 
-            // The ball resolves first: a catch, an interception or an incompletion
-            // must be settled before boundaries are judged against its new position.
-            Systems_PlayOutcome ballOutcome = _ballSystem.Tick();
+            TickKick();
+
+            // The ball resolves first: a catch, a kick fielded, a ball recovered —
+            // all must be settled before boundaries are judged against its new
+            // position.
+            Systems_BallEvent ballEvent = _ballSystem.Tick();
             _play.SetBallY(_ball.Position.y);
+            _play.SetPossession(_ball.PossessingSide, _ball.Position.y, _play.ReturnOutcome);
 
-            if (ballOutcome != Systems_PlayOutcome.None)
+            if (ballEvent.EndsPlay)
             {
-                EndPlay(ballOutcome, _ball.Position);
+                EndFromBall(ballEvent);
                 return;
             }
 
-            if (_ball.IsInFlight)
+            if (!_ball.IsHeld)
             {
-                // A pass that sails out of the field of play is incomplete; it
-                // cannot score and nobody can catch it.
-                if (_field.IsOutsideSidelines(_ball.Position.x)
-                    || _ball.Position.y >= Systems_FieldModel.ATTACKING_BACK_LINE_Y
-                    || _ball.Position.y <= Systems_FieldModel.OWN_BACK_LINE_Y)
+                // In the air or on the ground. The ball system owns every way that
+                // ends; only the trainer's ceiling is left to apply here.
+                if (_play.PhysicsTick >= Systems_PlayModel.MAX_PHYSICS_TICKS)
                 {
-                    EndPlay(Systems_PlayOutcome.Incompletion, _ball.Position);
+                    EndMapped(Systems_PlayOutcome.TimeExpired, _ball.Position, _ball.PossessingSide);
                 }
 
                 return;
@@ -146,34 +175,160 @@ namespace PoFootball.Systems
             EvaluateCarrier();
         }
 
-        private static bool IsKick(Systems_PlayCall call)
+        // =====================================================================
+        // Before the snap
+        // =====================================================================
+
+        /// <summary>
+        /// The teams stand set for PRESNAP_TICKS and then the ball is snapped —
+        /// unless somebody jumps, or the play clock runs out.
+        /// </summary>
+        private void TickPreSnap()
         {
-            return call == Systems_PlayCall.Punt || call == Systems_PlayCall.FieldGoal;
+            _play.AdvancePreSnap();
+
+            if (_play.PreSnapTick == 1 && _play.Kind != Systems_PlayKind.Kickoff)
+            {
+                _flinchSlot = _discipline.DrawFlinch();
+            }
+
+            if (_play.PreSnapTick == FLINCH_AT_PRESNAP_TICK && _flinchSlot >= 0)
+            {
+                Systems_IPlayerHandle jumper = _registry.Get(_flinchSlot);
+
+                if (jumper != null)
+                {
+                    jumper.Nudge(
+                        Systems_BallSystem.AttackDirectionOf(jumper.Side)
+                            * Systems_SimConstants.FLINCH_SPEED);
+                }
+            }
+
+            Systems_Foul foul = _penalties.CheckPreSnap();
+
+            if (!foul.IsNone)
+            {
+                KillBeforeTheSnap(foul);
+                return;
+            }
+
+            if (_play.PreSnapTick < Systems_SimConstants.PRESNAP_TICKS)
+            {
+                return;
+            }
+
+            if (_play.Kind != Systems_PlayKind.Kickoff && _discipline.IsDelayOfGame())
+            {
+                KillBeforeTheSnap(new Systems_Foul(
+                    Systems_FoulType.DelayOfGame, Systems_TeamSide.Offense,
+                    Systems_Formation.QUARTERBACK_SLOT_INDEX, _play.LineOfScrimmageY, 0));
+                return;
+            }
+
+            _play.Snap();
+        }
+
+        private void KillBeforeTheSnap(Systems_Foul foul)
+        {
+            _play.RecordFoul(foul);
+            EndPlay(
+                Systems_PlayOutcome.DeadBallFoul,
+                new Vector2(0f, _play.LineOfScrimmageY),
+                Systems_TeamSide.Offense);
+        }
+
+        // =====================================================================
+        // Clock plays and kicks
+        // =====================================================================
+
+        /// <summary>
+        /// A kneel-down is over once the quarterback is on a knee; a spike once the
+        /// ball hits the turf. Returns whether the play ended.
+        /// </summary>
+        private bool TickClockPlay()
+        {
+            if (_play.Kind == Systems_PlayKind.KneelDown
+                && _play.PhysicsTick >= Systems_GameRules.KNEEL_TICKS)
+            {
+                Systems_IPlayerHandle quarterback = CurrentCarrier();
+
+                if (quarterback != null)
+                {
+                    _play.SetBallY(quarterback.Position.y);
+                    EndMapped(Systems_PlayOutcome.Downed, quarterback.Position, quarterback.Side);
+                    return true;
+                }
+            }
+
+            if (_play.Kind == Systems_PlayKind.Spike
+                && _play.PhysicsTick >= Systems_GameRules.SPIKE_TICKS
+                && _ball.IsHeld)
+            {
+                Systems_IPlayerHandle quarterback = CurrentCarrier();
+
+                if (quarterback != null)
+                {
+                    EndFromBall(_ballSystem.Spike(quarterback));
+                    return true;
+                }
+            }
+
+            return false;
         }
 
         /// <summary>
-        /// A punt is always a punt. Whether a field goal goes in is the kick model's
-        /// call — see Systems_IKickModel for why that stopped being a bare
-        /// comparison against Systems_GameRules.FIELD_GOAL_MAX_YARDS. In Training the
-        /// model is the deterministic one and this computes exactly what it used to.
+        /// The kicks are timed from the snap, as a real operation is: the kickoff
+        /// after the kicker's approach, the punt after the long snap and the drop,
+        /// the placekick after the snap and the hold. Whoever is holding the ball
+        /// for it then is the kicker — a fake that has already pitched it does not
+        /// kick.
         /// </summary>
-        private Systems_PlayOutcome KickOutcome(Systems_PlayCall call)
+        private void TickKick()
         {
-            if (call == Systems_PlayCall.Punt)
+            if (!_play.Kind.IsKick() || _play.WasKicked || !_ball.IsHeld)
             {
-                return Systems_PlayOutcome.Punt;
+                return;
             }
 
-            float yardsToGoalLine =
-                (Systems_FieldModel.ATTACKING_GOAL_LINE_Y - _play.LineOfScrimmageY)
-                / Systems_FieldModel.YARD;
+            if (_ball.CarrierId != Systems_Formation.QUARTERBACK_SLOT_INDEX)
+            {
+                return;
+            }
 
-            float attempt = yardsToGoalLine + Systems_GameRules.FIELD_GOAL_SNAP_YARDS;
+            if (_play.PhysicsTick < OperationTicks(_play.Kind))
+            {
+                return;
+            }
 
-            return _kickModel.IsFieldGoalGood(attempt)
-                ? Systems_PlayOutcome.FieldGoalGood
-                : Systems_PlayOutcome.FieldGoalMissed;
+            Systems_IPlayerHandle kicker = CurrentCarrier();
+
+            // Past the line he cannot kick it; he is a runner now.
+            if (kicker == null || kicker.Position.y > _play.LineOfScrimmageY)
+            {
+                return;
+            }
+
+            _ballSystem.Kick(kicker);
         }
+
+        private static int OperationTicks(Systems_PlayKind kind)
+        {
+            switch (kind)
+            {
+                case Systems_PlayKind.Kickoff:
+                    return Systems_SimConstants.KICKOFF_RUNUP_TICKS;
+
+                case Systems_PlayKind.Punt:
+                    return Systems_SimConstants.PUNT_OPERATION_TICKS;
+
+                default:
+                    return Systems_SimConstants.PLACEKICK_OPERATION_TICKS;
+            }
+        }
+
+        // =====================================================================
+        // The carrier
+        // =====================================================================
 
         private void EvaluateCarrier()
         {
@@ -185,61 +340,48 @@ namespace PoFootball.Systems
 
             Vector2 position = carrier.Position;
 
-            if (_field.HasScored(position.y))
+            if (HasScored(carrier.Side, position.y))
             {
                 _scorePublisher.Publish(new Systems_ScoreMessage(carrier.Id, _play.NetYards));
-                EndPlay(Systems_PlayOutcome.Touchdown, position);
+                EndPlay(Systems_PlayOutcome.Touchdown, position, carrier.Side);
                 return;
             }
 
             if (_field.IsOutsideSidelines(position.x)
-                || _field.HasExitedOwnEndZone(position.y))
+                || position.y <= Systems_FieldModel.OWN_BACK_LINE_Y
+                || position.y >= Systems_FieldModel.ATTACKING_BACK_LINE_Y)
             {
-                EndPlay(Systems_PlayOutcome.OutOfBounds, position);
+                EndCarrierDown(carrier, position, Systems_PlayOutcome.OutOfBounds);
+                return;
+            }
+
+            if (TrackForwardProgress(carrier))
+            {
                 return;
             }
 
             // A CARRIER NOBODY HAS TACKLED IS A LIVE PLAY, AND THE CLOCK MUST NOT
-            // TAKE HIM DOWN.
+            // TAKE HIM DOWN. The backstop measures whether the play has STOPPED,
+            // not how long it has lasted: a carrier moving at a real pace keeps the
+            // down alive indefinitely.
             //
-            // This used to be a flat `PhysicsTick >= MAX_PHYSICS_TICKS`, which ended
-            // the down on a fixed timer regardless of what was happening on the
-            // field. Watching a game on a phone, that reads exactly as reported: a
-            // back breaks into open field, nobody is near him, and the whistle goes
-            // for no visible reason. Systems_PlayModel's own comments had already
-            // circled this three times — 330 ticks clipped 34 of 80 plays, 500
-            // clipped 28 of 74, 600 was the third guess — and reached the right
-            // conclusion without acting on it: "the cap is a backstop, not a balance
-            // lever" and "getting plays to actually END is tackling's job."
+            // Since revision 14 it is only for a carrier with NOBODY near him. A
+            // pile that is not moving is down by forward progress, above, which is
+            // the call an official makes; the stall rule used to end that too, under
+            // the name TimeExpired, which is not. What is left is a carrier standing
+            // still in space — he has given himself up, as a quarterback who takes a
+            // knee or slides does — and that is Downed.
             //
-            // So the backstop now measures the thing it was always pretending to
-            // measure: whether the play has STOPPED, not how long it has lasted. A
-            // carrier moving at a real pace keeps the down alive indefinitely; only
-            // once the ball has been effectively stationary for STALL_TICKS does the
-            // whistle go, which is a genuinely dead ball — a pile that is not moving,
-            // or a quarterback standing behind the line with nobody open.
-            //
-            // SPEED, NOT FORWARD PROGRESS, is the test on purpose. A quarterback
-            // scrambling backwards out of a collapsing pocket and a back bouncing a
-            // run outside are both live football and neither gains a yard while it
-            // is happening; ending those on a progress rule would be the same defect
-            // wearing a better disguise.
             // A QUARTERBACK STANDING IN THE POCKET IS NOT A DEAD BALL. He is under
-            // STALL_SPEED by definition — scanning is standing still — and without
-            // this the whistle would go at 1.2 s while the throw is legal until
-            // THROW_WINDOW_TICKS, which is 5 s. That would not have looked like a
-            // fix; it would have replaced "the play ends for no reason" with "the
-            // quarterback can never hold the ball", and the pass game with it.
-            //
-            // Holding the timer at the current tick rather than skipping the check
-            // means the stall clock starts when the window CLOSES, so a quarterback
-            // who stood in the pocket and then breaks contain at tick 255 still gets
-            // his full STALL_TICKS to start running.
-            bool passStillLegal =
+            // STALL_SPEED by definition — scanning is standing still — so the stall
+            // clock is held while the throw is still legal, and a kicker waiting on
+            // his operation is held the same way.
+            bool stillLegalToThrow =
                 carrier.Id == Systems_Formation.QUARTERBACK_SLOT_INDEX
-                && _play.PhysicsTick <= Systems_SimConstants.THROW_WINDOW_TICKS;
+                && (_play.PhysicsTick <= Systems_SimConstants.THROW_WINDOW_TICKS
+                    || (_play.Kind.IsKick() && !_play.WasKicked));
 
-            if (passStillLegal
+            if (stillLegalToThrow
                 || carrier.Velocity.sqrMagnitude
                     >= Systems_SimConstants.STALL_SPEED * Systems_SimConstants.STALL_SPEED)
             {
@@ -249,26 +391,135 @@ namespace PoFootball.Systems
             if (_play.PhysicsTick - _lastCarrierMovingTick
                 >= Systems_SimConstants.STALL_TICKS)
             {
-                EndPlay(Systems_PlayOutcome.TimeExpired, position);
+                // Stopped in a crowd, his progress has been stopped: a tackle, the
+                // way an official whistles a pile that has stopped moving. Stopped
+                // in space, he has given himself up.
+                EndCarrierDown(
+                    carrier, position,
+                    IsOpponentNear(carrier) ? Systems_PlayOutcome.Tackle : Systems_PlayOutcome.Downed);
                 return;
             }
 
             // The absolute ceiling, which exists for the trainer rather than for
-            // football: an episode that never terminates hangs a rollout, and
-            // SCN_TRAIN_FOOTBALL has to be able to reach the do-nothing basin and
-            // climb back out of it without stalling a sweep. It is now reached only
-            // by a play that has genuinely run twelve seconds rather than by every
-            // ordinary down — but it stays at 600, because it also bounds the ratio
-            // between per-tick reward shaping and the terminal reward, and it is
-            // paired with time_horizon in every trainer config. See
-            // Systems_PlayModel.MAX_PHYSICS_TICKS for what raising it broke.
+            // football: an episode that never terminates hangs a rollout. It stays
+            // at 600, because it also bounds the ratio between per-tick reward
+            // shaping and the terminal reward, and it is paired with time_horizon in
+            // every trainer config. See Systems_PlayModel.MAX_PHYSICS_TICKS.
             if (_play.PhysicsTick >= Systems_PlayModel.MAX_PHYSICS_TICKS)
             {
-                EndPlay(Systems_PlayOutcome.TimeExpired, position);
+                EndMapped(Systems_PlayOutcome.TimeExpired, position, carrier.Side);
                 return;
             }
 
             CountPursuitReach(carrier);
+        }
+
+        /// <summary>
+        /// FORWARD PROGRESS (revision 14). A carrier in contact who stops gaining
+        /// ground — less than FORWARD_PROGRESS_GAIN_METRES in FORWARD_PROGRESS_TICKS
+        /// — or is driven back from the furthest point he reached while in it, is
+        /// down, and the ball is spotted where his progress was stopped, not where
+        /// he was pushed back to. Returns whether the whistle went.
+        ///
+        /// MEASURED PER CONTACT STINT. Ground a carrier gave up on his own before
+        /// anybody touched him — a quarterback's dropback, a back bouncing a run
+        /// outside — is not being driven back, so the furthest point is taken from
+        /// when the contact began. And a quarterback in the pocket with the throw
+        /// still on is exempt altogether: he is retreating on purpose, and a rusher
+        /// who has hold of him brings him down by the ordinary wrap-up.
+        /// </summary>
+        private bool TrackForwardProgress(Systems_IPlayerHandle carrier)
+        {
+            Vector2 position = carrier.Position;
+            float progress = carrier.Side == Systems_TeamSide.Offense ? position.y : -position.y;
+
+            if (carrier.Id != _progressCarrierId)
+            {
+                // A new man with the ball — a catch, a handoff, a pick, a pitch. His
+                // forward progress and his stall clock both start now.
+                _progressCarrierId = carrier.Id;
+                _inContactStint = false;
+                _heldUpTicks = 0;
+                _lastCarrierMovingTick = _play.PhysicsTick;
+                return false;
+            }
+
+            bool inContact = _lastContactTick >= 0
+                && _play.PhysicsTick - _lastContactTick <= Systems_SimConstants.CONTACT_GRACE_TICKS;
+
+            bool inThePocket = carrier.Id == Systems_Formation.QUARTERBACK_SLOT_INDEX
+                && _play.Call == Systems_PlayCall.Pass
+                && !_play.ForwardPassThrown
+                && _play.PhysicsTick <= Systems_SimConstants.THROW_WINDOW_TICKS;
+
+            if (!inContact || inThePocket)
+            {
+                _inContactStint = false;
+                _heldUpTicks = 0;
+                return false;
+            }
+
+            if (!_inContactStint)
+            {
+                _inContactStint = true;
+                _furthestProgress = progress;
+                _furthestProgressY = position.y;
+                _heldUpFrom = progress;
+                _heldUpTicks = 0;
+            }
+
+            if (progress > _furthestProgress)
+            {
+                _furthestProgress = progress;
+                _furthestProgressY = position.y;
+            }
+
+            // Real ground gained resets the count; inching does not.
+            if (_furthestProgress > _heldUpFrom + Systems_SimConstants.FORWARD_PROGRESS_GAIN_METRES)
+            {
+                _heldUpFrom = _furthestProgress;
+                _heldUpTicks = 0;
+            }
+
+            _heldUpTicks++;
+
+            bool drivenBack = _furthestProgress - progress
+                >= Systems_SimConstants.FORWARD_PROGRESS_PUSHBACK_METRES;
+
+            if (_heldUpTicks < Systems_SimConstants.FORWARD_PROGRESS_TICKS && !drivenBack)
+            {
+                return false;
+            }
+
+            Vector2 spot = new Vector2(position.x, _furthestProgressY);
+            _play.SetBallY(spot.y);
+
+            int tacklerId = LowestSlotIn(_contactMask);
+
+            _tacklePublisher.Publish(new Systems_TackleMessage(
+                tacklerId, carrier.Id, 0f, _play.NetYards));
+
+            EndCarrierDown(carrier, spot, Systems_PlayOutcome.Tackle);
+            return true;
+        }
+
+        private bool IsOpponentNear(Systems_IPlayerHandle carrier)
+        {
+            float reach = Systems_SimConstants.REACH_TACKLE_RANGE * 2f;
+            float reachSquared = reach * reach;
+
+            for (int slotIndex = 0; slotIndex < Systems_PlayerRegistry.CAPACITY; slotIndex++)
+            {
+                Systems_IPlayerHandle other = _registry.Get(slotIndex);
+
+                if (other != null && other.Side != carrier.Side
+                    && (other.Position - carrier.Position).sqrMagnitude <= reachSquared)
+                {
+                    return true;
+                }
+            }
+
+            return false;
         }
 
         /// <summary>
@@ -341,7 +592,7 @@ namespace PoFootball.Systems
                 CountWrapUpTick(
                     other.Id, (other.Velocity - velocity).magnitude, false);
 
-                if (_play.Phase != Systems_PlayPhase.Live)
+                if (_play.Phase != Systems_PlayPhase.Live || !_ball.IsHeld)
                 {
                     return;
                 }
@@ -395,23 +646,9 @@ namespace PoFootball.Systems
         /// possible at all, and since TACKLE_CLOSING_SPEED was raised to mean a real
         /// collision it is now the ordinary way a down ends rather than the fallback.
         ///
-        /// TWO THINGS HERE USED TO MAKE THE CARRIER FAR TOO HARD TO STOP, and
-        /// together they are most of why a measured game averaged 9.3 yards a play
-        /// against real football's 5.5.
-        ///
-        /// A SECOND TACKLER COUNTED FOR NOTHING. Every defender in contact called in
-        /// on the same tick and the tick guard collapsed them all into one tick of
-        /// contact, so three men wrapping up a back was worth exactly as much as
-        /// one. In real football the second defender is the whole point — a runner
-        /// breaks an arm tackle and is stopped dead by the man arriving behind it.
-        /// Contact is now counted per DISTINCT TACKLER (<see cref="_contactMask"/>)
-        /// and the wrap-up they owe is divided between them, so a gang tackle ends
-        /// the play in a fraction of the time one defender needs.
-        ///
-        /// AND CONTACT HAD TO BE STRICTLY CONSECUTIVE. Two discs colliding push each
-        /// other apart, so a defender who landed a hit bounced off, missed a tick,
-        /// and the run counter reset to one — the carrier shrugged off a tackle that
-        /// had actually been made. A short grace window
+        /// A SECOND TACKLER COUNTS: contact is counted per DISTINCT TACKLER
+        /// (<see cref="_contactMask"/>) and the wrap-up they owe is divided between
+        /// them. AND CONTACT NEED NOT BE STRICTLY CONSECUTIVE: a short grace window
         /// (Systems_SimConstants.CONTACT_GRACE_TICKS) keeps the wrap alive across
         /// the separation the collision impulse itself causes.
         /// </summary>
@@ -467,17 +704,10 @@ namespace PoFootball.Systems
                 ? Systems_SimConstants.SUSTAINED_TACKLE_TICKS
                 : Systems_RoleTable.TackleTicksOf(carrier.Role);
 
-            // Help shortens the wrap-up but does not collapse it. Dividing straight
-            // by the tackler count was MEASURED AND WAS FAR TOO STRONG: three men
-            // arriving cut the requirement to a third, a carrier went down the
-            // instant a crowd formed, and a full game came back at 2.93 yards a play
-            // against real football's 5.5 — with five safeties in it, because the
-            // offense could not get off its own goal line.
-            //
-            // 2n/(n+1) is the gentler curve: two tacklers need two thirds of the
-            // ticks one does, three need a half, and it never falls below half
-            // however many arrive. The second man still matters, which is the whole
-            // point; he just does not end the down by himself.
+            // Help shortens the wrap-up but does not collapse it: 2n/(n+1), so two
+            // tacklers need two thirds of the ticks one does, three need a half, and
+            // it never falls below half however many arrive. Dividing straight by the
+            // count was measured and was far too strong — 2.93 yards a play.
             int tacklers = TacklerCount(_contactMask);
 
             if (tacklers > 1)
@@ -523,9 +753,7 @@ namespace PoFootball.Systems
         /// <summary>
         /// How many opponents have a hand on the carrier RIGHT NOW. The mask is only
         /// meaningful for the tick it was built on, so a tackle arriving by the
-        /// instant-collision path (ReportContactWithCarrier, which never touches the
-        /// mask) reads one — the man who just hit him — rather than a stale count
-        /// from an earlier tick.
+        /// instant-collision path reads one — the man who just hit him.
         /// </summary>
         private int TacklersOnCarrier()
         {
@@ -555,7 +783,20 @@ namespace PoFootball.Systems
             return count;
         }
 
-        /// <summary>A ball in the air cannot be tackled — there is nobody holding it.</summary>
+        private static int LowestSlotIn(uint mask)
+        {
+            for (int slotIndex = 0; slotIndex < Systems_PlayerRegistry.CAPACITY; slotIndex++)
+            {
+                if ((mask & (1u << slotIndex)) != 0u)
+                {
+                    return slotIndex;
+                }
+            }
+
+            return -1;
+        }
+
+        /// <summary>A ball in the air or on the ground cannot be tackled — nobody is holding it.</summary>
         private bool CanBeTackled()
         {
             return _play.Phase == Systems_PlayPhase.Live && _ball.IsHeld;
@@ -575,41 +816,164 @@ namespace PoFootball.Systems
             _tacklePublisher.Publish(
                 new Systems_TackleMessage(tacklerId, carrier.Id, closingSpeed, _play.NetYards));
 
-            // Down on or behind the offense's own goal line is a safety, not a
-            // tackle. Systems_GameFlowSystem derives the same thing independently
-            // from the spot when it awards the two points, so this changes no rule —
-            // it makes the outcome say what happened, which is what lets
-            // Reward_Terminal price it as the disaster it is.
-            //
-            // Safety takes precedence over a strip: a ball coming loose in your own
-            // end zone is a whole rule of its own (the defense recovering it is a
-            // touchdown) and this simulation has no model for it. Two points and the
-            // ball is the right answer and already the worst outcome available.
-            if (spot.y <= Systems_FieldModel.OWN_GOAL_LINE_Y)
+            _penalties.JudgeTackle(tacklerId, carrier, closingSpeed);
+
+            // THE BALL CAN COME OUT, AND SINCE REVISION 14 THE PLAY GOES ON. Through
+            // revision 13 a strip was a whistle — the defense's ball where the tackle
+            // happened — because there was no loose ball to scramble for. There is
+            // now: it is on the ground, live, and either side may fall on it. Even
+            // in the carrier's own end zone, where a defender falling on it is a
+            // touchdown and the carrier's side falling on it is a safety.
+            if (_fumbleModel.IsBallStripped(closingSpeed, TacklersOnCarrier(), carrier.Role))
             {
-                EndPlay(Systems_PlayOutcome.Safety, spot);
+                _ballSystem.Strip(carrier);
+                _contactRunTicks = 0;
+                _contactMask = 0u;
+                _bodyContactInRun = false;
                 return;
             }
 
-            bool stripped = _fumbleModel.IsFumbleLost(
-                closingSpeed, TacklersOnCarrier(), carrier.Role);
-
-            EndPlay(
-                stripped ? Systems_PlayOutcome.FumbleLost : Systems_PlayOutcome.Tackle,
-                spot);
+            EndCarrierDown(carrier, spot, Systems_PlayOutcome.Tackle);
         }
 
-        private void EndPlay(Systems_PlayOutcome outcome, Vector2 spot)
+        // =====================================================================
+        // The whistle
+        // =====================================================================
+
+        /// <summary>
+        /// The carrier is down — tackled, out of bounds, held up, or given himself
+        /// up. In the end zone he is defending that is a safety, unless his side got
+        /// the ball in there off the other side's play (an interception taken in the
+        /// end zone and downed), which is a touchback.
+        /// </summary>
+        private void EndCarrierDown(
+            Systems_IPlayerHandle carrier, Vector2 spot, Systems_PlayOutcome outcome)
+        {
+            Systems_TeamSide side = carrier.Side;
+
+            bool inOwnEndZone = side == Systems_TeamSide.Offense
+                ? spot.y <= Systems_FieldModel.OWN_GOAL_LINE_Y
+                : spot.y >= Systems_FieldModel.ATTACKING_GOAL_LINE_Y;
+
+            if (inOwnEndZone)
+            {
+                bool gainedThereFromTheOtherSide = side == Systems_TeamSide.Defense
+                    && _play.PossessionChanged
+                    && _play.PossessionChangeY >= Systems_FieldModel.ATTACKING_GOAL_LINE_Y;
+
+                if (gainedThereFromTheOtherSide)
+                {
+                    EndPlay(Systems_PlayOutcome.Touchback, spot, side);
+                    return;
+                }
+
+                // A safety: two points for the other side and the ball. Down on or
+                // behind his own goal line, which is what lets Reward_Terminal price
+                // it as the disaster it is.
+                EndPlay(Systems_PlayOutcome.Safety, spot, Opposite(side));
+                return;
+            }
+
+            if (outcome == Systems_PlayOutcome.Tackle && IsSack(carrier, spot))
+            {
+                outcome = Systems_PlayOutcome.Sack;
+            }
+
+            EndMapped(outcome, spot, side);
+        }
+
+        /// <summary>
+        /// The quarterback brought down behind the line on a pass he has not thrown.
+        /// Recorded as its own outcome since revision 14; it was a tackle for loss.
+        /// </summary>
+        private bool IsSack(Systems_IPlayerHandle carrier, Vector2 spot)
+        {
+            return carrier.Role == Systems_PlayerRole.Quarterback
+                && carrier.Side == Systems_TeamSide.Offense
+                && _play.Call == Systems_PlayCall.Pass
+                && !_play.ForwardPassThrown
+                && spot.y < _play.LineOfScrimmageY;
+        }
+
+        /// <summary>
+        /// A whistle the ball system decided. Down-type endings carry the side that
+        /// keeps the ball in their scoring-side slot, and go through the same mapping
+        /// as a carrier going down.
+        /// </summary>
+        private void EndFromBall(Systems_BallEvent ballEvent)
+        {
+            switch (ballEvent.Outcome)
+            {
+                case Systems_PlayOutcome.Tackle:
+                case Systems_PlayOutcome.OutOfBounds:
+                    _play.SetBallY(ballEvent.Spot.y);
+                    EndMapped(ballEvent.Outcome, ballEvent.Spot, ballEvent.ScoringSide);
+                    return;
+
+                case Systems_PlayOutcome.Touchdown:
+                    _scorePublisher.Publish(new Systems_ScoreMessage(-1, _play.NetYards));
+                    EndPlay(ballEvent.Outcome, ballEvent.Spot, ballEvent.ScoringSide);
+                    return;
+
+                case Systems_PlayOutcome.Punt:
+                case Systems_PlayOutcome.Kickoff:
+                case Systems_PlayOutcome.KickBlocked:
+                case Systems_PlayOutcome.FieldGoalMissed:
+                case Systems_PlayOutcome.Touchback:
+                    _play.SetBallY(ballEvent.Spot.y);
+                    EndPlay(ballEvent.Outcome, ballEvent.Spot, ballEvent.ScoringSide);
+                    return;
+
+                default:
+                    EndPlay(ballEvent.Outcome, ballEvent.Spot, ballEvent.ScoringSide);
+                    return;
+            }
+        }
+
+        /// <summary>
+        /// A down-type ending — tackle, out of bounds, given up, sacked, the trainer's
+        /// ceiling — with the defense of the snap holding the ball is not a tackle
+        /// for the offense: it is however the defense got it, ended at this spot.
+        /// </summary>
+        private void EndMapped(
+            Systems_PlayOutcome outcome, Vector2 spot, Systems_TeamSide holder)
+        {
+            if (holder == Systems_TeamSide.Defense && _play.PossessionChanged)
+            {
+                outcome = _play.ReturnOutcome;
+            }
+
+            EndPlay(outcome, spot, holder);
+        }
+
+        private void EndPlay(Systems_PlayOutcome outcome, Vector2 spot, Systems_TeamSide side)
         {
             Vector2 clampedSpot = _field.ClampToField(spot);
             int ticks = _play.PhysicsTick;
             float netYards = _play.NetYards;
 
-            _play.EndPlay(outcome, clampedSpot);
+            _play.EndPlay(outcome, clampedSpot, side);
 
             _endedPublisher.Publish(
                 new Systems_PlayEndedMessage(
-                    outcome, _play.Call, clampedSpot, netYards, ticks, _play.PassCompleted));
+                    outcome, _play.Call, clampedSpot, netYards, ticks, _play.PassCompleted,
+                    _play.Kind, side, _play.PossessionChanged,
+                    _play.PossessionChangeY, _play.FoulCount));
+        }
+
+        /// <summary>Whether a carrier on this side at this Y has crossed the goal line he attacks.</summary>
+        private static bool HasScored(Systems_TeamSide side, float y)
+        {
+            return side == Systems_TeamSide.Offense
+                ? y >= Systems_FieldModel.ATTACKING_GOAL_LINE_Y
+                : y <= Systems_FieldModel.OWN_GOAL_LINE_Y;
+        }
+
+        private static Systems_TeamSide Opposite(Systems_TeamSide side)
+        {
+            return side == Systems_TeamSide.Offense
+                ? Systems_TeamSide.Defense
+                : Systems_TeamSide.Offense;
         }
     }
 }

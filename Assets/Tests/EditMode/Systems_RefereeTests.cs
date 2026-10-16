@@ -56,6 +56,8 @@ namespace PoFootball.Tests
             public void SetTeamColor(Color color)
             {
             }
+
+            public void Nudge(Vector2 velocity) => Velocity = velocity;
         }
 
         /// <summary>
@@ -100,6 +102,53 @@ namespace PoFootball.Tests
                 LastWrapUpWasArmOnly = armOnly;
                 return WrapUpRolls > WrapUpsToBreak;
             }
+
+            // Revision 14. Every kick goes exactly where it is aimed, nothing is
+            // blocked or muffed or dropped, and a loose ball is fallen on at once —
+            // the rules, without the luck. Tests that want the luck set these.
+            public float KickDistanceYards = -1f;
+
+            public bool KickBlocked;
+
+            public bool KickMuffed;
+
+            public bool LooseBallRecovered = true;
+
+            public bool LateralCaught = true;
+
+            public Systems_KickDraw DrawKick(Systems_PlayKind kind, bool onside)
+            {
+                float distance = KickDistanceYards;
+
+                if (distance < 0f)
+                {
+                    distance = kind == Systems_PlayKind.Punt
+                        ? Systems_SimConstants.PUNT_DISTANCE_YARDS
+                        : kind == Systems_PlayKind.Kickoff
+                            ? (onside
+                                ? Systems_SimConstants.ONSIDE_DISTANCE_YARDS
+                                : Systems_SimConstants.KICKOFF_DISTANCE_YARDS)
+                            : Systems_SimConstants.KICKER_CARRY_YARDS;
+                }
+
+                float hang = kind == Systems_PlayKind.Punt
+                    ? Systems_SimConstants.PUNT_HANG_SECONDS
+                    : onside
+                        ? Systems_SimConstants.ONSIDE_HANG_SECONDS
+                        : Systems_SimConstants.KICKOFF_HANG_SECONDS;
+
+                return new Systems_KickDraw(distance, hang, 0f);
+            }
+
+            public bool IsKickBlocked() => KickBlocked;
+
+            public bool IsKickMuffed(bool pressured) => KickMuffed;
+
+            public bool IsLooseBallRecovered() => LooseBallRecovered;
+
+            public bool IsLateralCaught() => LateralCaught;
+
+            public float ScatterRadians(float maxDegrees) => 0f;
         }
 
         private StubSkill _skill;
@@ -113,6 +162,7 @@ namespace PoFootball.Tests
         private StubPublisher<Systems_PassThrownMessage> _thrown;
         private StubPublisher<Systems_PassCaughtMessage> _caught;
         private Systems_Referee _referee;
+        private Systems_PenaltySystem _penalties;
         private StubPlayer _quarterback;
 
         [SetUp]
@@ -150,24 +200,25 @@ namespace PoFootball.Tests
             _tackled = new StubPublisher<Systems_TackleMessage>();
             _scored = new StubPublisher<Systems_ScoreMessage>();
 
-            // The DETERMINISTIC model, deliberately: these tests pin the kicking
-            // rules a policy is fitted against, and a sampled curve would make them
-            // flaky for no gain. Systems_ProbabilisticKickModel is a Game-mode
-            // concern — see Systems_IKickModel.
-            // Same reasoning for the fumble model: the deterministic one is a pure
-            // function of the hit, so a tackle test cannot randomly become a
-            // turnover. Systems_ProbabilisticFumbleModel is Game-mode only.
+            // The DETERMINISTIC fumble model, deliberately: it is a pure function
+            // of the hit, so a tackle test cannot randomly become a turnover.
+            // Systems_ProbabilisticFumbleModel is Game-mode only. The same goes for
+            // the pre-snap discipline model — nobody ever jumps here.
+            _penalties = new Systems_PenaltySystem(_play, _ball, _registry);
+            _penalties.BeginPlay();
+
             _referee = new Systems_Referee(
                 _play, _ball, _ballSystem, new Systems_FieldModel(), _registry,
-                new Systems_DeterministicKickModel(),
                 new Systems_DeterministicFumbleModel(),
                 _skill,
+                _penalties,
+                new Systems_NoDisciplineModel(),
                 _ended, _tackled, _scored);
 
             _play.BeginEpisode(0f, _quarterback.Position.y, 1, Systems_GameRules.YARDS_TO_GAIN);
             _play.Snap();
             _quarterback.SetCarrier(true);
-            _ball.AttachTo(Systems_Formation.QUARTERBACK_SLOT_INDEX, _quarterback.Position);
+            _ball.ResetForSnap(Systems_Formation.QUARTERBACK_SLOT_INDEX, _quarterback.Position);
             _referee.ResetContactTracking();
         }
 
@@ -275,7 +326,10 @@ namespace PoFootball.Tests
 
             _ballSystem.Throw(_quarterback, Vector2.up, 0f);
 
-            for (int tick = 0; tick < 60; tick++)
+            // Since revision 14 the pick is returned; this safety stands still with
+            // nobody near him, so he gives himself up a moment later — and the play
+            // is reported as the interception it was.
+            for (int tick = 0; tick < 200; tick++)
             {
                 _referee.FixedTick();
                 if (_play.Phase == Systems_PlayPhase.Dead)
@@ -628,10 +682,46 @@ namespace PoFootball.Tests
 
         // --- Boundaries and clock --------------------------------------------
 
-        /// <summary>Acceptance criterion #6.</summary>
+        /// <summary>
+        /// Revision 14: a carrier standing still with nobody near him has given
+        /// himself up — down where he is, the way a quarterback who takes a knee is.
+        /// It used to run to the trainer's ceiling and be called TimeExpired.
+        /// </summary>
+        [Test]
+        public void AStationaryCarrierWithADefenderOnHim_IsDownWhereHeStopped()
+        {
+            StubPlayer hovering = (StubPlayer)_registry.Get(Systems_PlayerRegistry.CAPACITY - 1);
+            hovering.Position = _quarterback.Position + new Vector2(2.5f, 0f);
+
+            for (int tick = 0; tick < Systems_PlayModel.MAX_PHYSICS_TICKS; tick++)
+            {
+                _referee.FixedTick();
+            }
+
+            Assert.That(_play.Outcome, Is.EqualTo(Systems_PlayOutcome.Tackle));
+        }
+
+        [Test]
+        public void AStationaryCarrierWithNobodyNear_GivesHimselfUp()
+        {
+            for (int tick = 0; tick < Systems_PlayModel.MAX_PHYSICS_TICKS; tick++)
+            {
+                _referee.FixedTick();
+            }
+
+            Assert.That(_play.Outcome, Is.EqualTo(Systems_PlayOutcome.Downed));
+        }
+
+        /// <summary>
+        /// Acceptance criterion #6. A carrier who keeps moving with nobody laying a
+        /// hand on him is a live play, and only the trainer's ceiling ends it.
+        /// </summary>
         [Test]
         public void RunningOutTheClock_EndsAsTimeExpired()
         {
+            MoveEveryoneFarAway();
+            _quarterback.Velocity = new Vector2(Systems_SimConstants.STALL_SPEED * 2f, 0f);
+
             for (int tick = 0; tick < Systems_PlayModel.MAX_PHYSICS_TICKS; tick++)
             {
                 _referee.FixedTick();
@@ -954,6 +1044,497 @@ namespace PoFootball.Tests
             {
                 _referee.FixedTick();
             }
+        }
+
+        // =====================================================================
+        // Revision 14: returns, the loose ball, kicks, pitches, forward progress,
+        // grounding and the pre-snap
+        // =====================================================================
+
+        private StubPlayer Player(int slot)
+        {
+            return (StubPlayer)_registry.Get(slot);
+        }
+
+        /// <summary>Ticks the referee until the play is dead or the budget runs out.</summary>
+        private void RunUntilDead(int budget = Systems_PlayModel.MAX_PHYSICS_TICKS)
+        {
+            for (int tick = 0; tick < budget && _play.Phase != Systems_PlayPhase.Dead; tick++)
+            {
+                _referee.FixedTick();
+            }
+        }
+
+        /// <summary>
+        /// Begins a kicking snap: the quarterback, the kicker, set at his depth, the
+        /// ball in his hands, everyone else far away unless the test moves them.
+        /// </summary>
+        private void BeginKick(Systems_PlayKind kind, float lineOfScrimmageY, float kickerDepthMetres)
+        {
+            MoveEveryoneFarAway();
+
+            _quarterback.Position = new Vector2(0f, lineOfScrimmageY - kickerDepthMetres);
+
+            if (kind == Systems_PlayKind.Punt)
+            {
+                _play.BeginEpisode(
+                    lineOfScrimmageY, _quarterback.Position.y,
+                    Systems_GameRules.DOWNS_PER_SERIES, 8f);
+                _play.LatchCall(Systems_PlayCall.Punt);
+                Assert.That(_play.Kind, Is.EqualTo(Systems_PlayKind.Punt), "test premise");
+            }
+            else
+            {
+                _play.BeginEpisode(
+                    lineOfScrimmageY, _quarterback.Position.y, 1,
+                    Systems_GameRules.YARDS_TO_GAIN, kind, false);
+            }
+
+            _play.Snap();
+            _quarterback.SetCarrier(true);
+            _ball.ResetForSnap(Systems_Formation.QUARTERBACK_SLOT_INDEX, _quarterback.Position);
+            _referee.ResetContactTracking();
+        }
+
+        [Test]
+        public void AnInterception_IsReturnedRatherThanWhistled()
+        {
+            _quarterback.Position = Vector2.zero;
+            MoveEveryoneFarAway();
+
+            Player(6).Position = new Vector2(0f, 20f);
+            StubPlayer safety = Player(20);
+            safety.Position = new Vector2(0f, 6f);
+
+            _ballSystem.Throw(_quarterback, Vector2.up, 0f);
+
+            for (int tick = 0; tick < 60 && !_ball.IsHeld; tick++)
+            {
+                _referee.FixedTick();
+            }
+
+            Assert.That(_ball.IsHeld, Is.True, "test premise: the safety caught it");
+            Assert.That(_play.Phase, Is.EqualTo(Systems_PlayPhase.Live), "a pick is a return now");
+            Assert.That(_ball.PossessingSide, Is.EqualTo(Systems_TeamSide.Defense));
+            Assert.That(_play.PossessionChanged, Is.True);
+            Assert.That(_play.ReturnOutcome, Is.EqualTo(Systems_PlayOutcome.Interception));
+
+            // And he takes it all the way back the other way.
+            safety.Position = new Vector2(0f, Systems_FieldModel.OWN_GOAL_LINE_Y - 0.5f);
+            _referee.FixedTick();
+
+            Assert.That(_play.Outcome, Is.EqualTo(Systems_PlayOutcome.Touchdown));
+            Assert.That(_play.ScoringSide, Is.EqualTo(Systems_TeamSide.Defense));
+        }
+
+        [Test]
+        public void AReturnerDownedShortOfAScore_IsTheInterceptionWhereHeWentDown()
+        {
+            _quarterback.Position = Vector2.zero;
+            MoveEveryoneFarAway();
+
+            Player(6).Position = new Vector2(0f, 20f);
+            StubPlayer safety = Player(20);
+            safety.Position = new Vector2(0f, 6f);
+
+            _ballSystem.Throw(_quarterback, Vector2.up, 0f);
+
+            for (int tick = 0; tick < 60 && !_ball.IsHeld; tick++)
+            {
+                _referee.FixedTick();
+            }
+
+            // Run back to midfield and met head-on there by the receiver.
+            safety.Position = new Vector2(0f, -10f);
+            Player(6).Position = new Vector2(0f, -10.8f);
+            _referee.FixedTick();
+            _referee.ReportContactWithCarrier(6, Systems_SimConstants.TACKLE_CLOSING_SPEED + 1f);
+
+            Assert.That(_play.Outcome, Is.EqualTo(Systems_PlayOutcome.Interception));
+            Assert.That(_play.DeadBallSpot.y, Is.EqualTo(-10f).Within(0.1f));
+        }
+
+        [Test]
+        public void AStrippedBall_IsLooseAndTheOffenseCanFallOnIt()
+        {
+            _quarterback.Position = Vector2.zero;
+            MoveEveryoneFarAway();
+
+            _ballSystem.Strip(_quarterback);
+
+            Assert.That(_ball.IsLoose, Is.True);
+            Assert.That(_quarterback.IsCarrier, Is.False);
+
+            // The man who lost it is knocked away from it.
+            _quarterback.Position = new Vector2(0f, -30f);
+
+            StubPlayer lineman = Player(2);
+            _referee.FixedTick();
+            lineman.Position = _ball.Position;
+            _referee.FixedTick();
+
+            Assert.That(_ball.IsHeld, Is.True);
+            Assert.That(_ball.CarrierId, Is.EqualTo(2));
+            Assert.That(_play.Phase, Is.EqualTo(Systems_PlayPhase.Live));
+            Assert.That(_play.PossessionChanged, Is.False);
+        }
+
+        [Test]
+        public void ALooseBallTheDefenseFallsOn_IsItsToReturn()
+        {
+            _quarterback.Position = Vector2.zero;
+            MoveEveryoneFarAway();
+
+            _ballSystem.Strip(_quarterback);
+            _quarterback.Position = new Vector2(0f, -30f);
+            _referee.FixedTick();
+
+            StubPlayer linebacker = Player(16);
+            linebacker.Position = _ball.Position;
+            _referee.FixedTick();
+
+            Assert.That(_ball.CarrierId, Is.EqualTo(16));
+            Assert.That(_play.PossessionChanged, Is.True);
+            Assert.That(_play.ReturnOutcome, Is.EqualTo(Systems_PlayOutcome.FumbleLost));
+        }
+
+        [Test]
+        public void ABallTheOffenseKnocksOutTheBackOfItsOwnEndZone_IsASafety()
+        {
+            MoveEveryoneFarAway();
+            _quarterback.Position = new Vector2(0f, -100f);
+            _quarterback.SetCarrier(false);
+
+            _ball.MakeLoose(
+                new Vector2(0f, Systems_FieldModel.OWN_BACK_LINE_Y + 0.02f),
+                new Vector2(0f, -3f),
+                Systems_TeamSide.Offense);
+
+            _referee.FixedTick();
+
+            Assert.That(_play.Outcome, Is.EqualTo(Systems_PlayOutcome.Safety));
+            Assert.That(_play.ScoringSide, Is.EqualTo(Systems_TeamSide.Defense));
+        }
+
+        [Test]
+        public void APunt_LeavesTheFootAtItsOperationTime()
+        {
+            BeginKick(Systems_PlayKind.Punt, 0f, Systems_SimConstants.PUNT_DEPTH_YARDS * Systems_FieldModel.YARD);
+
+            for (int tick = 0; tick < Systems_SimConstants.PUNT_OPERATION_TICKS - 1; tick++)
+            {
+                _referee.FixedTick();
+            }
+
+            Assert.That(_ball.IsHeld, Is.True, "not before the operation time");
+
+            _referee.FixedTick();
+            _referee.FixedTick();
+
+            Assert.That(_ball.IsKicked, Is.True);
+            Assert.That(_play.WasKicked, Is.True);
+        }
+
+        [Test]
+        public void AnUnfieldedPunt_TouchedByTheCoverTeam_IsTheReceiversBallThere()
+        {
+            BeginKick(Systems_PlayKind.Punt, -20f, Systems_SimConstants.PUNT_DEPTH_YARDS * Systems_FieldModel.YARD);
+
+            for (int tick = 0; tick < 400 && !_ball.IsLoose && _play.Phase == Systems_PlayPhase.Live; tick++)
+            {
+                _referee.FixedTick();
+            }
+
+            Assert.That(_ball.IsLoose, Is.True, "test premise: the punt landed and nobody fielded it");
+
+            Player(6).Position = _ball.Position;
+            RunUntilDead(10);
+
+            Assert.That(_play.Outcome, Is.EqualTo(Systems_PlayOutcome.Punt));
+            Assert.That(_play.ScoringSide, Is.EqualTo(Systems_TeamSide.Defense), "the receivers' ball");
+        }
+
+        [Test]
+        public void APuntFieldedWithACoverManOnHim_IsAFairCatch()
+        {
+            BeginKick(Systems_PlayKind.Punt, -20f, Systems_SimConstants.PUNT_DEPTH_YARDS * Systems_FieldModel.YARD);
+
+            // Where an unblocked punt of the stub's length comes down.
+            float landingY = _quarterback.Position.y
+                + (Systems_SimConstants.PUNT_DISTANCE_YARDS * Systems_FieldModel.YARD);
+
+            StubPlayer returner = Player(20);
+            returner.Position = new Vector2(0f, landingY - 1f);
+            Player(6).Position = new Vector2(2f, landingY - 2f);
+
+            RunUntilDead(400);
+
+            Assert.That(_play.Outcome, Is.EqualTo(Systems_PlayOutcome.Punt));
+            Assert.That(_play.DeadBallSpot.y, Is.EqualTo(returner.Position.y).Within(0.1f));
+        }
+
+        [Test]
+        public void AFieldGoalStraightDownTheMiddle_IsGood()
+        {
+            float lineOfScrimmage = Systems_FieldModel.ATTACKING_GOAL_LINE_Y
+                - (20f * Systems_FieldModel.YARD);
+
+            BeginKick(
+                Systems_PlayKind.ExtraPoint, lineOfScrimmage,
+                Systems_SimConstants.PLACEKICK_DEPTH_YARDS * Systems_FieldModel.YARD);
+
+            RunUntilDead();
+
+            Assert.That(_play.Outcome, Is.EqualTo(Systems_PlayOutcome.FieldGoalGood));
+        }
+
+        [Test]
+        public void AFieldGoalBeyondTheKickersLeg_IsNoGood()
+        {
+            _skill.KickDistanceYards = 30f;
+
+            float lineOfScrimmage = Systems_FieldModel.ATTACKING_GOAL_LINE_Y
+                - (35f * Systems_FieldModel.YARD);
+
+            BeginKick(
+                Systems_PlayKind.ExtraPoint, lineOfScrimmage,
+                Systems_SimConstants.PLACEKICK_DEPTH_YARDS * Systems_FieldModel.YARD);
+
+            RunUntilDead();
+
+            Assert.That(_play.Outcome, Is.EqualTo(Systems_PlayOutcome.FieldGoalMissed));
+        }
+
+        [Test]
+        public void ARusherOnTheKick_CanBlockIt()
+        {
+            _skill.KickBlocked = true;
+
+            BeginKick(
+                Systems_PlayKind.ExtraPoint, 30f,
+                Systems_SimConstants.PLACEKICK_DEPTH_YARDS * Systems_FieldModel.YARD);
+
+            // The rusher arrives as the ball is kicked — any earlier and he would
+            // simply tackle the kicker.
+            for (int tick = 0; tick < Systems_SimConstants.PLACEKICK_OPERATION_TICKS - 1; tick++)
+            {
+                _referee.FixedTick();
+            }
+
+            Player(11).Position = _quarterback.Position
+                + new Vector2(0f, Systems_SimConstants.KICK_BLOCK_REACH);
+
+            _referee.FixedTick();
+            _referee.FixedTick();
+
+            Assert.That(_play.KickWasBlocked, Is.True);
+            Assert.That(_ball.IsLoose || _ball.IsHeld, Is.True, "a blocked kick is a live ball");
+        }
+
+        [Test]
+        public void AKickoffIntoTheEndZone_IsATouchback()
+        {
+            _skill.KickDistanceYards = 70f;
+
+            float ownThirtyFive = Systems_FieldModel.OWN_GOAL_LINE_Y
+                + (Systems_GameRules.KICKOFF_YARD_LINE * Systems_FieldModel.YARD);
+
+            BeginKick(Systems_PlayKind.Kickoff, ownThirtyFive, 0.3f);
+            RunUntilDead();
+
+            Assert.That(_play.Outcome, Is.EqualTo(Systems_PlayOutcome.Touchback));
+        }
+
+        [Test]
+        public void APitchToATrailingTeamMate_KeepsThePlayAlive()
+        {
+            _quarterback.Position = Vector2.zero;
+            MoveEveryoneFarAway();
+
+            StubPlayer halfback = Player(Systems_Formation.HALFBACK_SLOT_INDEX);
+            halfback.Position = new Vector2(-3f, -2f);
+
+            Assert.That(_ballSystem.TryLateral(_quarterback, Vector2.zero), Is.True);
+
+            for (int tick = 0; tick < 40 && !_ball.IsHeld; tick++)
+            {
+                _referee.FixedTick();
+            }
+
+            Assert.That(_ball.IsHeld, Is.True);
+            Assert.That(_ball.CarrierId, Is.EqualTo(Systems_Formation.HALFBACK_SLOT_INDEX));
+            Assert.That(_play.Phase, Is.EqualTo(Systems_PlayPhase.Live));
+        }
+
+        [Test]
+        public void ADroppedPitch_IsALiveBall()
+        {
+            _skill.LateralCaught = false;
+            _quarterback.Position = Vector2.zero;
+            MoveEveryoneFarAway();
+
+            Player(Systems_Formation.HALFBACK_SLOT_INDEX).Position = new Vector2(-3f, -2f);
+
+            _ballSystem.TryLateral(_quarterback, Vector2.zero);
+
+            for (int tick = 0; tick < 40 && _ball.IsInFlight; tick++)
+            {
+                _referee.FixedTick();
+            }
+
+            Assert.That(_ball.IsLoose, Is.True);
+            Assert.That(_play.Phase, Is.EqualTo(Systems_PlayPhase.Live), "not an incompletion");
+        }
+
+        [Test]
+        public void NobodyAheadOfTheCarrier_CanBePitchedTo()
+        {
+            _quarterback.Position = Vector2.zero;
+            MoveEveryoneFarAway();
+
+            Player(Systems_Formation.HALFBACK_SLOT_INDEX).Position = new Vector2(1f, 4f);
+
+            Assert.That(_ballSystem.TryLateral(_quarterback, Vector2.zero), Is.False);
+            Assert.That(_ball.IsHeld, Is.True);
+        }
+
+        [Test]
+        public void ACarrierHeldUpInContact_IsDownByForwardProgress()
+        {
+            _skill.WrapUpsToBreak = 100000;
+            MoveEveryoneFarAway();
+
+            StubPlayer back = Player(Systems_Formation.HALFBACK_SLOT_INDEX);
+            back.Position = new Vector2(0f, 3f);
+            _quarterback.SetCarrier(false);
+            back.SetCarrier(true);
+            _ball.AttachTo(back.Id, back.Position, Systems_TeamSide.Offense);
+            _play.LatchCall(Systems_PlayCall.HandoffHalfback);
+
+            StubPlayer linebacker = Player(16);
+            linebacker.Position = new Vector2(0f, 3.9f);
+
+            for (int tick = 0; tick < 200 && _play.Phase == Systems_PlayPhase.Live; tick++)
+            {
+                _referee.FixedTick();
+
+                if (_play.Phase == Systems_PlayPhase.Live)
+                {
+                    _referee.ReportSustainedContact(16, 0.5f);
+                }
+            }
+
+            Assert.That(_play.Outcome, Is.EqualTo(Systems_PlayOutcome.Tackle));
+            Assert.That(_play.DeadBallSpot.y, Is.EqualTo(3f).Within(0.1f));
+            Assert.That(
+                _play.PhysicsTick,
+                Is.LessThan(Systems_SimConstants.FORWARD_PROGRESS_TICKS + 10),
+                "forward progress, not the ceiling");
+        }
+
+        [Test]
+        public void AThrowAtNobodyFromThePocket_IsIntentionalGrounding()
+        {
+            _quarterback.Position = new Vector2(0f, -5f);
+            MoveEveryoneFarAway();
+            _play.LatchCall(Systems_PlayCall.Pass);
+
+            _ballSystem.Throw(_quarterback, Vector2.right, 1f);
+            RunUntilDead(200);
+
+            Assert.That(_play.Outcome, Is.EqualTo(Systems_PlayOutcome.Incompletion));
+            Assert.That(_play.HasFoul(Systems_TeamSide.Offense, Systems_FoulType.IntentionalGrounding), Is.True);
+        }
+
+        [Test]
+        public void AThrowawayFromOutsideTheBoxPastTheLine_IsLegal()
+        {
+            _quarterback.Position = new Vector2(
+                Systems_SimConstants.TACKLE_BOX_HALF_WIDTH + 2f, -2f);
+            MoveEveryoneFarAway();
+            _play.LatchCall(Systems_PlayCall.Pass);
+
+            _ballSystem.Throw(_quarterback, new Vector2(1f, 1f), 1f);
+            RunUntilDead(200);
+
+            Assert.That(_play.Outcome, Is.EqualTo(Systems_PlayOutcome.Incompletion));
+            Assert.That(_play.FoulCount, Is.Zero);
+        }
+
+        [Test]
+        public void TheQuarterbackDownedBehindTheLineBeforeHeThrows_IsASack()
+        {
+            _quarterback.Position = new Vector2(0f, -5f);
+            MoveEveryoneFarAway();
+            _play.LatchCall(Systems_PlayCall.Pass);
+
+            Player(11).Position = new Vector2(0f, -4.2f);
+            _referee.FixedTick();
+            _referee.ReportContactWithCarrier(11, Systems_SimConstants.TACKLE_CLOSING_SPEED + 1f);
+
+            Assert.That(_play.Outcome, Is.EqualTo(Systems_PlayOutcome.Sack));
+        }
+
+        [Test]
+        public void AnOffensivePlayerMovingBeforeTheSnap_IsAFalseStart()
+        {
+            _play.BeginEpisode(0f, _quarterback.Position.y, 1, Systems_GameRules.YARDS_TO_GAIN);
+
+            Player(2).Nudge(new Vector2(0f, Systems_SimConstants.FLINCH_SPEED));
+            _referee.FixedTick();
+
+            Assert.That(_play.Outcome, Is.EqualTo(Systems_PlayOutcome.DeadBallFoul));
+            Assert.That(_play.HasFoul(Systems_TeamSide.Offense, Systems_FoulType.FalseStart), Is.True);
+        }
+
+        [Test]
+        public void ADefenderInTheNeutralZoneBeforeTheSnap_IsOffside()
+        {
+            _play.BeginEpisode(0f, _quarterback.Position.y, 1, Systems_GameRules.YARDS_TO_GAIN);
+
+            Player(11).Position = new Vector2(Player(11).Position.x, 0.1f);
+            _referee.FixedTick();
+
+            Assert.That(_play.Outcome, Is.EqualTo(Systems_PlayOutcome.DeadBallFoul));
+            Assert.That(_play.HasFoul(Systems_TeamSide.Defense, Systems_FoulType.Offside), Is.True);
+        }
+
+        [Test]
+        public void SetTeams_AreSnappedAfterThePreSnap()
+        {
+            _play.BeginEpisode(0f, _quarterback.Position.y, 1, Systems_GameRules.YARDS_TO_GAIN);
+
+            for (int tick = 0; tick < Systems_SimConstants.PRESNAP_TICKS; tick++)
+            {
+                Assert.That(_play.Phase, Is.EqualTo(Systems_PlayPhase.PreSnap));
+                _referee.FixedTick();
+            }
+
+            Assert.That(_play.Phase, Is.EqualTo(Systems_PlayPhase.Live));
+        }
+
+        [Test]
+        public void AKickIsCalledBeforeTheSnapOnFourthDownOnly()
+        {
+            Systems_PlayModel fourth = new Systems_PlayModel();
+            fourth.BeginEpisode(0f, 0f, 4, 8f);
+            fourth.LatchCall(Systems_PlayCall.Punt);
+
+            Assert.That(fourth.Kind, Is.EqualTo(Systems_PlayKind.Punt));
+            Assert.That(fourth.KickFormationPending, Is.True);
+
+            Systems_PlayModel third = new Systems_PlayModel();
+            third.BeginEpisode(0f, 0f, 3, 8f);
+            third.LatchCall(Systems_PlayCall.Punt);
+
+            Assert.That(third.CallIsLatched, Is.False);
+
+            Systems_PlayModel afterTheSnap = new Systems_PlayModel();
+            afterTheSnap.BeginEpisode(0f, 0f, 4, 8f);
+            afterTheSnap.Snap();
+            afterTheSnap.LatchCall(Systems_PlayCall.Punt);
+
+            Assert.That(afterTheSnap.CallIsLatched, Is.False, "a kick is a pre-snap decision");
         }
 
         /// <summary>Parks everyone well clear so catch resolution is unambiguous.</summary>

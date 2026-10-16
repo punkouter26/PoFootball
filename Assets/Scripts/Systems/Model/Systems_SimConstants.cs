@@ -204,15 +204,19 @@ namespace PoFootball.Models
         public const int FUMBLE_MIN_TACKLERS = 2;
 
         /// <summary>
-        /// Base chance a tackle produces a lost fumble in a played game, before the
+        /// Base chance a tackle knocks the ball loose in a played game, before the
         /// hit, the help and the carrier's ball security scale it.
         ///
-        /// Real football loses roughly one fumble per team per game over about
-        /// sixty-five snaps. 1.2% is that rate, left low deliberately: the
-        /// multipliers in Systems_ProbabilisticFumbleModel can triple it on a big
-        /// hit with help, which is where fumbles actually come from.
+        /// Real football fumbles roughly 1.3 times per team per game over about
+        /// sixty-five snaps and loses about half of those. Through revision 13 this
+        /// was 1.2%, the LOST rate, because a strip handed the defense the ball on
+        /// the spot. Since revision 14 the ball is live and either side can fall on
+        /// it, so this is the rate of fumbles and the recovery decides the rest. It
+        /// is left low deliberately: the multipliers in
+        /// Systems_ProbabilisticFumbleModel can triple it on a big hit with help,
+        /// which is where fumbles actually come from.
         /// </summary>
-        public const float FUMBLE_BASE_CHANCE = 0.012f;
+        public const float FUMBLE_BASE_CHANCE = 0.022f;
 
         // --- Skill error (revision 13) ---------------------------------------
         //
@@ -775,7 +779,8 @@ namespace PoFootball.Models
         /// REAL EVENT. At five yards the second level was consistently arriving after
         /// the run had already made the line to gain: fourth downs faced went from
         /// 2.3 a game to 8.7 on this change alone, and it is the first setting under
-        /// which the field-goal code in Systems_IKickModel ever executed, because an
+        /// which the field-goal code (then Systems_IKickModel, gone since revision
+        /// 14 played the kick) ever executed, because an
         /// offense has to actually stall in the opponent's half to attempt one.
         ///
         /// It costs something and the cost is honest: a linebacker this close is
@@ -1058,5 +1063,370 @@ namespace PoFootball.Models
 
         /// <summary>Agent decisions per second is 50 / this (criterion #15).</summary>
         public const int DECISION_PERIOD = 5;
+
+        /// <summary>
+        /// Metres a kicked ball's height is normalized by in the observation. A punt
+        /// peaks around twenty; anything above ten is simply "not catchable yet".
+        /// </summary>
+        public const float KICK_HEIGHT_OBSERVATION_RANGE = 10f;
+
+        // =====================================================================
+        // REVISION 14 — everything below this line is new in it. The kicking game
+        // is played, the ball can come loose and change sides mid-play, a carrier
+        // can pitch it, a passer can throw it away, a pile is down by forward
+        // progress, and fouls are flagged. Every value is part of the dynamics a
+        // revision 14 brain is fitted against.
+        // =====================================================================
+
+        // --- Pre-snap --------------------------------------------------------
+        /// <summary>
+        /// Physics ticks the teams stand set before the ball is snapped: 0.4 s. The
+        /// quarterback's kick-or-go call is taken inside the first
+        /// KICK_CALL_WINDOW_TICKS of it, so a punt team has the rest to line up.
+        ///
+        /// THE BODIES ARE FROZEN, NOT DRIVEN, THROUGH IT. ML-Agents' continuous
+        /// policy carries one exploration noise for every state, so a body that
+        /// could move before the snap would jitter across the line on most plays
+        /// of a fresh run and every episode would end in a false start before any
+        /// football happened. Whether somebody flinches is drawn instead
+        /// (Systems_IDisciplineModel), and the flinch is then refereed.
+        /// </summary>
+        public const int PRESNAP_TICKS = 20;
+
+        /// <summary>Pre-snap ticks in which a fourth-down kick call is still accepted.</summary>
+        public const int KICK_CALL_WINDOW_TICKS = 10;
+
+        /// <summary>Speed above which a set offensive player has moved: a false start.</summary>
+        public const float FALSE_START_SPEED = 0.4f;
+
+        /// <summary>
+        /// How close to the line of scrimmage a defender's centre may stand. Closer
+        /// than this, his body is in the neutral zone: offside.
+        /// </summary>
+        public const float NEUTRAL_ZONE_CLEARANCE = 0.3f;
+
+        /// <summary>Speed of the involuntary step a flinch puts into a set body, m/s.</summary>
+        public const float FLINCH_SPEED = 1.6f;
+
+        // --- Kicking: the ball -------------------------------------------------
+        /// <summary>Gravity on a kicked ball. Real, unlike the pass's decorative arc.</summary>
+        public const float KICK_GRAVITY = 9.81f;
+
+        /// <summary>Height a kick leaves the foot at, metres.</summary>
+        public const float KICK_LAUNCH_HEIGHT = 0.5f;
+
+        /// <summary>
+        /// A kick can be fielded only once it has come down below this — about the
+        /// top of a returner's reach. Above it, it is over everybody's head.
+        /// </summary>
+        public const float KICK_CATCH_HEIGHT = 2.4f;
+
+        /// <summary>Share of its ground speed a landing kick keeps as it bounces on.</summary>
+        public const float KICK_BOUNCE_RETAINED = 0.45f;
+
+        /// <summary>How far off its line a bounce can kick, either way, degrees.</summary>
+        public const float KICK_BOUNCE_SCATTER_DEGREES = 50f;
+
+        /// <summary>
+        /// Metres either side of the point just ahead of the kicker inside which a
+        /// rusher can get a hand on the kick as it leaves the foot.
+        /// </summary>
+        public const float KICK_BLOCK_RADIUS = 1.6f;
+
+        /// <summary>Metres in front of the kicker the block is measured from.</summary>
+        public const float KICK_BLOCK_REACH = 1.2f;
+
+        /// <summary>Chance a rusher inside KICK_BLOCK_RADIUS at the kick gets it.</summary>
+        public const float KICK_BLOCK_CHANCE = 0.55f;
+
+        /// <summary>Chance a returner fumbles an uncontested catch.</summary>
+        public const float KICK_MUFF_CHANCE = 0.03f;
+
+        /// <summary>Chance he does it with a cover man inside FAIR_CATCH_PRESSURE_METRES / 2.</summary>
+        public const float KICK_MUFF_PRESSURED_CHANCE = 0.09f;
+
+        /// <summary>
+        /// A punt returner with a cover man this close as the ball arrives signals
+        /// for a fair catch. Automatic, because no brain has an action for it and a
+        /// returner who never calls one is taking hits nobody takes.
+        /// </summary>
+        public const float FAIR_CATCH_PRESSURE_METRES = 5f;
+
+        // --- Kicking: the punt --------------------------------------------------
+        /// <summary>How deep the punter lines up, yards behind the line.</summary>
+        public const float PUNT_DEPTH_YARDS = 14f;
+
+        /// <summary>Ticks from the snap to the punt leaving the foot: 1.1 s.</summary>
+        public const int PUNT_OPERATION_TICKS = 55;
+
+        /// <summary>Gross distance from the kick spot, yards — the NFL's long-run mean.</summary>
+        public const float PUNT_DISTANCE_YARDS = 47f;
+
+        /// <summary>Either side of the mean a punt can land, triangular, yards.</summary>
+        public const float PUNT_DISTANCE_SPREAD_YARDS = 9f;
+
+        /// <summary>Hang time of an average punt, seconds.</summary>
+        public const float PUNT_HANG_SECONDS = 4.3f;
+
+        /// <summary>Either side of the mean hang time, triangular, seconds.</summary>
+        public const float PUNT_HANG_SPREAD_SECONDS = 0.5f;
+
+        /// <summary>How far off straight downfield a punt can go, triangular, degrees.</summary>
+        public const float PUNT_SCATTER_DEGREES = 9f;
+
+        // --- Kicking: the placekick ----------------------------------------------
+        /// <summary>Hold spot behind the line, yards. Ten of end zone and this make FIELD_GOAL_SNAP_YARDS.</summary>
+        public const float PLACEKICK_DEPTH_YARDS = 7f;
+
+        /// <summary>Ticks from the snap to the kick: 1.24 s, a typical operation time.</summary>
+        public const int PLACEKICK_OPERATION_TICKS = 62;
+
+        /// <summary>Speed of a placekick across the turf, m/s.</summary>
+        public const float PLACEKICK_GROUND_SPEED = 20f;
+
+        /// <summary>
+        /// Yards from the hold at which an average kick drops below the crossbar.
+        /// With the spread below it makes a 55-yard attempt long enough seven times
+        /// in eight, and a 62-yard one about half the time.
+        /// </summary>
+        public const float KICKER_CARRY_YARDS = 59f;
+
+        /// <summary>Either side of the mean carry, triangular, yards.</summary>
+        public const float KICKER_CARRY_SPREAD_YARDS = 6f;
+
+        /// <summary>
+        /// How far off line a placekick can go, triangular, degrees. Seven against
+        /// uprights 5.64 m wide makes 97% from thirty yards, 86% from forty, 75%
+        /// from fifty — the NFL's make rates by distance, before carry is counted.
+        /// </summary>
+        public const float PLACEKICK_SCATTER_DEGREES = 7f;
+
+        /// <summary>Height of the crossbar, metres.</summary>
+        public const float CROSSBAR_HEIGHT = 3.05f;
+
+        /// <summary>Half the distance between the uprights, metres (18 ft 6 in apart).</summary>
+        public const float GOALPOST_HALF_WIDTH = 2.82f;
+
+        // --- Kicking: the kickoff --------------------------------------------------
+        /// <summary>Ticks from the snap to the kickoff: the kicker's approach, 0.6 s.</summary>
+        public const int KICKOFF_RUNUP_TICKS = 30;
+
+        /// <summary>Yards a deep kickoff travels from the tee — from a team's own 35 to the other's 2.</summary>
+        public const float KICKOFF_DISTANCE_YARDS = 63f;
+
+        /// <summary>Either side of the mean, triangular, yards.</summary>
+        public const float KICKOFF_DISTANCE_SPREAD_YARDS = 8f;
+
+        /// <summary>Hang time of a deep kickoff, seconds.</summary>
+        public const float KICKOFF_HANG_SECONDS = 4.0f;
+
+        /// <summary>Either side of the mean hang time, triangular, seconds.</summary>
+        public const float KICKOFF_HANG_SPREAD_SECONDS = 0.4f;
+
+        /// <summary>How far off straight downfield a kickoff can go, triangular, degrees.</summary>
+        public const float KICKOFF_SCATTER_DEGREES = 7f;
+
+        /// <summary>
+        /// Yards an onside kick travels IN THE AIR. It then bounces on and rolls,
+        /// so it comes to rest about thirteen yards out — past the ten the kicking
+        /// team needs, inside the receivers' front line. At twelve in the air it
+        /// left the tee at 22 m/s and rolled twenty-five yards, which is a squib.
+        /// </summary>
+        public const float ONSIDE_DISTANCE_YARDS = 8f;
+
+        /// <summary>Either side of the onside aim, triangular, yards.</summary>
+        public const float ONSIDE_DISTANCE_SPREAD_YARDS = 3f;
+
+        /// <summary>Hang time of an onside kick: a hop off the tee, seconds.</summary>
+        public const float ONSIDE_HANG_SECONDS = 0.6f;
+
+        /// <summary>How far off its line an onside kick goes, triangular, degrees. It is meant to.</summary>
+        public const float ONSIDE_SCATTER_DEGREES = 25f;
+
+        /// <summary>A kickoff must travel this far before the kicking team may recover it.</summary>
+        public const float KICKOFF_YARDS_BEFORE_RECOVERY = 10f;
+
+        // --- The loose ball --------------------------------------------------------
+        /// <summary>Deceleration of a ball rolling on turf, m/s².</summary>
+        public const float LOOSE_BALL_FRICTION = 3.0f;
+
+        /// <summary>A player whose centre is this close to a loose ball can try to fall on it.</summary>
+        public const float RECOVERY_RADIUS = 1.0f;
+
+        /// <summary>
+        /// Chance per tick that a man on a loose ball comes up with it. One in five
+        /// is two or three tenths of a second in a scramble: quick, not instant.
+        /// </summary>
+        public const float LOOSE_BALL_RECOVERY_CHANCE = 0.2f;
+
+        /// <summary>
+        /// Ticks a ball may stay loose before the officials rule it dead where it
+        /// lies, to whoever last had it: 4 s. Only reachable if nobody goes near it.
+        /// </summary>
+        public const int LOOSE_BALL_MAX_TICKS = 200;
+
+        /// <summary>Speed a stripped ball pops out at, m/s.</summary>
+        public const float FUMBLE_POP_SPEED = 3.0f;
+
+        // --- The lateral -----------------------------------------------------------
+        /// <summary>Speed of a pitch, m/s. Soft, so a trailing man can handle it.</summary>
+        public const float LATERAL_SPEED = 11f;
+
+        /// <summary>Furthest a pitch will go to find a man, metres.</summary>
+        public const float LATERAL_MAX_RANGE = 9f;
+
+        /// <summary>Distance a pitch must travel before anybody can catch it.</summary>
+        public const float LATERAL_MIN_CATCH_DISTANCE = 0.8f;
+
+        /// <summary>Chance a pitch is put on the ground rather than caught.</summary>
+        public const float LATERAL_DROP_CHANCE = 0.06f;
+
+        /// <summary>
+        /// A lateral is backward by construction; a target this far ahead of the
+        /// pitcher is still treated as level with him, metres.
+        /// </summary>
+        public const float LATERAL_LEVEL_TOLERANCE = 0.3f;
+
+        // --- Forward progress --------------------------------------------------------
+        /// <summary>
+        /// Ticks a carrier in contact may go without gaining ground before he is down
+        /// by forward progress: 0.7 s. This is what ends a pile — the STALL rule used
+        /// to, under the name TimeExpired, which is not a call any official makes.
+        /// </summary>
+        public const int FORWARD_PROGRESS_TICKS = 35;
+
+        /// <summary>A carrier in contact driven back this far from his furthest point is down there.</summary>
+        public const float FORWARD_PROGRESS_PUSHBACK_METRES = 1.5f;
+
+        /// <summary>
+        /// Ground a carrier in contact must gain to keep the play alive, metres, per
+        /// FORWARD_PROGRESS_TICKS. A pile inching forward a few centimetres a tick is
+        /// still a pile; one driving forward at a walking pace is not.
+        /// </summary>
+        public const float FORWARD_PROGRESS_GAIN_METRES = 0.3f;
+
+        // --- Throwing it away ----------------------------------------------------------
+        /// <summary>
+        /// An aim this far off every receiver's lead is not a throw AT anyone: the
+        /// ball goes where it was pointed. A throwaway, which is legal from outside
+        /// the tackle box if it reaches the line, and intentional grounding if not.
+        /// </summary>
+        public const float THROWAWAY_OFF_RAY_METRES = 7f;
+
+        /// <summary>Half the width of the tackle box, metres either side of the snap.</summary>
+        public const float TACKLE_BOX_HALF_WIDTH = 4.1f;
+
+        /// <summary>
+        /// A pass that lands with no eligible receiver this close was not thrown to
+        /// an area anybody was in: intentional grounding, unless it was a legal
+        /// throwaway.
+        /// </summary>
+        public const float GROUNDING_AREA_METRES = 4.6f;
+
+        // --- Penalties: who sees what -------------------------------------------------
+        /// <summary>Ticks a beaten blocker must hang on before it is holding.</summary>
+        public const int HOLDING_MIN_TICKS = 25;
+
+        /// <summary>A defender this much nearer the ball than the man blocking him has beaten the block.</summary>
+        public const float HOLDING_BEATEN_MARGIN = 1.0f;
+
+        /// <summary>Chance an official flags a hold he could see.</summary>
+        public const float HOLDING_CALL_CHANCE = 0.06f;
+
+        /// <summary>Ticks of contact on a receiver downfield before the throw that is holding.</summary>
+        public const int DEFENSIVE_HOLDING_MIN_TICKS = 20;
+
+        /// <summary>Yards past the line beyond which contact on a receiver is illegal before the throw.</summary>
+        public const float DEFENSIVE_HOLDING_DEPTH_YARDS = 5f;
+
+        /// <summary>Chance an official flags defensive holding he could see.</summary>
+        public const float DEFENSIVE_HOLDING_CALL_CHANCE = 0.2f;
+
+        /// <summary>Contact on a receiver this close to the ball while it is in the air can be interference.</summary>
+        public const float PASS_INTERFERENCE_BALL_RANGE = 6f;
+
+        /// <summary>Contact softer than this is incidental, m/s of closing speed.</summary>
+        public const float PASS_INTERFERENCE_MIN_SPEED = 1.5f;
+
+        /// <summary>Chance a defender's interference is flagged.</summary>
+        public const float DEFENSIVE_PI_CALL_CHANCE = 0.4f;
+
+        /// <summary>Chance a receiver's push-off is flagged.</summary>
+        public const float OFFENSIVE_PI_CALL_CHANCE = 0.25f;
+
+        /// <summary>A hit on the passer this many ticks after the ball is gone is late: 0.3 s.</summary>
+        public const int ROUGHING_LATE_TICKS = 15;
+
+        /// <summary>A late hit softer than this is not roughing, m/s.</summary>
+        public const float ROUGHING_MIN_SPEED = 3f;
+
+        /// <summary>Chance a late hit on the passer is flagged. Officials protect quarterbacks.</summary>
+        public const float ROUGHING_CALL_CHANCE = 0.7f;
+
+        /// <summary>A tackle at this closing speed or more can be by the facemask, m/s.</summary>
+        public const float FACEMASK_MIN_SPEED = 5f;
+
+        /// <summary>Chance a hard tackle was by the facemask.</summary>
+        public const float FACEMASK_CHANCE = 0.012f;
+
+        /// <summary>A block from behind at this closing speed or more is illegal, m/s.</summary>
+        public const float BLOCK_IN_BACK_MIN_SPEED = 3f;
+
+        /// <summary>Contact this squarely on a man's back is from behind (cosine).</summary>
+        public const float BLOCK_IN_BACK_COS = 0.6f;
+
+        /// <summary>Chance an official flags a block in the back he could see.</summary>
+        public const float BLOCK_IN_BACK_CALL_CHANCE = 0.15f;
+
+        /// <summary>Contact on a returner with the kick this close to him is kick-catch interference.</summary>
+        public const float KICK_CATCH_INTERFERENCE_RANGE = 5f;
+
+        /// <summary>Chance kick-catch interference is flagged.</summary>
+        public const float KICK_CATCH_INTERFERENCE_CALL_CHANCE = 0.7f;
+
+        // --- Rewards for what revision 14 added ---------------------------------------
+        /// <summary>
+        /// What a flag costs the side that drew it. Paid in training, where nothing
+        /// enforces the yardage, so a policy has a reason to stop doing it; a
+        /// played game enforces the yards instead.
+        /// </summary>
+        public const float FOUL_REWARD = 0.15f;
+
+        /// <summary>A personal foul costs more — somebody got hurt.</summary>
+        public const float PERSONAL_FOUL_REWARD = 0.25f;
+
+        /// <summary>
+        /// What a touchdown the OTHER side scored costs the offense of the snap — a
+        /// pick-six, a return, a fumble taken back. More than a touchdown is worth:
+        /// it is the score and the lost possession at once.
+        /// </summary>
+        public const float RETURN_TOUCHDOWN_REWARD = 1.2f;
+
+        /// <summary>Per yard of return after a change of possession, on top of the turnover.</summary>
+        public const float RETURN_YARD_REWARD = 0.01f;
+
+        /// <summary>
+        /// Per yard of field position a kick play wins or loses against par — a
+        /// touchback for a kickoff, a forty-yard net for a punt.
+        /// </summary>
+        public const float KICK_FIELD_POSITION_REWARD = 0.006f;
+
+        /// <summary>
+        /// A punt's par net: the forty yards it used to be, flat, at the rules layer.
+        /// The coverage and the return are priced against it.
+        /// </summary>
+        public const float PUNT_PAR_NET_YARDS = 40f;
+
+        /// <summary>Cap on the field-position term either way, so a kick never outweighs a score.</summary>
+        public const float KICK_FIELD_POSITION_CAP = 0.3f;
+
+        /// <summary>The kicking team coming up with its own kick: possession it did not have.</summary>
+        public const float KICK_RECOVERED_REWARD = 0.5f;
+
+        /// <summary>A made extra point, and what a miss costs.</summary>
+        public const float EXTRA_POINT_REWARD = 0.15f;
+
+        /// <summary>A converted two-point try, and what a failed one costs.</summary>
+        public const float TWO_POINT_REWARD = 0.3f;
     }
 }

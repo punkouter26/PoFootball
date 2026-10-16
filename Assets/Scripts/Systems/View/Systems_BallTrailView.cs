@@ -120,7 +120,7 @@ namespace PoFootball.Views
                 return;
             }
 
-            bool shouldEmit = _ball.IsInFlight;
+            bool shouldEmit = _ball.IsAirborne;
 
             if (shouldEmit == _trail.emitting)
             {

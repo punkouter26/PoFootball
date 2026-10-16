@@ -85,6 +85,8 @@ namespace PoFootball.Models
 
         public void KickOff(Systems_TeamId receivingTeam, float lineOfScrimmageY)
         {
+            NextPlayKind = Systems_PlayKind.Scrimmage;
+            NextOnside = false;
             Phase = Systems_GamePhase.Playing;
             HomeScore = 0;
             AwayScore = 0;
@@ -117,8 +119,57 @@ namespace PoFootball.Models
             RecomputeMarker();
         }
 
+        /// <summary>
+        /// What sort of snap comes next: an ordinary down, a kickoff, a try, a clock
+        /// play. Revision 14 — before it the kicking game happened between snaps.
+        /// </summary>
+        public Systems_PlayKind NextPlayKind { get; private set; } = Systems_PlayKind.Scrimmage;
+
+        /// <summary>When <see cref="NextPlayKind"/> is a kickoff, whether it goes short.</summary>
+        public bool NextOnside { get; private set; }
+
+        public void SetNextPlay(Systems_PlayKind kind, bool onside = false)
+        {
+            NextPlayKind = kind;
+            NextOnside = kind == Systems_PlayKind.Kickoff && onside;
+        }
+
+        /// <summary>
+        /// Lines a team up to kick off from this spot. It is the offense for the
+        /// snap — it attacks +Y — but this is not a drive, so DriveIndex does not move.
+        /// </summary>
+        public void PrepareKick(Systems_TeamId kickingTeam, float lineOfScrimmageY, bool onside)
+        {
+            Possession = kickingTeam;
+            StartSeries(lineOfScrimmageY);
+            SetNextPlay(Systems_PlayKind.Kickoff, onside);
+        }
+
+        /// <summary>Lines a team up for the try after its touchdown. Not a drive either.</summary>
+        public void PrepareTry(Systems_TeamId team, float lineOfScrimmageY, Systems_PlayKind kind)
+        {
+            Possession = team;
+            LineOfScrimmageY = lineOfScrimmageY;
+            Down = 1;
+            YardsToGo = YardsToGoal;
+            FirstDownMarkerY = Systems_FieldModel.ATTACKING_GOAL_LINE_Y;
+            SetNextPlay(kind);
+        }
+
+        /// <summary>
+        /// The same down again from a new spot, the line to gain where it was — what
+        /// a penalty that does not carry a first down or a loss of down leaves.
+        /// </summary>
+        public void ReplayDown(float lineOfScrimmageY)
+        {
+            LineOfScrimmageY = lineOfScrimmageY;
+            YardsToGo = Mathf.Max(
+                (FirstDownMarkerY - lineOfScrimmageY) / Systems_FieldModel.YARD, 0.1f);
+        }
+
         public void GiveBallTo(Systems_TeamId team, float lineOfScrimmageY)
         {
+            SetNextPlay(Systems_PlayKind.Scrimmage);
             Possession = team;
             DriveIndex += 1;
             StartSeries(lineOfScrimmageY);

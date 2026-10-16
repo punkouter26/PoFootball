@@ -4,7 +4,7 @@ using Random = Unity.Mathematics.Random;
 namespace PoFootball.Systems
 {
     /// <summary>
-    /// Whether a tackle knocks the ball loose and the defense comes up with it.
+    /// Whether a tackle knocks the ball loose.
     ///
     /// WHY FUMBLES EXIST AT ALL NOW. Before this, the only ways possession changed
     /// were an interception and a turnover on downs, and measured games produced
@@ -12,24 +12,26 @@ namespace PoFootball.Systems
     /// Ball security simply was not a thing a carrier could be bad at, so a back
     /// running into a crowd risked nothing.
     ///
-    /// ONLY LOST FUMBLES ARE MODELLED. A fumble the offense recovers is, in every
-    /// respect this simulation can observe, a tackle at the same spot — there is no
-    /// loose-ball scramble here and inventing one would be a whole physics mode for
-    /// an outcome that changes nothing. So this answers the only question that
-    /// matters: does the defense get the ball.
+    /// SINCE REVISION 14 THIS ONLY DECIDES WHETHER THE BALL COMES OUT. Through
+    /// revision 13 it answered "does the defense get the ball" and the play ended on
+    /// the spot, because there was no loose-ball scramble to resolve it any other
+    /// way. There is now: a stripped ball is on the ground and live
+    /// (Systems_BallState.Loose), either side may fall on it, and whoever does may
+    /// run with it. So the rate is of fumbles, not of lost fumbles — about half of
+    /// them the offense keeps, as on a real field.
     ///
-    /// THE SEAM IS THE ONE Systems_IKickModel AND Systems_ISpotProvider ALREADY
-    /// ESTABLISHED. Training gets a PURE FUNCTION of the collision — a big hit with
-    /// help — which a policy can actually learn to avoid by not running into
-    /// traffic. A played game gets a probability, because a fumble that is certain
-    /// whenever its trigger is met is one a viewer can predict.
+    /// THE SEAM IS THE ONE Systems_ISpotProvider ALREADY ESTABLISHED. Training gets
+    /// a PURE FUNCTION of the collision — a big hit with help — which a policy can
+    /// actually learn to avoid by not running into traffic. A played game gets a
+    /// probability, because a fumble that is certain whenever its trigger is met is
+    /// one a viewer can predict.
     /// </summary>
     public interface Systems_IFumbleModel
     {
         /// <param name="closingSpeed">Relative speed of the hit, m/s.</param>
         /// <param name="tacklerCount">Opponents in contact on the deciding tick.</param>
         /// <param name="carrier">Who is carrying — a back protects it better.</param>
-        bool IsFumbleLost(
+        bool IsBallStripped(
             float closingSpeed, int tacklerCount, Systems_PlayerRole carrier);
     }
 
@@ -40,7 +42,7 @@ namespace PoFootball.Systems
     /// </summary>
     public sealed class Systems_DeterministicFumbleModel : Systems_IFumbleModel
     {
-        public bool IsFumbleLost(
+        public bool IsBallStripped(
             float closingSpeed, int tacklerCount, Systems_PlayerRole carrier)
         {
             if (tacklerCount < Systems_SimConstants.FUMBLE_MIN_TACKLERS)
@@ -79,13 +81,12 @@ namespace PoFootball.Systems
 
     /// <summary>
     /// A played game. Chance scales with how hard the hit was and how many people
-    /// arrived, around a base rate taken from real football: roughly one fumble
-    /// lost per team per game across about sixty-five snaps, so a shade under 2% of
-    /// plays — see Systems_SimConstants.FUMBLE_BASE_CHANCE.
+    /// arrived, around a base rate taken from real football: roughly 1.3 fumbles
+    /// per team per game across about sixty-five snaps — see
+    /// Systems_SimConstants.FUMBLE_BASE_CHANCE.
     ///
-    /// Seeded from Systems_EpisodeSeed with its own stream offset, exactly as
-    /// Systems_ProbabilisticKickModel is, so fumbles vary between games and replay
-    /// within one.
+    /// Seeded from Systems_EpisodeSeed with its own stream offset, so fumbles vary
+    /// between games and replay within one.
     /// </summary>
     public sealed class Systems_ProbabilisticFumbleModel : Systems_IFumbleModel
     {
@@ -99,7 +100,7 @@ namespace PoFootball.Systems
             _rng = new Random(Systems_EpisodeSeed.Value ^ STREAM_OFFSET);
         }
 
-        public bool IsFumbleLost(
+        public bool IsBallStripped(
             float closingSpeed, int tacklerCount, Systems_PlayerRole carrier)
         {
             float chance = Systems_SimConstants.FUMBLE_BASE_CHANCE;

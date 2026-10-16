@@ -122,20 +122,14 @@ namespace PoFootball.Agents
             }
         }
 
-        private void AddTeamTerminal(
-            Systems_TeamSide side,
-            Systems_PlayOutcome outcome,
-            float netYards,
-            bool passCompleted,
-            bool reachedLineToGain)
+        private void AddTeamTerminal(Systems_TeamSide side, in Systems_PlayResult result)
         {
             if (!_registered)
             {
                 return;
             }
 
-            float reward = Reward_Terminal.For(
-                side, outcome, netYards, passCompleted, reachedLineToGain);
+            float reward = Reward_Terminal.For(side, in result);
 
             if (side == Systems_TeamSide.Offense)
             {
@@ -164,20 +158,14 @@ namespace PoFootball.Agents
                 _owner = owner;
             }
 
-            public void AddTeamTerminal(
-                Systems_TeamSide side,
-                Systems_PlayOutcome outcome,
-                float netYards,
-                bool passCompleted,
-                bool reachedLineToGain)
+            public void AddTeamTerminal(Systems_TeamSide side, in Systems_PlayResult result)
             {
                 if (_owner == null)
                 {
                     return;
                 }
 
-                _owner.AddTeamTerminal(
-                    side, outcome, netYards, passCompleted, reachedLineToGain);
+                _owner.AddTeamTerminal(side, in result);
             }
         }
     }

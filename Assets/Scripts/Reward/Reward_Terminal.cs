@@ -11,6 +11,7 @@ namespace PoFootball.Rewards
     /// </summary>
     public static class Reward_Terminal
     {
+        /// <summary>An ordinary scrimmage down with no flags — the shape every caller had before revision 14.</summary>
         public static float For(
             Systems_TeamSide side,
             Systems_PlayOutcome outcome,
@@ -18,10 +19,145 @@ namespace PoFootball.Rewards
             bool passCompleted,
             bool reachedLineToGain = false)
         {
-            float offenseReward =
-                OffenseReward(outcome, netYards, passCompleted, reachedLineToGain);
+            return For(
+                side, new Systems_PlayResult(outcome, netYards, passCompleted, reachedLineToGain));
+        }
+
+        /// <summary>
+        /// The reward for <paramref name="side"/> of the snap. Every term is computed
+        /// for the offense and negated for the defense, flags included: a foul costs
+        /// the side that drew it exactly what it pays the other.
+        /// </summary>
+        public static float For(Systems_TeamSide side, in Systems_PlayResult result)
+        {
+            float offenseReward = result.Kind.IsTry()
+                ? TryReward(in result)
+                : KickOrDownReward(in result);
+
+            offenseReward += FoulReward(in result);
 
             return side == Systems_TeamSide.Offense ? offenseReward : -offenseReward;
+        }
+
+        /// <summary>
+        /// The outcomes revision 14 brought, then everything that was already here.
+        /// </summary>
+        private static float KickOrDownReward(in Systems_PlayResult result)
+        {
+            switch (result.Outcome)
+            {
+                // THE OTHER SIDE SCORED. On a kick that is a return the receivers
+                // earned; anywhere else it is a turnover taken the whole way, and it
+                // costs more than a touchdown is worth — the points AND the ball.
+                case Systems_PlayOutcome.Touchdown when result.Side == Systems_TeamSide.Defense:
+                    return result.Kind.IsKick()
+                        ? -Systems_SimConstants.TOUCHDOWN_REWARD
+                        : -Systems_SimConstants.RETURN_TOUCHDOWN_REWARD;
+
+                // A safety the offense of the snap SCORED: a returner downed in his
+                // own end zone.
+                case Systems_PlayOutcome.Safety when result.Side == Systems_TeamSide.Offense:
+                    return Systems_SimConstants.SAFETY_PENALTY;
+
+                case Systems_PlayOutcome.Interception:
+                case Systems_PlayOutcome.FumbleLost:
+                case Systems_PlayOutcome.KickBlocked:
+                    // The turnover, and the return on top of it: running a pick back
+                    // forty yards is the defense's to earn and the offense's to stop.
+                    return -Systems_SimConstants.INTERCEPTION_REWARD
+                        - (Systems_SimConstants.RETURN_YARD_REWARD * UnityEngine.Mathf.Max(0f, result.ReturnYards));
+
+                case Systems_PlayOutcome.Punt:
+                    // Nearly free, and deliberately so — punting is the CORRECT call
+                    // on most fourth downs — plus whatever the coverage and the
+                    // returner made of it against a forty-yard net.
+                    return -Systems_SimConstants.PUNT_PENALTY
+                        + KickFieldPosition(result.KickNetYards - Systems_SimConstants.PUNT_PAR_NET_YARDS);
+
+                case Systems_PlayOutcome.Kickoff:
+                    return KickFieldPosition(
+                        Systems_GameRules.KICKOFF_TOUCHBACK_YARD_LINE - result.ReceivingYardLine);
+
+                case Systems_PlayOutcome.Touchback when result.Side == Systems_TeamSide.Defense:
+                    if (result.Kind == Systems_PlayKind.Punt)
+                    {
+                        return -Systems_SimConstants.PUNT_PENALTY
+                            + KickFieldPosition(result.KickNetYards - Systems_SimConstants.PUNT_PAR_NET_YARDS);
+                    }
+
+                    if (result.Kind == Systems_PlayKind.Kickoff)
+                    {
+                        return 0f;
+                    }
+
+                    // An interception downed in the end zone: the turnover, no return.
+                    return -Systems_SimConstants.INTERCEPTION_REWARD;
+
+                case Systems_PlayOutcome.Touchback:
+                    return 0f;
+
+                case Systems_PlayOutcome.KickRecovered:
+                    return Systems_SimConstants.KICK_RECOVERED_REWARD;
+
+                case Systems_PlayOutcome.DeadBallFoul:
+                    return 0f;
+            }
+
+            return OffenseReward(
+                result.Outcome, result.NetYards, result.PassCompleted, result.ReachedLineToGain);
+        }
+
+
+        /// <summary>The field-position term of a kick play, capped either way.</summary>
+        private static float KickFieldPosition(float yardsBetterThanPar)
+        {
+            return UnityEngine.Mathf.Clamp(
+                yardsBetterThanPar * Systems_SimConstants.KICK_FIELD_POSITION_REWARD,
+                -Systems_SimConstants.KICK_FIELD_POSITION_CAP,
+                Systems_SimConstants.KICK_FIELD_POSITION_CAP);
+        }
+
+        /// <summary>
+        /// The try: a point or two made or missed, and the defense taking it back
+        /// for two of its own.
+        /// </summary>
+        private static float TryReward(in Systems_PlayResult result)
+        {
+            bool twoPoint = result.Kind == Systems_PlayKind.TwoPoint;
+
+            if (result.Outcome == Systems_PlayOutcome.Touchdown)
+            {
+                return result.Side == Systems_TeamSide.Offense
+                    ? Systems_SimConstants.TWO_POINT_REWARD
+                    : -1.5f * Systems_SimConstants.TWO_POINT_REWARD;
+            }
+
+            if (result.Outcome == Systems_PlayOutcome.FieldGoalGood)
+            {
+                return Systems_SimConstants.EXTRA_POINT_REWARD;
+            }
+
+            return twoPoint
+                ? -Systems_SimConstants.TWO_POINT_REWARD
+                : -Systems_SimConstants.EXTRA_POINT_REWARD;
+        }
+
+        /// <summary>
+        /// What the flags on the play cost, from the offense's side: its own count
+        /// against it, the defense's for it. Paid in training, where nothing enforces
+        /// the yardage, so a policy has a reason to stop.
+        /// </summary>
+        private static float FoulReward(in Systems_PlayResult result)
+        {
+            float extra = Systems_SimConstants.PERSONAL_FOUL_REWARD - Systems_SimConstants.FOUL_REWARD;
+
+            float offenseCost = (result.OffenseFouls * Systems_SimConstants.FOUL_REWARD)
+                + (result.OffensePersonalFouls * extra);
+
+            float defenseCost = (result.DefenseFouls * Systems_SimConstants.FOUL_REWARD)
+                + (result.DefensePersonalFouls * extra);
+
+            return defenseCost - offenseCost;
         }
 
         private static float OffenseReward(
@@ -55,8 +191,11 @@ namespace PoFootball.Rewards
                     return Systems_SimConstants.TOUCHDOWN_REWARD + completionBonus;
 
                 case Systems_PlayOutcome.Tackle:
+                case Systems_PlayOutcome.Sack:
+                case Systems_PlayOutcome.Downed:
                     // A stop behind the line of scrimmage is worth more to the
-                    // defense than a stop after a gain.
+                    // defense than a stop after a gain. A sack is one; a man who
+                    // gave himself up is down like any other.
                     return (netYards < 0f
                         ? -(Systems_SimConstants.TACKLE_REWARD
                             + Systems_SimConstants.TACKLE_FOR_LOSS_BONUS)

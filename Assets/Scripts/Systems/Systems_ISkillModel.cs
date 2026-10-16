@@ -17,12 +17,18 @@ namespace PoFootball.Systems
     /// to the aim, which Systems_BallSystem then blended 85% back toward the
     /// perfect lead. football_base14 completed 91-97% of its passes all run.
     ///
-    /// THE SAME DRAW IN TRAINING AND IN A PLAYED GAME, unlike Systems_IKickModel
-    /// and Systems_IFumbleModel, which keep training a pure function. Those two
-    /// price a decision the policy makes once; these price execution, and a brain
+    /// THE SAME DRAW IN TRAINING AND IN A PLAYED GAME, unlike Systems_IFumbleModel,
+    /// which keeps training a pure function. That one prices a decision a carrier
+    /// makes; these price execution, and a brain
     /// fitted against tackles that never miss and passes that never drop would be
     /// evaluated against different dynamics the moment a game gave it either
     /// (CLAUDE.md section 2). It is why the contract revision moved.
+    ///
+    /// SINCE REVISION 14 IT ALSO KICKS. How far a punt, a kickoff or a placekick
+    /// goes and how far off line, whether a rusher's hand gets it, whether a
+    /// returner muffs it, whether a man falls on a loose ball, whether a pitch is
+    /// held — all execution, all here. The kick model that used to roll a punt's
+    /// net and a field goal's result at the rules layer is gone.
     ///
     /// The interface is the seam the referee tests use: they pin the rules with a
     /// stub that never fails, and pin the failures with one that always does.
@@ -52,11 +58,53 @@ namespace PoFootball.Systems
         bool IsWrapUpHeld(
             Systems_PlayerRole carrier, int tacklerCount, bool armOnly,
             float tacklerFatigue, float carrierFatigue);
+
+        // --- Revision 14: the kicking game, the loose ball, the pitch ----------
+
+        /// <summary>
+        /// Draws one kick: how far it goes along the ground (yards), how long it
+        /// hangs (seconds), and how far off its line (radians). A placekick's
+        /// distance is its CARRY — where it drops below the crossbar — and its hang
+        /// is unused.
+        /// </summary>
+        Systems_KickDraw DrawKick(Systems_PlayKind kind, bool onside);
+
+        /// <summary>A rusher got to the spot as the kick left the foot: does he get a hand on it.</summary>
+        bool IsKickBlocked();
+
+        /// <summary>A returner under the kick: does he put it on the ground.</summary>
+        bool IsKickMuffed(bool pressured);
+
+        /// <summary>A man on a loose ball: does he come up with it this tick.</summary>
+        bool IsLooseBallRecovered();
+
+        /// <summary>A pitch arriving at the man it was meant for: does he hold it.</summary>
+        bool IsLateralCaught();
+
+        /// <summary>Signed angle a bouncing or popped-out ball turns through, radians, within ±maxDegrees.</summary>
+        float ScatterRadians(float maxDegrees);
+    }
+
+    /// <summary>One kick, as Systems_ISkillModel.DrawKick decided it.</summary>
+    public readonly struct Systems_KickDraw
+    {
+        public readonly float DistanceYards;
+
+        public readonly float HangSeconds;
+
+        public readonly float ErrorRadians;
+
+        public Systems_KickDraw(float distanceYards, float hangSeconds, float errorRadians)
+        {
+            DistanceYards = distanceYards;
+            HangSeconds = hangSeconds;
+            ErrorRadians = errorRadians;
+        }
     }
 
     /// <summary>
     /// The one implementation the game runs. Seeded from Systems_EpisodeSeed with
-    /// its own stream offset, exactly as Systems_ProbabilisticKickModel is, so a
+    /// its own stream offset, as every seeded model here is, so a
     /// pinned seed still replays draw for draw and the spot provider's stream is
     /// not disturbed by how many tackles a play happened to contain.
     ///
@@ -115,6 +163,85 @@ namespace PoFootball.Systems
         {
             return _rng.NextFloat() >= BrokenWrapChance(
                 carrier, tacklerCount, armOnly, tacklerFatigue, carrierFatigue);
+        }
+
+        public Systems_KickDraw DrawKick(Systems_PlayKind kind, bool onside)
+        {
+            // Three triangular draws, always, in this order, whatever the kind —
+            // so the number of draws a play consumes does not depend on which kick
+            // it was, and a pinned seed stays aligned.
+            float distanceUnit = Triangular();
+            float hangUnit = Triangular();
+            float errorUnit = Triangular();
+
+            switch (kind)
+            {
+                case Systems_PlayKind.Punt:
+                    return new Systems_KickDraw(
+                        Systems_SimConstants.PUNT_DISTANCE_YARDS
+                            + (distanceUnit * Systems_SimConstants.PUNT_DISTANCE_SPREAD_YARDS),
+                        Systems_SimConstants.PUNT_HANG_SECONDS
+                            + (hangUnit * Systems_SimConstants.PUNT_HANG_SPREAD_SECONDS),
+                        errorUnit * Systems_SimConstants.PUNT_SCATTER_DEGREES * Mathf.Deg2Rad);
+
+                case Systems_PlayKind.FieldGoal:
+                case Systems_PlayKind.ExtraPoint:
+                    return new Systems_KickDraw(
+                        Systems_SimConstants.KICKER_CARRY_YARDS
+                            + (distanceUnit * Systems_SimConstants.KICKER_CARRY_SPREAD_YARDS),
+                        0f,
+                        errorUnit * Systems_SimConstants.PLACEKICK_SCATTER_DEGREES * Mathf.Deg2Rad);
+
+                default:
+                    if (onside)
+                    {
+                        return new Systems_KickDraw(
+                            Systems_SimConstants.ONSIDE_DISTANCE_YARDS
+                                + (distanceUnit * Systems_SimConstants.ONSIDE_DISTANCE_SPREAD_YARDS),
+                            Systems_SimConstants.ONSIDE_HANG_SECONDS,
+                            errorUnit * Systems_SimConstants.ONSIDE_SCATTER_DEGREES * Mathf.Deg2Rad);
+                    }
+
+                    return new Systems_KickDraw(
+                        Systems_SimConstants.KICKOFF_DISTANCE_YARDS
+                            + (distanceUnit * Systems_SimConstants.KICKOFF_DISTANCE_SPREAD_YARDS),
+                        Systems_SimConstants.KICKOFF_HANG_SECONDS
+                            + (hangUnit * Systems_SimConstants.KICKOFF_HANG_SPREAD_SECONDS),
+                        errorUnit * Systems_SimConstants.KICKOFF_SCATTER_DEGREES * Mathf.Deg2Rad);
+            }
+        }
+
+        public bool IsKickBlocked()
+        {
+            return _rng.NextFloat() < Systems_SimConstants.KICK_BLOCK_CHANCE;
+        }
+
+        public bool IsKickMuffed(bool pressured)
+        {
+            return _rng.NextFloat() < (pressured
+                ? Systems_SimConstants.KICK_MUFF_PRESSURED_CHANCE
+                : Systems_SimConstants.KICK_MUFF_CHANCE);
+        }
+
+        public bool IsLooseBallRecovered()
+        {
+            return _rng.NextFloat() < Systems_SimConstants.LOOSE_BALL_RECOVERY_CHANCE;
+        }
+
+        public bool IsLateralCaught()
+        {
+            return _rng.NextFloat() >= Systems_SimConstants.LATERAL_DROP_CHANCE;
+        }
+
+        public float ScatterRadians(float maxDegrees)
+        {
+            return Triangular() * maxDegrees * Mathf.Deg2Rad;
+        }
+
+        /// <summary>Triangular on [-1, 1], peaked at 0 — the shape every error here takes.</summary>
+        private float Triangular()
+        {
+            return (_rng.NextFloat() + _rng.NextFloat()) - 1f;
         }
 
         /// <summary>

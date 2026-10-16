@@ -54,6 +54,24 @@ namespace PoFootball.Views
             }
         }
 
+        /// <summary>
+        /// The situation chip for the next snap. A kickoff, a try and the clock plays
+        /// are named rather than given a down — "1st & 10" before a kickoff is a
+        /// number nobody is playing for. Revision 14.
+        /// </summary>
+        public static string Situation(
+            Systems_PlayKind kind, int down, float yardsToGo, bool isGoalToGo)
+        {
+            switch (kind)
+            {
+                case Systems_PlayKind.Kickoff: return "KICKOFF";
+                case Systems_PlayKind.ExtraPoint: return "PAT";
+                case Systems_PlayKind.TwoPoint: return "2-PT TRY";
+                case Systems_PlayKind.KneelDown: return "VICTORY";
+                default: return DownAndDistance(down, yardsToGo, isGoalToGo);
+            }
+        }
+
         public static string DownAndDistance(int down, float yardsToGo, bool isGoalToGo)
         {
             if (isGoalToGo)
@@ -112,7 +130,7 @@ namespace PoFootball.Views
                 case Systems_PlayCall.Pass: return "PASS";
                 case Systems_PlayCall.Punt: return "PUNT";
                 case Systems_PlayCall.FieldGoal: return "FIELD GOAL";
-                default: return "NO CALL";
+                default: return "KICKOFF";
             }
         }
 
@@ -133,6 +151,17 @@ namespace PoFootball.Views
                 case Systems_DownResult.FirstDown: return "FIRST DOWN";
                 case Systems_DownResult.EndOfQuarter: return "END OF QUARTER";
                 case Systems_DownResult.EndOfGame: return "FINAL";
+                case Systems_DownResult.Kickoff: return "KICKOFF RETURN";
+                case Systems_DownResult.KickRecovered: return "KICK RECOVERED";
+                case Systems_DownResult.BlockedKick: return "BLOCKED";
+                case Systems_DownResult.Touchback: return "TOUCHBACK";
+                case Systems_DownResult.Penalty: return "FLAG";
+                case Systems_DownResult.ExtraPointGood: return "EXTRA POINT GOOD";
+                case Systems_DownResult.ExtraPointMissed: return "EXTRA POINT NO GOOD";
+                case Systems_DownResult.TwoPointGood: return "TWO-POINT GOOD";
+                case Systems_DownResult.TwoPointFailed: return "TWO-POINT NO GOOD";
+                case Systems_DownResult.DefensiveTry: return "DEFENSIVE TWO";
+                case Systems_DownResult.Sack: return "SACKED";
             }
 
             switch (outcome)
@@ -144,8 +173,59 @@ namespace PoFootball.Views
                 case Systems_PlayOutcome.Punt: return "PUNT";
                 case Systems_PlayOutcome.FieldGoalGood: return "FIELD GOAL IS GOOD";
                 case Systems_PlayOutcome.FieldGoalMissed: return "NO GOOD";
+                case Systems_PlayOutcome.Sack: return "SACKED";
+                case Systems_PlayOutcome.Downed: return "DOWN";
                 default: return "TACKLED";
             }
+        }
+
+        /// <summary>
+        /// The foul the way an official announces it. Literal for every branch, so
+        /// naming a flag allocates nothing.
+        /// </summary>
+        public static string FoulName(Systems_FoulType foul)
+        {
+            switch (foul)
+            {
+                case Systems_FoulType.FalseStart: return "FALSE START";
+                case Systems_FoulType.Offside: return "OFFSIDE";
+                case Systems_FoulType.DelayOfGame: return "DELAY OF GAME";
+                case Systems_FoulType.OffensiveHolding: return "HOLDING";
+                case Systems_FoulType.DefensiveHolding: return "DEFENSIVE HOLDING";
+                case Systems_FoulType.DefensivePassInterference: return "PASS INTERFERENCE";
+                case Systems_FoulType.OffensivePassInterference: return "OFFENSIVE PASS INTERFERENCE";
+                case Systems_FoulType.RoughingThePasser: return "ROUGHING THE PASSER";
+                case Systems_FoulType.Facemask: return "FACEMASK";
+                case Systems_FoulType.IllegalBlockInTheBack: return "BLOCK IN THE BACK";
+                case Systems_FoulType.KickCatchInterference: return "KICK-CATCH INTERFERENCE";
+                case Systems_FoulType.IntentionalGrounding: return "INTENTIONAL GROUNDING";
+                default: return string.Empty;
+            }
+        }
+
+        /// <summary>
+        /// "   FLAG HOLDING HOM 10 yd" or "   FLAG HOLDING HOM declined", appended to
+        /// the banner's detail line, or nothing when there was no flag.
+        /// </summary>
+        public static string FoulDetail(
+            Systems_FoulType foul, Systems_TeamId team, bool accepted, float yards)
+        {
+            if (foul == Systems_FoulType.None)
+            {
+                return string.Empty;
+            }
+
+            string tail = accepted
+                ? (yards > 0.05f ? $"{Mathf.RoundToInt(yards)} yd" : "enforced")
+                : "declined";
+
+            return $"   FLAG {FoulName(foul)} {TeamTag(team)} {tail}";
+        }
+
+        /// <summary>"   TWO-MINUTE WARNING", appended to the banner's detail line, or nothing.</summary>
+        public static string TwoMinuteWarningDetail(bool given)
+        {
+            return given ? "   TWO-MINUTE WARNING" : string.Empty;
         }
 
         /// <summary>
@@ -218,21 +298,6 @@ namespace PoFootball.Views
             }
 
             return rounded > 0 ? $"+{rounded} yd" : $"{rounded} yd";
-        }
-
-        /// <summary>
-        /// The try after a touchdown, appended to the banner's detail line — and
-        /// only when it was a two-point try. The kick is awarded every time, so
-        /// saying so after every touchdown would be noise.
-        /// </summary>
-        public static string TryDetail(bool twoPointAttempted, bool twoPointGood)
-        {
-            if (!twoPointAttempted)
-            {
-                return string.Empty;
-            }
-
-            return twoPointGood ? "   2-PT GOOD" : "   2-PT NO GOOD";
         }
 
         /// <summary>"   TIMEOUT HOM", appended to the banner's detail line, or nothing.</summary>

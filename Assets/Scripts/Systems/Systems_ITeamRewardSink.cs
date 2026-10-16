@@ -35,11 +35,6 @@ namespace PoFootball.Systems
         /// not reference PoFootball.Rewards — the reward math is a training concern
         /// and lives on the far side of this seam, with the implementation.
         /// </summary>
-        void AddTeamTerminal(
-            Systems_TeamSide side,
-            Systems_PlayOutcome outcome,
-            float netYards,
-            bool passCompleted,
-            bool reachedLineToGain);
+        void AddTeamTerminal(Systems_TeamSide side, in Systems_PlayResult result);
     }
 }

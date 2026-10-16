@@ -40,6 +40,8 @@ namespace PoFootball.Tests
             public void SetCarrier(bool isCarrier) => IsCarrier = isCarrier;
 
             public void SetTeamColor(Color color) { }
+
+            public void Nudge(Vector2 velocity) => Velocity = velocity;
         }
 
         private Systems_SpectatorModel _model;

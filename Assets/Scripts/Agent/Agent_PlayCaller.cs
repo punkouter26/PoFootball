@@ -86,10 +86,11 @@ namespace PoFootball.Agents
             bool isInFieldGoalRange,
             Func<float> nextUnit)
         {
+            // On fourth down the kick was decided before the snap (ChooseKick); a
+            // play called now is going for it.
             if (down >= Systems_GameRules.DOWNS_PER_SERIES)
             {
-                return ChooseFourthDown(
-                    yardsToGo, yardsToGoal, isInFieldGoalRange, nextUnit);
+                return GoForIt(yardsToGo, yardsToGoal, nextUnit);
             }
 
             // Short yardage is a run everywhere on the field. The quarterback keeps
@@ -128,17 +129,25 @@ namespace PoFootball.Agents
         }
 
         /// <summary>
-        /// Fourth down: kick when kicking is what a real offense would do, and go for
-        /// it only when it is short enough or close enough to be worth it.
-        /// Deliberately conservative — the point is that the kicking calls actually
-        /// occur, not that the heuristic plays optimally.
+        /// The kick-or-go decision, made BEFORE the snap since revision 14 — a punt
+        /// is a formation, not something a quarterback can decide with the rush
+        /// already on him. Kick when kicking is what a real offense would do, and go
+        /// for it only when it is short enough or close enough to be worth it.
+        /// Deliberately conservative — the point is that the kicks actually occur,
+        /// not that the heuristic plays optimally. None means "go for it", and
+        /// anything but fourth down is always None.
         /// </summary>
-        private static Systems_PlayCall ChooseFourthDown(
+        internal static Systems_PlayCall ChooseKick(
+            int down,
             float yardsToGo,
             float yardsToGoal,
-            bool isInFieldGoalRange,
-            Func<float> nextUnit)
+            bool isInFieldGoalRange)
         {
+            if (down < Systems_GameRules.DOWNS_PER_SERIES)
+            {
+                return Systems_PlayCall.None;
+            }
+
             // Inside field-goal range, take the points unless it is short enough to
             // be a formality.
             if (isInFieldGoalRange && yardsToGo > SNEAK_YARDS)
@@ -150,12 +159,27 @@ namespace PoFootball.Agents
             // nothing: go for it.
             if (yardsToGo <= SHORT_YARDAGE_YARDS || yardsToGoal <= RED_ZONE_YARDS)
             {
-                return yardsToGo <= SNEAK_YARDS
-                    ? Systems_PlayCall.KeepQuarterback
-                    : Handoff(nextUnit);
+                return Systems_PlayCall.None;
             }
 
             return Systems_PlayCall.Punt;
+        }
+
+        /// <summary>Fourth down, not kicking: a sneak, a run, or a pass if it is long.</summary>
+        private static Systems_PlayCall GoForIt(
+            float yardsToGo, float yardsToGoal, Func<float> nextUnit)
+        {
+            if (yardsToGo <= SNEAK_YARDS)
+            {
+                return Systems_PlayCall.KeepQuarterback;
+            }
+
+            if (yardsToGo <= SHORT_YARDAGE_YARDS || yardsToGoal <= RED_ZONE_YARDS)
+            {
+                return Handoff(nextUnit);
+            }
+
+            return Systems_PlayCall.Pass;
         }
 
         /// <summary>

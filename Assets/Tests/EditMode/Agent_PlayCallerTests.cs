@@ -34,12 +34,14 @@ namespace PoFootball.Tests
 
         // --- The calls that used to be unreachable ---------------------------
 
+        // The kick is called BEFORE the snap since revision 14 (ChooseKick); a
+        // play called at the dropback on fourth down is going for it.
+
         [Test]
         public void FourthAndLong_OutOfFieldGoalRange_Punts()
         {
-            Systems_PlayCall call = Agent_PlayCaller.Choose(
-                down: 4, yardsToGo: 8f, yardsToGoal: MIDFIELD,
-                isInFieldGoalRange: false, nextUnit: AlwaysLow);
+            Systems_PlayCall call = Agent_PlayCaller.ChooseKick(
+                down: 4, yardsToGo: 8f, yardsToGoal: MIDFIELD, isInFieldGoalRange: false);
 
             Assert.That(call, Is.EqualTo(Systems_PlayCall.Punt));
         }
@@ -47,11 +49,35 @@ namespace PoFootball.Tests
         [Test]
         public void FourthAndLong_InFieldGoalRange_KicksIt()
         {
-            Systems_PlayCall call = Agent_PlayCaller.Choose(
-                down: 4, yardsToGo: 8f, yardsToGoal: 30f,
-                isInFieldGoalRange: true, nextUnit: AlwaysLow);
+            Systems_PlayCall call = Agent_PlayCaller.ChooseKick(
+                down: 4, yardsToGo: 8f, yardsToGoal: 30f, isInFieldGoalRange: true);
 
             Assert.That(call, Is.EqualTo(Systems_PlayCall.FieldGoal));
+        }
+
+        [Test]
+        public void FourthAndShort_GoesForIt()
+        {
+            Assert.That(
+                Agent_PlayCaller.ChooseKick(
+                    down: 4, yardsToGo: 2f, yardsToGoal: MIDFIELD, isInFieldGoalRange: false),
+                Is.EqualTo(Systems_PlayCall.None));
+
+            Systems_PlayCall call = Agent_PlayCaller.Choose(
+                down: 4, yardsToGo: 2f, yardsToGoal: MIDFIELD,
+                isInFieldGoalRange: false, nextUnit: AlwaysLow);
+
+            Assert.That(
+                call,
+                Is.Not.EqualTo(Systems_PlayCall.Punt).And.Not.EqualTo(Systems_PlayCall.FieldGoal));
+        }
+
+        [Test]
+        public void BeforeFourthDown_NoKickIsEverCalled([Values(1, 2, 3)] int down)
+        {
+            Assert.That(
+                Agent_PlayCaller.ChooseKick(down, 15f, MIDFIELD, isInFieldGoalRange: true),
+                Is.EqualTo(Systems_PlayCall.None));
         }
 
         [Test]
@@ -90,6 +116,9 @@ namespace PoFootball.Tests
 
                         seen[(int)Agent_PlayCaller.Choose(
                             down, toGo, toGoal, inRange, sweeping)] = true;
+
+                        seen[(int)Agent_PlayCaller.ChooseKick(
+                            down, toGo, toGoal, inRange)] = true;
                     }
                 }
             }
@@ -104,9 +133,9 @@ namespace PoFootball.Tests
             Assert.That(seen[(int)Systems_PlayCall.Punt], Is.True, "Punt");
             Assert.That(seen[(int)Systems_PlayCall.FieldGoal], Is.True, "FieldGoal");
 
-            Assert.That(
-                seen[(int)Systems_PlayCall.None], Is.False,
-                "None is the state before a call, never a call.");
+            // None is reachable now: it is ChooseKick's "go for it". Choose itself
+            // never returns it, which OnFirstThroughThirdDown and the fourth-down
+            // tests pin.
         }
 
         // --- Agreement with the action mask ----------------------------------

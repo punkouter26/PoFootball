@@ -681,11 +681,9 @@ namespace PoFootball.Views
         /// </summary>
         private void ConsiderHighlight(Systems_DownResolvedMessage message)
         {
-            if (IsKick(message.Outcome))
-            {
-                return;
-            }
-
+            // Kicks used to be skipped here because nobody played them. Since
+            // revision 14 a punt or a kickoff is fielded and returned on the field,
+            // and a long return is exactly what a highlight reel is for.
             int frames = Mathf.Min(_playFrames, _tape.Count);
 
             if (frames < MIN_HIGHLIGHT_TICKS)
@@ -791,13 +789,6 @@ namespace PoFootball.Views
             }
 
             return score;
-        }
-
-        private static bool IsKick(Systems_PlayOutcome outcome)
-        {
-            return outcome == Systems_PlayOutcome.Punt
-                || outcome == Systems_PlayOutcome.FieldGoalGood
-                || outcome == Systems_PlayOutcome.FieldGoalMissed;
         }
 
         /// <summary>

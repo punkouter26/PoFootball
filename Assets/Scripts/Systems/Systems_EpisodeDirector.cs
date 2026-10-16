@@ -43,6 +43,7 @@ namespace PoFootball.Systems
         private readonly Systems_ISpotProvider _spotProvider;
         private readonly Systems_FormationSelection _formations;
         private readonly Systems_ITrainingEpisodeBoundary _episodeBoundary;
+        private readonly Systems_PenaltySystem _penalties;
         private readonly IPublisher<Systems_PlaySnappedMessage> _snappedPublisher;
         private readonly ISubscriber<Systems_PlayEndedMessage> _endedSubscriber;
 
@@ -65,6 +66,7 @@ namespace PoFootball.Systems
             Systems_ISpotProvider spotProvider,
             Systems_FormationSelection formations,
             Systems_ITrainingEpisodeBoundary episodeBoundary,
+            Systems_PenaltySystem penalties,
             IPublisher<Systems_PlaySnappedMessage> snappedPublisher,
             ISubscriber<Systems_PlayEndedMessage> endedSubscriber)
         {
@@ -75,6 +77,7 @@ namespace PoFootball.Systems
             _spotProvider = spotProvider;
             _formations = formations;
             _episodeBoundary = episodeBoundary;
+            _penalties = penalties;
             _snappedPublisher = snappedPublisher;
             _endedSubscriber = endedSubscriber;
         }
@@ -136,6 +139,17 @@ namespace PoFootball.Systems
                 return;
             }
 
+            // A kick called before the snap: the kicking unit and the return or
+            // block team take their places. Here rather than in the call, which
+            // arrives from inside an agent's action callback.
+            if (_play.Phase == Systems_PlayPhase.PreSnap && _play.KickFormationPending)
+            {
+                _play.ClearKickFormationRequest();
+                _formations.UseFormationFor(_play.Kind);
+                FormUp(_play.LineOfScrimmageY, false);
+                return;
+            }
+
             if (_deadBallTicksRemaining > 0)
             {
                 _deadBallTicksRemaining--;
@@ -164,11 +178,7 @@ namespace PoFootball.Systems
             // Read before anything is disturbed: BeginEpisode overwrites the play
             // model, and in training the reward for the play that just ended has to
             // be computed from how it ended.
-            _episodeBoundary.EndEpisode(
-                _play.Outcome,
-                _play.NetYards,
-                _play.PassCompleted,
-                _play.NetYards >= _play.YardsToGo);
+            _episodeBoundary.EndEpisode(Systems_PlayResult.From(_play));
 
             // The contest may be over. The terminal reward above still had to be
             // paid — the last play of a game is as real as any other — but there is
@@ -212,20 +222,46 @@ namespace PoFootball.Systems
         {
             // Where the next snap comes from is the ONE thing that differs
             // between training and a played game, and it is entirely behind this
-            // call. Systems_RandomSpotProvider reproduces the seeded draw this
-            // method used to make inline, so a training run is unchanged;
+            // call. Systems_RandomSpotProvider draws it from a seeded stream;
             // Systems_GameFlowSystem returns whatever the chains say instead.
             Systems_PlaySituation situation = _spotProvider.NextSituation();
             float lineOfScrimmageY = situation.LineOfScrimmageY;
 
             // Both teams pick an alignment for this snap, from a stream of their
-            // own. Drawn here rather than inside the spot provider on purpose: the
-            // provider is the seam between training and a game, and the whole point
-            // of that seam is that the line of scrimmage is the ONLY thing that
-            // differs across it. Both modes reach this line, so both draw the same
-            // formation sequence and the invariant is untouched.
+            // own, and do so on EVERY snap — a kick included — so the formation
+            // sequence is the same however the plays fall. A kicking snap then lines
+            // its special-teams units up over the top of it.
             _formations.DrawNext();
+            _formations.UseFormationFor(situation.Kind);
+            _penalties.BeginPlay();
 
+            FormUp(lineOfScrimmageY, true);
+
+            Systems_IPlayerHandle quarterback =
+                _registry.Get(Systems_Formation.QUARTERBACK_SLOT_INDEX);
+
+            _referee.ResetContactTracking();
+
+            _play.BeginEpisode(
+                lineOfScrimmageY, quarterback.Position.y,
+                situation.Down, situation.YardsToGo,
+                situation.Kind, situation.OnsideKick);
+
+            // NOT SNAPPED HERE ANY MORE (revision 14). The teams stand set for
+            // Systems_SimConstants.PRESNAP_TICKS first — that is when a kick can be
+            // called and when somebody can jump — and Systems_Referee snaps it.
+            _snappedPublisher.Publish(
+                new Systems_PlaySnappedMessage(lineOfScrimmageY, _play.EpisodeIndex));
+        }
+
+        /// <summary>
+        /// Puts all twenty-two bodies in the current alignment at this line and the
+        /// ball in the quarterback's hands. <paramref name="restFirst"/> is false when
+        /// re-forming for a kick before the same snap: that is not a new play, and
+        /// fatigue is not rested twice.
+        /// </summary>
+        private void FormUp(float lineOfScrimmageY, bool restFirst)
+        {
             for (int slotIndex = 0; slotIndex < Systems_PlayerRegistry.CAPACITY; slotIndex++)
             {
                 Systems_FormationSlot slot = _formations.GetSlot(slotIndex);
@@ -234,26 +270,41 @@ namespace PoFootball.Systems
                 // Fatigue is settled BEFORE the body is restored, per CLAUDE.md
                 // section 2 (acceptance criterion #11). Rested rather than
                 // cleared since revision 12: see FATIGUE_CARRIED_BETWEEN_PLAYS.
-                player.RestBetweenPlays();
-                player.ResetTo(new Vector2(slot.OffsetX, lineOfScrimmageY + slot.OffsetY));
+                if (restFirst)
+                {
+                    player.RestBetweenPlays();
+                }
+
+                player.ResetTo(ClampToField(
+                    new Vector2(slot.OffsetX, lineOfScrimmageY + slot.OffsetY)));
                 player.SetCarrier(false);
             }
 
-            // The quarterback takes every snap.
+            // The quarterback takes every snap — the punter and the kicker are him.
             Systems_IPlayerHandle quarterback =
                 _registry.Get(Systems_Formation.QUARTERBACK_SLOT_INDEX);
             quarterback.SetCarrier(true);
 
-            _ball.AttachTo(Systems_Formation.QUARTERBACK_SLOT_INDEX, quarterback.Position);
-            _referee.ResetContactTracking();
+            _ball.ResetForSnap(Systems_Formation.QUARTERBACK_SLOT_INDEX, quarterback.Position);
+        }
 
-            _play.BeginEpisode(
-                lineOfScrimmageY, quarterback.Position.y,
-                situation.Down, situation.YardsToGo);
-            _play.Snap();
+        /// <summary>
+        /// Keeps a body on the field. A punt returner forty yards deep off a snap at
+        /// the opponent's thirty would otherwise line up behind the end zone.
+        /// </summary>
+        private static Vector2 ClampToField(Vector2 position)
+        {
+            const float INSIDE = 1f;
 
-            _snappedPublisher.Publish(
-                new Systems_PlaySnappedMessage(lineOfScrimmageY, _play.EpisodeIndex));
+            return new Vector2(
+                Mathf.Clamp(
+                    position.x,
+                    -Systems_FieldModel.HALF_WIDTH + INSIDE,
+                    Systems_FieldModel.HALF_WIDTH - INSIDE),
+                Mathf.Clamp(
+                    position.y,
+                    Systems_FieldModel.OWN_BACK_LINE_Y + INSIDE,
+                    Systems_FieldModel.ATTACKING_BACK_LINE_Y - INSIDE));
         }
 
         public void Dispose()

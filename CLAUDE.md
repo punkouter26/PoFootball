@@ -85,12 +85,17 @@ results/<run-id>/MANIFEST.md   one per run — records --num-envs, which is part
 ```
 
 **`Assets/Agents/Football_v02` is promoted but REFUSED, so every player runs
-`Heuristic` until a revision 13 run (`football_base15`) is promoted.** v02 came from
+`Heuristic` until a revision 14 run (`football_base16`) is promoted.** v02 came from
 `football_base14` (contract revision 12, 2026-10-03), a run cut short to 1.2M steps
 with a quarterback only 32k steps old and a defense that never learned to pursue
 (`results/football_base14/training_report.html`). It FAILED the realism gate at 6.80
 yards per play (see its MANIFEST.md), and revision 13 changed what a throw and a
 tackle do, which the table's revision 12 stamp now correctly refuses.
+
+**`football_base15` (revision 13, 12.7M / 1.27M steps) FINISHED ON 2026-10-04 AND WAS
+NEVER PROMOTED.** Revision 14 changed the shapes as well as the game, so it cannot
+load in this build at all. To promote or realism-check it, check out `981ba23`, the
+last revision 13 commit — and it will still only ever run in a revision 13 build.
 
 `Assets/Agents/Football_v01` is still on disk and is older still: `football_base12`,
 contract revision 10, 7M steps. While the build was on revision 10 all 22 players
@@ -118,7 +123,39 @@ To promote: train against a config for the CURRENT contract revision, run
 Editor. That last step is not optional — the Python side copies `.onnx` files but
 cannot write the ScriptableObject that lists them.
 
-**THE CURRENT REVISION IS 13, AND `Config/FootballBase15.yaml` IS ITS CONFIG.**
+**THE CURRENT REVISION IS 14, AND `Config/FootballBase16.yaml` IS ITS CONFIG.**
+Revision 14 (2026-10-15) PLAYS THE WHOLE GAME, and unlike 11-13 it changes the
+SHAPES: 45 observations (was 36) and a pitch branch on the Offense and Defense
+brains, so a shape check refuses an older brain as well as the stamp.
+`Agent_ActionContract` and `docs/GAME_LAYER.md` ("Rules implemented") have the detail:
+
+- **Kicks are snaps.** Kickoffs, punts, field goals and the try after a touchdown
+  line up in special-teams formations (`Systems_FormationBook`) and the ball is
+  kicked, fielded, fair-caught, muffed, blocked, returned or downed
+  (`Systems_BallSystem.Kick`, distances from `Systems_ISkillModel.DrawKick`). A
+  fourth-down kick is called by the quarterback BEFORE the snap; every other call
+  still latches at the dropback. `Systems_IKickModel` is gone.
+- **The ball changes hands mid-play.** An interception or a recovered fumble is a
+  return toward −Y; a stripped ball is loose and either side may fall on it; a
+  carrier may pitch to a man level or behind. `Systems_BallModel.PossessingSide`
+  and `Systems_PlayModel.ReturnOutcome` carry it.
+- **A pile is down by forward progress**; a carrier standing still with nobody near
+  has given himself up (`Downed`). `TimeExpired` is the trainer's ceiling only.
+- **Throwaways and intentional grounding**, and a `Sack` outcome.
+- **The officials** (`Systems_PenaltySystem`) flag holding, pass interference,
+  roughing, facemask, block in the back, kick-catch interference and grounding from
+  what the bodies did, with an official's chance. Training pays a flag in reward
+  (`FOUL_REWARD`); a game enforces it with accept/decline by expected points.
+- **A pre-snap** of `PRESNAP_TICKS` with the bodies FROZEN — a false start or an
+  offside is a drawn flinch (`Systems_IDisciplineModel`, game only), refereed.
+- **The game layer**: out-of-bounds clock rules, the two-minute warning, kneel and
+  spike, played tries, and the NFL's possession-owed overtime.
+
+The first played games on revision 14 (scripted players) read FINAL lines with every
+branch exercised — kickoffs returned and touched back, punts, field goals, extra
+points, interceptions returned, safeties, flags accepted and declined — and are
+recorded in `results/realism/`. Re-measure on the fixed seeds before tuning.
+
 Revision 13 (2026-10-03) makes execution fallible, with every shape left identical,
 so only the stamp refuses an older brain. Through revision 12 being in position was
 the whole of every skill — a ball inside `CATCH_RADIUS` was caught, a defender
@@ -199,8 +236,8 @@ run that ended in a tackle), a block no longer outpays the time cost, and there 
 no pursuit reward while the ball is in the air.
 
 Every config for an older contract is in `Config/archive/`, including
-FootballBase06-12 and 14, FootballLong01 and the six `experiments/` variants. Until
-a revision 13 run is promoted, every player is a heuristic.
+FootballBase06-12, 14 and 15, FootballLong01 and the six `experiments/` variants.
+Until a revision 14 run is promoted, every player is a heuristic.
 
 **Judge balance on fixed seeds.** Games with a pinned seed (`Systems_GameLifetimeScope
 ._varySeedPerGame` off, `_episodeSeed` set) replay exactly, and today's single
@@ -212,7 +249,7 @@ Note that `m_Model` references serialized in the scenes are dead either way:
 `Agent_BrainRegistry` at `Awake`, overwriting whatever the scene held.
 
 Heuristic-only is a supported, playable state, not a bug — but nothing you watch
-right now is a trained policy. **To change that, train and promote `football_base15`**
+right now is a trained policy. **To change that, train and promote `football_base16`**
 — see above.
 
 **Scenes.** `SCN_MENU` (front end) → `SCN_GAME` (a scored game) and
@@ -263,7 +300,7 @@ different dynamics than it was fitted against.
 
 # In-editor smoke test: start the trainer, then press Play.
 $env:CUDA_VISIBLE_DEVICES = "-1"     # MANDATORY on this machine. See below.
-mlagents-learn Config\FootballBase15.yaml --run-id=football_base15
+mlagents-learn Config\FootballBase16.yaml --run-id=football_base16
 
 # Headless sweep — envs take CONSECUTIVE ports from --base-port.
 # REBUILD Builds/FootballEnv FIRST whenever the contract revision moved:
@@ -272,7 +309,7 @@ mlagents-learn Config\FootballBase15.yaml --run-id=football_base15
 # stale env is NOT always refused by the handshake. That rebuild is on you.
 # --num-envs=4: measured 257.7 / 255.1 / 236.3 steps/s at 2 / 4 / 12 envs
 # (rl_optimization_log.md); the trainer is the bottleneck.
-mlagents-learn Config\FootballBase15.yaml --run-id=football_base15 `
+mlagents-learn Config\FootballBase16.yaml --run-id=football_base16 `
   --env=Builds\FootballEnv\PoFootball.exe --no-graphics `
   --base-port=5400 --num-envs=4
 
@@ -346,7 +383,7 @@ for `cpu`, the `else` branch only sets the dtype — it never puts the default d
 back. Hiding the GPU is what fixes it. Use `-1`; an empty string is ignored on Windows.
 
 `Config/archive/FootballBase06.yaml` (long superseded — the live config is
-`FootballBase15.yaml`, three behaviors, revision 13) carried **six** behaviors. The quarterback has its own brain
+`FootballBase16.yaml`, three behaviors, revision 14) carried **six** behaviors. The quarterback has its own brain
 — it is the only one with discrete actions, and while it shared `OffenseSkill`
 with the backs and receivers its play-call gradient was diluted five to one and
 its entropy bonus could not be raised without injecting noise into four other

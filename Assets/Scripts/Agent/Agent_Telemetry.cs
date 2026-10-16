@@ -114,6 +114,23 @@ namespace PoFootball.Agents
             stats.Add("Play/IncompletionRate", Rate(message.Outcome, Systems_PlayOutcome.Incompletion));
             stats.Add("Play/InterceptionRate", Rate(message.Outcome, Systems_PlayOutcome.Interception));
 
+            // Revision 14: the ball changes hands mid-play, kicks are played, and
+            // there are flags. These say whether any of that is happening at all.
+            stats.Add("Play/SackRate", Rate(message.Outcome, Systems_PlayOutcome.Sack));
+            stats.Add("Play/FumbleLostRate", Rate(message.Outcome, Systems_PlayOutcome.FumbleLost));
+            stats.Add("Play/DownedRate", Rate(message.Outcome, Systems_PlayOutcome.Downed));
+            stats.Add("Play/PossessionChangeRate", message.PossessionChanged ? 1f : 0f);
+            stats.Add("Play/FlagRate", message.FoulCount > 0 ? 1f : 0f);
+            stats.Add(
+                "Play/ReturnTouchdownRate",
+                message.Outcome == Systems_PlayOutcome.Touchdown
+                    && message.Side == Systems_TeamSide.Defense ? 1f : 0f);
+
+            if (message.Kind.IsKick())
+            {
+                RecordKick(stats, message);
+            }
+
             stats.Add("Play/NetYards", message.NetYards);
             stats.Add("Play/LengthTicks", message.PhysicsTicks);
 
@@ -168,6 +185,40 @@ namespace PoFootball.Agents
             stats.Add(
                 "Pass/IncompletionPerAttempt",
                 message.Outcome == Systems_PlayOutcome.Incompletion ? 1f : 0f);
+        }
+
+        /// <summary>
+        /// Kick plays only, so each series is a rate per kick of its own kind rather
+        /// than per snap. A punt's net and a kickoff's field position are what the
+        /// coverage and return units are being taught.
+        /// </summary>
+        private static void RecordKick(StatsRecorder stats, Systems_PlayEndedMessage message)
+        {
+            switch (message.Kind)
+            {
+                case Systems_PlayKind.Punt:
+                    stats.Add("Kick/PuntNetYards", message.NetYards);
+                    break;
+
+                case Systems_PlayKind.Kickoff:
+                    stats.Add(
+                        "Kick/KickoffReceivingYardLine",
+                        (Systems_FieldModel.ATTACKING_GOAL_LINE_Y - message.Spot.y)
+                            / Systems_FieldModel.YARD);
+                    stats.Add(
+                        "Kick/OnsideRecoveredRate",
+                        message.Outcome == Systems_PlayOutcome.KickRecovered ? 1f : 0f);
+                    break;
+
+                default:
+                    stats.Add(
+                        "Kick/PlacekickGoodRate",
+                        message.Outcome == Systems_PlayOutcome.FieldGoalGood ? 1f : 0f);
+                    break;
+            }
+
+            stats.Add(
+                "Kick/BlockedRate", message.Outcome == Systems_PlayOutcome.KickBlocked ? 1f : 0f);
         }
 
         private void RecordCall(Systems_PlayCall call)

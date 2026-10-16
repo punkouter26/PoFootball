@@ -123,6 +123,14 @@ namespace PoFootball.Agents
         /// <summary>Index on the throw branch that means "release".</summary>
         private const int THROW_RELEASE = 1;
 
+        /// <summary>
+        /// Every other brain's one discrete branch: pitch the ball (revision 14).
+        /// Index 1 on it means "pitch now".
+        /// </summary>
+        private const int LATERAL_BRANCH = 0;
+
+        private const int LATERAL_PITCH = 1;
+
         // --- Heuristic play-call thresholds ----------------------------------
         //
         // These shape ChooseCall only. They are NOT part of the action contract and
@@ -213,6 +221,19 @@ namespace PoFootball.Agents
         private Systems_Referee _referee;
 
         /// <summary>
+        /// The officials, told about every collision with an opponent. Null-checked
+        /// for the reason <see cref="_intentSink"/> is.
+        /// </summary>
+        private Systems_PenaltySystem _penalties;
+
+        /// <summary>
+        /// Systems_BallModel.PossessionEpoch as of the last dense-reward tick. When it
+        /// moves the ball has changed sides, been kicked or come loose, and the
+        /// yardage baseline is reset rather than paid across the gap.
+        /// </summary>
+        private int _lastPossessionEpoch = -1;
+
+        /// <summary>
         /// Training or Game. Read once, in Awake, for exactly one decision — see
         /// <see cref="ConfigureTrainerLink"/>. Defaults to Training, so an agent
         /// dropped into a scene with no lifetime scope behaves as it always has.
@@ -290,9 +311,11 @@ namespace PoFootball.Agents
             Systems_IIntentSink intentSink,
             Systems_IContactSink contactSink,
             Systems_FormationSelection formations,
-            Systems_SimHealthModel health)
+            Systems_SimHealthModel health,
+            Systems_PenaltySystem penalties)
         {
             _health = health;
+            _penalties = penalties;
             _play = play;
             _ball = ball;
             _ballSystem = ballSystem;
@@ -548,7 +571,25 @@ namespace PoFootball.Agents
                 hasPlay ? _play.LineOfScrimmageY : 0f,
                 hasPlay ? _play.Down : 1,
                 hasPlay ? _play.YardsToGo : Systems_GameRules.YARDS_TO_GAIN,
-                hasPlay ? _play.PhysicsTick : 0);
+                hasPlay ? _play.PhysicsTick : 0,
+                hasBall && _ball.IsKicked ? _ball.Height : 0f,
+                PossessionRelativeToMe(),
+                hasPlay ? _play.Kind : Systems_PlayKind.Scrimmage,
+                hasPlay && _play.Phase == Systems_PlayPhase.PreSnap);
+        }
+
+        /// <summary>
+        /// +1 when my side has the ball in its hands, -1 when the other side does, 0
+        /// when it is in the air or on the ground.
+        /// </summary>
+        private float PossessionRelativeToMe()
+        {
+            if (_ball == null || !_ball.IsHeld)
+            {
+                return 0f;
+            }
+
+            return _ball.PossessingSide == _side ? 1f : -1f;
         }
 
         /// <summary>
@@ -583,12 +624,36 @@ namespace PoFootball.Agents
         /// </summary>
         public override void WriteDiscreteActionMask(IDiscreteActionMask actionMask)
         {
-            if (!_hasQuarterbackActions || _play == null)
+            if (_play == null)
             {
                 return;
             }
 
-            if (!IsInCallLatchWindow())
+            if (!_hasQuarterbackActions)
+            {
+                // Revision 14: everybody but the quarterback can pitch, and only
+                // while carrying with somebody to pitch to.
+                actionMask.SetActionEnabled(LATERAL_BRANCH, LATERAL_PITCH, CanLateral());
+                return;
+            }
+
+            if (CanCallKickNow())
+            {
+                // BEFORE THE SNAP, ON FOURTH DOWN: kick, or not. None means "line up
+                // and go for it"; every scrimmage call waits for the dropback.
+                bool isInRange = IsInFieldGoalRange();
+
+                for (int callIndex = 1; callIndex < Sensor_FootballState.PLAY_CALL_BRANCH_SIZE; callIndex++)
+                {
+                    Systems_PlayCall call = (Systems_PlayCall)callIndex;
+
+                    bool allowed = call == Systems_PlayCall.Punt
+                        || (call == Systems_PlayCall.FieldGoal && isInRange);
+
+                    actionMask.SetActionEnabled(PLAY_CALL_BRANCH, callIndex, allowed);
+                }
+            }
+            else if (!IsInCallLatchWindow())
             {
                 for (int callIndex = 1; callIndex < Sensor_FootballState.PLAY_CALL_BRANCH_SIZE; callIndex++)
                 {
@@ -597,21 +662,31 @@ namespace PoFootball.Agents
             }
             else
             {
-                bool isFourthDown = _play.Down >= Systems_GameRules.DOWNS_PER_SERIES;
-
+                // AT THE DROPBACK: a scrimmage call, which must be made now. Kicks
+                // were a pre-snap decision and are no longer on offer.
                 actionMask.SetActionEnabled(
                     PLAY_CALL_BRANCH, (int)Systems_PlayCall.None, false);
 
                 actionMask.SetActionEnabled(
-                    PLAY_CALL_BRANCH, (int)Systems_PlayCall.Punt, isFourthDown);
+                    PLAY_CALL_BRANCH, (int)Systems_PlayCall.Punt, false);
 
                 actionMask.SetActionEnabled(
-                    PLAY_CALL_BRANCH,
-                    (int)Systems_PlayCall.FieldGoal,
-                    isFourthDown && IsInFieldGoalRange());
+                    PLAY_CALL_BRANCH, (int)Systems_PlayCall.FieldGoal, false);
             }
 
-            actionMask.SetActionEnabled(THROW_BRANCH, THROW_RELEASE, CanReleasePass());
+            actionMask.SetActionEnabled(
+                THROW_BRANCH, THROW_RELEASE, CanReleasePass() || CanLateral());
+        }
+
+        /// <summary>
+        /// Whether a decision taken now can latch a pre-snap kick: fourth down, set,
+        /// and inside the call window with a decision period to spare.
+        /// </summary>
+        private bool CanCallKickNow()
+        {
+            return _play.CanCallKick
+                && _play.PreSnapTick + Systems_SimConstants.DECISION_PERIOD
+                    < Systems_SimConstants.KICK_CALL_WINDOW_TICKS;
         }
 
         /// <summary>
@@ -626,9 +701,28 @@ namespace PoFootball.Agents
         /// </summary>
         private bool IsInCallLatchWindow()
         {
-            return !_play.CallIsLatched
+            return _play.Phase == Systems_PlayPhase.Live
+                && !_play.CallIsLatched
+                && (_play.Kind == Systems_PlayKind.Scrimmage || _play.Kind == Systems_PlayKind.TwoPoint)
                 && _play.PhysicsTick + (2 * Systems_SimConstants.DECISION_PERIOD)
                     > Systems_SimConstants.DROPBACK_TICKS;
+        }
+
+        /// <summary>
+        /// Whether this player may pitch the ball right now: carrying it, live, with
+        /// a team-mate level or behind inside range. The one authority for both the
+        /// mask and the action, as CanReleasePass is for the throw.
+        /// </summary>
+        private bool CanLateral()
+        {
+            return _isCarrier
+                && _play != null
+                && _play.Phase == Systems_PlayPhase.Live
+                && _ball != null
+                && _ball.IsHeld
+                && _ball.CarrierId == _formationSlotIndex
+                && _ballSystem != null
+                && _ballSystem.ResolveLateralTarget(this, Vector2.zero) != null;
         }
 
         /// <summary>
@@ -639,13 +733,18 @@ namespace PoFootball.Agents
         private bool CanReleasePass()
         {
             return _play.Call == Systems_PlayCall.Pass
+                && _play.Phase == Systems_PlayPhase.Live
+                && _play.Kind != Systems_PlayKind.Spike
+                && !_play.ForwardPassThrown
                 && _isCarrier
                 && _ball != null
                 && _ball.IsHeld
+                && _ball.CarrierId == _formationSlotIndex
                 && _play.PhysicsTick <= Systems_SimConstants.THROW_WINDOW_TICKS
-                // A FORWARD PASS MUST BE THROWN FROM BEHIND THE LINE OF SCRIMMAGE.
-                // Past it the quarterback has tucked it and is a runner, which is
-                // what a real one does; there is no penalty system to flag it.
+                // A FORWARD PASS MUST BE THROWN FROM BEHIND THE LINE OF SCRIMMAGE,
+                // and there is only one. Past the line the quarterback has tucked it
+                // and is a runner; the mask makes an illegal forward pass impossible
+                // rather than a foul waiting to be flagged.
                 && Position.y <= _play.LineOfScrimmageY;
         }
 
@@ -665,7 +764,26 @@ namespace PoFootball.Agents
 
         public override void OnActionReceived(ActionBuffers actions)
         {
-            if (_play == null || _play.Phase != Systems_PlayPhase.Live)
+            if (_play == null)
+            {
+                return;
+            }
+
+            // BEFORE THE SNAP NOTHING MOVES (revision 14) — the bodies are set, and
+            // the only decision anybody can make is the quarterback's kick-or-go.
+            // See Systems_SimConstants.PRESNAP_TICKS for why the bodies are frozen
+            // rather than driven.
+            if (_play.Phase == Systems_PlayPhase.PreSnap)
+            {
+                if (_hasQuarterbackActions)
+                {
+                    HandlePreSnapCall(actions);
+                }
+
+                return;
+            }
+
+            if (_play.Phase != Systems_PlayPhase.Live)
             {
                 return;
             }
@@ -685,6 +803,10 @@ namespace PoFootball.Agents
             if (_hasQuarterbackActions)
             {
                 HandleQuarterback(actions);
+            }
+            else
+            {
+                HandlePitch(actions);
             }
 
             ReportIntent(actions, drive, steer);
@@ -746,6 +868,36 @@ namespace PoFootball.Agents
         }
 
         /// <summary>
+        /// The kick-or-go call, before the snap, on fourth down. Anything but a kick
+        /// is refused by Systems_PlayModel.LatchCall in this window.
+        /// </summary>
+        private void HandlePreSnapCall(ActionBuffers actions)
+        {
+            if (!_play.CanCallKick)
+            {
+                return;
+            }
+
+            _play.LatchCall((Systems_PlayCall)actions.DiscreteActions[PLAY_CALL_BRANCH]);
+
+            if (_play.CallIsLatched)
+            {
+                ChargeCallRepetition(_play.Call);
+            }
+        }
+
+        /// <summary>A carrier who asks to pitch it, and can, does.</summary>
+        private void HandlePitch(ActionBuffers actions)
+        {
+            if (actions.DiscreteActions[LATERAL_BRANCH] != LATERAL_PITCH || !CanLateral())
+            {
+                return;
+            }
+
+            _ballSystem.TryLateral(this, Vector2.zero);
+        }
+
+        /// <summary>
         /// The quarterback commits to a call on its first decision after the snap
         /// and then executes it. The call is latched by the model, so anything sent
         /// on later steps is ignored.
@@ -794,11 +946,6 @@ namespace PoFootball.Agents
             // scripted quarterback holds the pocket (IsHoldingThePocket) and never
             // crosses the line while the throw window is open; a trained policy is
             // under no such habit and would find it.
-            if (!CanReleasePass())
-            {
-                return;
-            }
-
             if (discrete[THROW_BRANCH] != THROW_RELEASE)
             {
                 return;
@@ -807,7 +954,18 @@ namespace PoFootball.Agents
             ActionSegment<float> continuous = actions.ContinuousActions;
             Vector2 aim = new Vector2(continuous[2], continuous[3]);
 
-            _ballSystem.Throw(this, aim, Mathf.Clamp01(aim.magnitude));
+            if (CanReleasePass())
+            {
+                _ballSystem.Throw(this, aim, Mathf.Clamp01(aim.magnitude));
+                return;
+            }
+
+            // NO PASS ON — A PITCH, IF THERE IS A MAN TO PITCH TO (revision 14). The
+            // option, a fake punt, a scramble that runs out of room.
+            if (CanLateral())
+            {
+                _ballSystem.TryLateral(this, aim);
+            }
         }
 
         /// <summary>
@@ -976,9 +1134,15 @@ namespace PoFootball.Agents
             Vector2 ballPosition = _ball == null ? Position : _ball.Position;
             float ballDistance = Vector2.Distance(Position, ballPosition);
 
-            if (_lastSeenEpisode != _play.EpisodeIndex)
+            int epoch = _ball == null ? 0 : _ball.PossessionEpoch;
+
+            // A new play, or the ball changed sides, was kicked or came loose since
+            // the last tick: re-baseline, pay nothing across the gap. See
+            // Reward_Progress.CountsAsProgress.
+            if (_lastSeenEpisode != _play.EpisodeIndex || epoch != _lastPossessionEpoch)
             {
                 _lastSeenEpisode = _play.EpisodeIndex;
+                _lastPossessionEpoch = epoch;
                 _previousBallY = ballY;
                 _previousBallDistance = ballDistance;
                 return;
@@ -1012,6 +1176,24 @@ namespace PoFootball.Agents
         /// </summary>
         private float RoleReward(Vector2 ballPosition, float ballDistance, bool ballIsGrounded)
         {
+            // SINCE REVISION 14 THE BALL CAN BE EITHER SIDE'S. Pursuit is the job of
+            // whichever side does not have it; the offense's blocking and route
+            // shaping only mean anything while the offense does, and a defense
+            // returning a pick is not rewarded for running at its own man.
+            bool heldByOffense = _ball == null
+                || !_ball.IsHeld
+                || _ball.PossessingSide == Systems_TeamSide.Offense;
+
+            if (_side == Systems_TeamSide.Offense && !heldByOffense)
+            {
+                return Reward_Role.Pursuit(_previousBallDistance - ballDistance);
+            }
+
+            if (_side == Systems_TeamSide.Defense && !heldByOffense)
+            {
+                return 0f;
+            }
+
             if (_side == Systems_TeamSide.Defense)
             {
                 // Not while the ball is in the air. A 25 m/s pass moves away from
@@ -1111,6 +1293,8 @@ namespace PoFootball.Agents
                 return;
             }
 
+            ReportContactToOfficials(other, collision, true);
+
             if (!_isCarrier)
             {
                 ReportOffBallContact(other, collision);
@@ -1172,17 +1356,19 @@ namespace PoFootball.Agents
         {
             AccumulateContactImpulse(collision);
 
-            if (!_isCarrier || _referee == null)
-            {
-                return;
-            }
-
             if (!collision.gameObject.TryGetComponent(out Agent_FootballPlayer other))
             {
                 return;
             }
 
             if (other.Side == _side)
+            {
+                return;
+            }
+
+            ReportContactToOfficials(other, collision, false);
+
+            if (!_isCarrier || _referee == null)
             {
                 return;
             }
@@ -1199,6 +1385,24 @@ namespace PoFootball.Agents
             {
                 _contactSink.ReportGrind(collision.GetContact(0).point, relativeSpeed);
             }
+        }
+
+        /// <summary>
+        /// Every contact with an opponent, to the officials. ONE REPORT PER PAIR:
+        /// both bodies get the callback, so the lower slot speaks for both. Revision
+        /// 14 — before it nobody was watching.
+        /// </summary>
+        private void ReportContactToOfficials(
+            Agent_FootballPlayer other, Collision2D collision, bool isNewContact)
+        {
+            if (_penalties == null || _formationSlotIndex > other._formationSlotIndex)
+            {
+                return;
+            }
+
+            _penalties.ReportContact(
+                _formationSlotIndex, other._formationSlotIndex,
+                collision.relativeVelocity.magnitude, isNewContact);
         }
 
         public void RestBetweenPlays()
@@ -1230,14 +1434,14 @@ namespace PoFootball.Agents
             _rigidbody.angularVelocity = 0f;
         }
 
-        public void ApplyTerminalReward(
-            Systems_PlayOutcome outcome,
-            float netYards,
-            bool passCompleted,
-            bool reachedLineToGain)
+        public void Nudge(Vector2 velocity)
         {
-            AddReward(Reward_Terminal.For(
-                _side, outcome, netYards, passCompleted, reachedLineToGain));
+            _rigidbody.linearVelocity = velocity;
+        }
+
+        public void ApplyTerminalReward(in Systems_PlayResult result)
+        {
+            AddReward(Reward_Terminal.For(_side, in result));
         }
 
         public void EndEpisodeNow()
@@ -1328,7 +1532,24 @@ namespace PoFootball.Agents
                 discreteActions[index] = 0;
             }
 
-            if (_play == null || _play.Phase != Systems_PlayPhase.Live)
+            if (_play == null)
+            {
+                return;
+            }
+
+            // Before the snap the bodies are set; the only scripted decision is the
+            // quarterback's kick-or-go on fourth down.
+            if (_play.Phase == Systems_PlayPhase.PreSnap)
+            {
+                if (_hasQuarterbackActions && _play.CanCallKick)
+                {
+                    discreteActions[PLAY_CALL_BRANCH] = (int)ChooseKickCall();
+                }
+
+                return;
+            }
+
+            if (_play.Phase != Systems_PlayPhase.Live)
             {
                 return;
             }
@@ -1344,6 +1565,10 @@ namespace PoFootball.Agents
             {
                 HeuristicQuarterback(continuousActions, discreteActions);
             }
+            else
+            {
+                HeuristicPitch(discreteActions);
+            }
         }
 
         /// <summary>
@@ -1353,6 +1578,32 @@ namespace PoFootball.Agents
         private Vector2 TargetPoint()
         {
             Vector2 position = Position;
+
+            // A kneel-down or a spike: nobody plays.
+            if (_play.Kind == Systems_PlayKind.KneelDown || _play.Kind == Systems_PlayKind.Spike)
+            {
+                return position;
+            }
+
+            if (TrySpecialTeamsTarget(position, out Vector2 specialTeams))
+            {
+                return specialTeams;
+            }
+
+            // A LOOSE BALL IS EVERYBODY'S NEAR IT (revision 14). Whoever can get
+            // there in a few strides goes for it; the rest keep their jobs.
+            if (_ball != null && _ball.IsLoose
+                && Vector2.Distance(position, _ball.Position) < LOOSE_BALL_CHASE_METRES)
+            {
+                return _ball.Position;
+            }
+
+            // A pitch in the air: the side that threw it goes to meet it.
+            if (_ball != null && _ball.IsInFlight && _ball.PassKind == Systems_PassKind.Lateral
+                && Vector2.Distance(position, _ball.Position) < LATERAL_CHASE_METRES)
+            {
+                return _ball.Position;
+            }
 
             // Whoever has the ball runs at the goal line, drifting toward whichever
             // side of the field the nearest defender is not on. That drift is what
@@ -1388,7 +1639,7 @@ namespace PoFootball.Agents
                     + (Systems_SimConstants.POCKET_GOAL_LINE_CUSHION_YARDS
                         * Systems_FieldModel.YARD);
 
-                return new Vector2(position.x, Mathf.Max(dropback, floor));
+                return new Vector2(PocketX(position), Mathf.Max(dropback, floor));
             }
 
             // THE MESH POINT. On a latched handoff the quarterback runs AT THE BACK,
@@ -1473,12 +1724,31 @@ namespace PoFootball.Agents
                         * Systems_SimConstants.EVASION_LATERAL * closeness;
                 }
 
+                // At the goal line HIS side attacks: +Y for the offense of the snap,
+                // -Y for a defender returning a pick or a kick (revision 14).
                 return new Vector2(
                     Mathf.Clamp(
                         position.x + lateral,
                         -Systems_FieldModel.HALF_WIDTH,
                         Systems_FieldModel.HALF_WIDTH),
-                    Systems_FieldModel.ATTACKING_GOAL_LINE_Y);
+                    GoalLineYOf(_side));
+            }
+
+            // THE BALL IS THE OTHER SIDE'S: chase it. The defense of the snap has its
+            // assignments for that; the offense chasing a returner simply runs him
+            // down.
+            Systems_IPlayerHandle holder = CurrentCarrier();
+
+            if (holder != null && holder.Side != _side && _side == Systems_TeamSide.Offense)
+            {
+                return InterceptOf(holder);
+            }
+
+            // THE BALL IS OURS AND WE ARE THE DEFENSE OF THE SNAP: a return. Get in
+            // front of whoever is chasing it.
+            if (holder != null && holder.Side == _side && _side == Systems_TeamSide.Defense)
+            {
+                return ReturnBlockTarget(position, holder);
             }
 
             if (_side == Systems_TeamSide.Defense)
@@ -1893,14 +2163,26 @@ namespace PoFootball.Agents
         private void HeuristicQuarterback(
             ActionSegment<float> continuousActions, ActionSegment<int> discreteActions)
         {
+            // A kick, a kneel, a spike: the quarterback is a kicker or a clock, and
+            // throws nothing.
+            if (_play.Kind != Systems_PlayKind.Scrimmage && _play.Kind != Systems_PlayKind.TwoPoint)
+            {
+                return;
+            }
+
             if (!_play.CallIsLatched)
             {
                 discreteActions[0] = (int)ChooseCall();
                 return;
             }
 
-            if (_play.Call != Systems_PlayCall.Pass || !_isCarrier || _ball == null
-                || !_ball.IsHeld)
+            if (_play.Call == Systems_PlayCall.KeepQuarterback)
+            {
+                HeuristicOption(continuousActions, discreteActions);
+                return;
+            }
+
+            if (_play.Call != Systems_PlayCall.Pass || !CanReleasePass())
             {
                 return;
             }
@@ -1934,6 +2216,24 @@ namespace PoFootball.Agents
             if (target == null)
             {
                 target = MostOpenReceiver();
+            }
+
+            // NOBODY OPEN AND THE RUSH ON HIM (revision 14): from outside the
+            // tackle box he throws it away rather than take the sack. From inside
+            // it he throws to his read anyway — a throw at nobody from the pocket
+            // is intentional grounding.
+            bool covered = target == null || RoomOf(target) < COVERED_ROOM_METRES;
+
+            if (covered && IsUnderPressure()
+                && Mathf.Abs(Position.x) > Systems_SimConstants.TACKLE_BOX_HALF_WIDTH)
+            {
+                float sideline = Position.x >= 0f ? 1f : -1f;
+                Vector2 away = new Vector2(sideline, THROWAWAY_UPFIELD_SLOPE).normalized;
+
+                discreteActions[1] = 1;
+                continuousActions[2] = away.x;
+                continuousActions[3] = away.y;
+                return;
             }
 
             if (target == null)
@@ -2152,6 +2452,20 @@ namespace PoFootball.Agents
         /// takes, and handing over the seeded draw so the policy stays reproducible
         /// without owning an RNG of its own.
         /// </summary>
+        /// <summary>
+        /// The pre-snap kick-or-go, from <see cref="Agent_PlayCaller.ChooseKick"/>.
+        /// None means "go for it".
+        /// </summary>
+        private Systems_PlayCall ChooseKickCall()
+        {
+            float yardsToGoal =
+                (Systems_FieldModel.ATTACKING_GOAL_LINE_Y - _play.LineOfScrimmageY)
+                / Systems_FieldModel.YARD;
+
+            return Agent_PlayCaller.ChooseKick(
+                _play.Down, _play.YardsToGo, yardsToGoal, IsInFieldGoalRange());
+        }
+
         private Systems_PlayCall ChooseCall()
         {
             float yardsToGoal = _field == null
@@ -2389,6 +2703,403 @@ namespace PoFootball.Agents
                 if (room > bestRoom)
                 {
                     bestRoom = room;
+                    best = candidate;
+                }
+            }
+
+            return best;
+        }
+
+        // =====================================================================
+        // Revision 14: the scripted special teams, returns, pitches and throwaways
+        // =====================================================================
+
+        /// <summary>
+        /// A return-team blocker and the man he would block both have to be this
+        /// close to the returner for the block to be on, metres.
+        /// </summary>
+        private const float RETURN_BLOCKING_RANGE_METRES = 8f;
+
+        /// <summary>A loose ball this close is worth going for, metres.</summary>
+        private const float LOOSE_BALL_CHASE_METRES = 15f;
+
+        /// <summary>A pitch in the air this close is worth going to meet, metres.</summary>
+        private const float LATERAL_CHASE_METRES = 8f;
+
+        /// <summary>A read with a defender this close is blanketed, metres.</summary>
+        private const float COVERED_ROOM_METRES = 0.7f;
+
+        /// <summary>
+        /// Ticks before the throw window shuts at which a quarterback still holding
+        /// the ball under pressure breaks out of the pocket.
+        /// </summary>
+        private const int THROWAWAY_LEAD_TICKS = 25;
+
+        /// <summary>How far upfield a throwaway is aimed against how far sideways.</summary>
+        private const float THROWAWAY_UPFIELD_SLOPE = 0.6f;
+
+        /// <summary>A rusher this close is pressure, metres.</summary>
+        private const float PRESSURE_METRES = 3.5f;
+
+        /// <summary>
+        /// Chance per decision that a carrier about to be tackled pitches it to a
+        /// trailing team-mate. Small: a real game has a lateral every few games.
+        /// </summary>
+        private const float PITCH_CHANCE_PER_DECISION = 0.004f;
+
+        /// <summary>A carrier with a defender this close is about to be tackled, metres.</summary>
+        private const float ABOUT_TO_BE_TACKLED_METRES = 1.4f;
+
+        /// <summary>Distance at which the option quarterback pitches to the back, metres.</summary>
+        private const float OPTION_PITCH_METRES = 2.5f;
+
+        /// <summary>
+        /// The goal line this side attacks: +Y for the offense of the snap, -Y for the
+        /// defense, which only ever carries the ball on a return.
+        /// </summary>
+        private static float GoalLineYOf(Systems_TeamSide side)
+        {
+            return side == Systems_TeamSide.Offense
+                ? Systems_FieldModel.ATTACKING_GOAL_LINE_Y
+                : Systems_FieldModel.OWN_GOAL_LINE_Y;
+        }
+
+        /// <summary>
+        /// The quarterback's x in the pocket — where he stands, unless the rush is on
+        /// him late in the down, when he breaks out of the tackle box so that a
+        /// throwaway is legal.
+        /// </summary>
+        private float PocketX(Vector2 position)
+        {
+            bool late = _play.Call == Systems_PlayCall.Pass
+                && _play.PhysicsTick
+                    >= Systems_SimConstants.THROW_WINDOW_TICKS - (3 * THROWAWAY_LEAD_TICKS);
+
+            if (!late || !IsUnderPressure())
+            {
+                return position.x;
+            }
+
+            float side = position.x >= 0f ? 1f : -1f;
+            return side * (Systems_SimConstants.TACKLE_BOX_HALF_WIDTH + 2f);
+        }
+
+        private bool IsUnderPressure()
+        {
+            Systems_IPlayerHandle rusher = NearestOpponent();
+
+            return rusher != null
+                && Vector2.Distance(rusher.Position, Position) < PRESSURE_METRES;
+        }
+
+        /// <summary>Distance from this receiver to the nearest defender, metres.</summary>
+        private float RoomOf(Systems_IPlayerHandle receiver)
+        {
+            if (_registry == null)
+            {
+                return float.MaxValue;
+            }
+
+            float nearestSquared = float.MaxValue;
+
+            for (int slotIndex = 0; slotIndex < Systems_PlayerRegistry.CAPACITY; slotIndex++)
+            {
+                Systems_IPlayerHandle defender = _registry.Get(slotIndex);
+
+                if (defender == null || defender.Side == receiver.Side)
+                {
+                    continue;
+                }
+
+                nearestSquared = Mathf.Min(
+                    nearestSquared, (defender.Position - receiver.Position).sqrMagnitude);
+            }
+
+            return Mathf.Sqrt(nearestSquared);
+        }
+
+        /// <summary>
+        /// THE OPTION. A quarterback keeping it pitches to the halfback trailing him
+        /// once the edge defender commits — inside OPTION_PITCH_METRES.
+        /// </summary>
+        private void HeuristicOption(
+            ActionSegment<float> continuousActions, ActionSegment<int> discreteActions)
+        {
+            if (!CanLateral())
+            {
+                return;
+            }
+
+            Systems_IPlayerHandle chaser = NearestOpponent();
+
+            if (chaser == null
+                || Vector2.Distance(chaser.Position, Position) > OPTION_PITCH_METRES)
+            {
+                return;
+            }
+
+            Systems_IPlayerHandle back = _registry.Get(Systems_Formation.HALFBACK_SLOT_INDEX);
+
+            if (back == null || _ballSystem.ResolveLateralTarget(this, back.Position - Position) != back)
+            {
+                return;
+            }
+
+            Vector2 toBack = (back.Position - Position).normalized;
+
+            discreteActions[1] = 1;
+            continuousActions[2] = toBack.x;
+            continuousActions[3] = toBack.y;
+        }
+
+        /// <summary>A carrier about to go down sometimes gets rid of it to a man behind him.</summary>
+        private void HeuristicPitch(ActionSegment<int> discreteActions)
+        {
+            if (!CanLateral())
+            {
+                return;
+            }
+
+            Systems_IPlayerHandle chaser = NearestOpponent();
+
+            if (chaser == null
+                || Vector2.Distance(chaser.Position, Position) > ABOUT_TO_BE_TACKLED_METRES)
+            {
+                return;
+            }
+
+            if (NextHeuristicUnit() < PITCH_CHANCE_PER_DECISION)
+            {
+                discreteActions[LATERAL_BRANCH] = LATERAL_PITCH;
+            }
+        }
+
+        /// <summary>
+        /// A returner's blocker: between the nearest man chasing and the ball — but
+        /// only a man already near the returner. Everybody else runs with the play
+        /// and arrives too late to block anyone, which is what a return unit that
+        /// was set up to cover a pass actually does. Blocking every pursuer on the
+        /// field at once turned half the interceptions into touchdowns.
+        /// </summary>
+        private Vector2 ReturnBlockTarget(Vector2 position, Systems_IPlayerHandle returner)
+        {
+            Systems_IPlayerHandle chaser = NearestOpponent();
+
+            bool inThePlay = chaser != null
+                && Vector2.Distance(chaser.Position, returner.Position) < RETURN_BLOCKING_RANGE_METRES
+                && Vector2.Distance(position, returner.Position) < RETURN_BLOCKING_RANGE_METRES;
+
+            if (!inThePlay)
+            {
+                return returner.Position;
+            }
+
+            Vector2 toReturner = returner.Position - chaser.Position;
+
+            if (toReturner.sqrMagnitude < 0.0001f)
+            {
+                return chaser.Position;
+            }
+
+            return chaser.Position
+                + (toReturner.normalized * Systems_SimConstants.BLOCK_CUSHION);
+        }
+
+        /// <summary>
+        /// The kicking game, scripted. Returns false to fall through to the ordinary
+        /// jobs — a punt team's line blocks exactly as an offensive line does.
+        ///
+        /// BEFORE THE KICK: the kickoff units stand; on a punt the gunners release,
+        /// the punter waits, the rushers go for him and the jammers take the gunners;
+        /// on a placekick everybody blocks or rushes. IN THE AIR: the returner goes
+        /// to where it will come down, his team-mates get in front of the cover men,
+        /// and the cover team runs to the ball — all but the kicker, who stays back as
+        /// the last man.
+        /// </summary>
+        private bool TrySpecialTeamsTarget(Vector2 position, out Vector2 target)
+        {
+            target = position;
+            Systems_PlayKind kind = _play.Kind;
+
+            if (!kind.IsKick() || _ball == null)
+            {
+                return false;
+            }
+
+            bool beforeTheKick = !_play.WasKicked
+                && _ball.IsHeld
+                && _ball.CarrierId == Systems_Formation.QUARTERBACK_SLOT_INDEX
+                && _ball.PossessingSide == Systems_TeamSide.Offense;
+
+            if (beforeTheKick)
+            {
+                return BeforeTheKick(position, kind, ref target);
+            }
+
+            if (!_ball.IsKicked)
+            {
+                return false;
+            }
+
+            if (kind.IsPlaceKick())
+            {
+                // Nothing to do but watch it.
+                return true;
+            }
+
+            Vector2 landing = PredictKickLanding();
+
+            if (_side == Systems_TeamSide.Defense)
+            {
+                if (IsTheReturner(landing))
+                {
+                    _settleRadius = 1.5f;
+                    target = landing;
+                    return true;
+                }
+
+                Systems_IPlayerHandle coverMan = NearestOpponent();
+
+                if (coverMan == null)
+                {
+                    target = landing;
+                    return true;
+                }
+
+                Vector2 toLanding = landing - coverMan.Position;
+
+                target = toLanding.sqrMagnitude < 0.0001f
+                    ? coverMan.Position
+                    : coverMan.Position + (toLanding.normalized * Systems_SimConstants.BLOCK_CUSHION);
+
+                return true;
+            }
+
+            if (_hasQuarterbackActions)
+            {
+                // The kicker is the last man back.
+                target = new Vector2(
+                    landing.x * 0.3f,
+                    Mathf.Min(landing.y - 15f, _play.LineOfScrimmageY + 20f));
+
+                _settleRadius = ZONE_SETTLE_RADIUS;
+                return true;
+            }
+
+            target = landing;
+            return true;
+        }
+
+        private bool BeforeTheKick(Vector2 position, Systems_PlayKind kind, ref Vector2 target)
+        {
+            if (_side == Systems_TeamSide.Offense)
+            {
+                if (kind == Systems_PlayKind.Kickoff || _hasQuarterbackActions)
+                {
+                    target = position;
+                    return true;
+                }
+
+                // The gunners are off at the snap.
+                if (kind == Systems_PlayKind.Punt && _role == Systems_PlayerRole.WideReceiver)
+                {
+                    target = new Vector2(position.x, Systems_FieldModel.ATTACKING_GOAL_LINE_Y);
+                    return true;
+                }
+
+                // Everybody else blocks, exactly as a line does.
+                return false;
+            }
+
+            if (kind == Systems_PlayKind.Kickoff || _role == Systems_PlayerRole.Safety)
+            {
+                _settleRadius = ZONE_SETTLE_RADIUS;
+                target = position;
+                return true;
+            }
+
+            if (kind == Systems_PlayKind.Punt && _role == Systems_PlayerRole.Cornerback)
+            {
+                Systems_IPlayerHandle gunner = NearestOpponentOfRole(Systems_PlayerRole.WideReceiver);
+
+                if (gunner != null)
+                {
+                    target = InterceptOf(gunner);
+                    return true;
+                }
+            }
+
+            Systems_IPlayerHandle kicker = _registry == null
+                ? null
+                : _registry.Get(Systems_Formation.QUARTERBACK_SLOT_INDEX);
+
+            target = kicker == null ? position : InterceptOf(kicker);
+            return true;
+        }
+
+        /// <summary>
+        /// Where the kick in the air will come down: the projectile solved for the
+        /// tick its height reaches the turf.
+        /// </summary>
+        private Vector2 PredictKickLanding()
+        {
+            float vertical = _ball.VerticalVelocity;
+            float height = Mathf.Max(0f, _ball.Height);
+            float gravity = Systems_SimConstants.KICK_GRAVITY;
+
+            float seconds = (vertical + Mathf.Sqrt((vertical * vertical) + (2f * gravity * height)))
+                / gravity;
+
+            Vector2 landing = _ball.Position + (_ball.Velocity * seconds);
+
+            return new Vector2(
+                Mathf.Clamp(landing.x, -Systems_FieldModel.HALF_WIDTH, Systems_FieldModel.HALF_WIDTH),
+                Mathf.Clamp(
+                    landing.y, Systems_FieldModel.OWN_BACK_LINE_Y, Systems_FieldModel.ATTACKING_BACK_LINE_Y));
+        }
+
+        /// <summary>The safety nearer to where the kick is coming down fields it; the other blocks.</summary>
+        private bool IsTheReturner(Vector2 landing)
+        {
+            if (_role != Systems_PlayerRole.Safety || _registry == null)
+            {
+                return false;
+            }
+
+            int otherSlot = _formationSlotIndex == Systems_FormationBook.FREE_SAFETY_SLOT_INDEX
+                ? Systems_FormationBook.STRONG_SAFETY_SLOT_INDEX
+                : Systems_FormationBook.FREE_SAFETY_SLOT_INDEX;
+
+            Systems_IPlayerHandle other = _registry.Get(otherSlot);
+
+            return other == null
+                || (Position - landing).sqrMagnitude <= (other.Position - landing).sqrMagnitude;
+        }
+
+        private Systems_IPlayerHandle NearestOpponentOfRole(Systems_PlayerRole role)
+        {
+            if (_registry == null)
+            {
+                return null;
+            }
+
+            Systems_IPlayerHandle best = null;
+            float bestSquared = float.MaxValue;
+
+            for (int slotIndex = 0; slotIndex < Systems_PlayerRegistry.CAPACITY; slotIndex++)
+            {
+                Systems_IPlayerHandle candidate = _registry.Get(slotIndex);
+
+                if (candidate == null || candidate.Side == _side || candidate.Role != role)
+                {
+                    continue;
+                }
+
+                float squared = (candidate.Position - Position).sqrMagnitude;
+
+                if (squared < bestSquared)
+                {
+                    bestSquared = squared;
                     best = candidate;
                 }
             }
