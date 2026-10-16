@@ -233,6 +233,12 @@ namespace PoFootball.Agents
         /// </summary>
         private float _settleRadius;
 
+        /// <summary>The scripted quarterback's call for this snap; see PlannedCall.</summary>
+        private Systems_PlayCall _plannedCall;
+
+        /// <summary>The play <see cref="_plannedCall"/> was drawn for.</summary>
+        private int _plannedCallEpisode = -1;
+
         private readonly int[] _callCounts =
             new int[Sensor_FootballState.PLAY_CALL_BRANCH_SIZE];
 
@@ -1767,6 +1773,21 @@ namespace PoFootball.Agents
             // line, straight into the four linemen rushing it, while still holding
             // the ball it was about to throw. Only once the throw window closes is
             // it really out of options, and only then does it scramble.
+            // A RUN DOES NOT DROP BACK. The call is drawn before the latch
+            // (PlannedCall), so on a planned run the quarterback stays at the depth
+            // he took the snap at — out of his own end zone if he took it there —
+            // and the back meets him there, instead of seven yards deep.
+            if (_isCarrier && _hasQuarterbackActions && !_play.CallIsLatched
+                && (_play.Kind == Systems_PlayKind.Scrimmage || _play.Kind == Systems_PlayKind.TwoPoint)
+                && IsRunCall(PlannedCall()))
+            {
+                return new Vector2(
+                    position.x,
+                    Mathf.Max(
+                        position.y,
+                        Systems_FieldModel.OWN_GOAL_LINE_Y + RUN_GOAL_LINE_CUSHION_METRES));
+            }
+
             if (_isCarrier && _hasQuarterbackActions && IsHoldingThePocket())
             {
                 float dropback = _play.LineOfScrimmageY
@@ -1916,6 +1937,20 @@ namespace PoFootball.Agents
                 if (opponent == null)
                 {
                     return new Vector2(position.x, position.y + 4f);
+                }
+
+                // RUN BLOCKING: FIRE OUT, THEN DRIVE (2026-10-16). Every snap was
+                // pass protection — stand on the rusher's line to the ball — and on
+                // a run the ball is a back six metres deep, so the whole line gave
+                // ground toward him: sampled on the merged build, the defensive
+                // front drove it from a metre behind the line to nearly five in
+                // 1.2 s, and the handoff was taken inside the collapse. Every
+                // snap now starts with the line coming off the ball into the man
+                // in front, aiming past him upfield; a run keeps driving, and only
+                // a called pass sets up to protect.
+                if (!_play.CallIsLatched || IsRunCall(_play.Call))
+                {
+                    return opponent.Position + new Vector2(0f, RUN_BLOCK_DRIVE_METRES);
                 }
 
                 Vector2 anchor = _ball == null ? position : _ball.Position;
@@ -2102,9 +2137,16 @@ namespace PoFootball.Agents
                 return position;
             }
 
+            // A PASS IN THE AIR: GO TO WHERE IT IS GOING (2026-10-16). Every defender
+            // used to steer at the ball's current position, which on a long throw
+            // is behind the catch for its whole flight: eleven men converged on
+            // where the ball had been, arrived after the receiver had it, and in a
+            // measured game fourteen of thirty-seven passes went for touchdowns.
+            // The same intercept every defender already runs at a carrier, solved
+            // against the ball's velocity, puts them on its path instead.
             if (_ball.IsInFlight)
             {
-                return _ball.Position;
+                return InterceptPoint(_ball.Position, _ball.Velocity);
             }
 
             Systems_IPlayerHandle carrier = CurrentCarrier();
@@ -2162,16 +2204,25 @@ namespace PoFootball.Agents
         /// </summary>
         private Vector2 InterceptOf(Systems_IPlayerHandle carrier)
         {
+            return InterceptPoint(carrier.Position, carrier.Velocity);
+        }
+
+        /// <summary>
+        /// Where to run to meet something moving at <paramref name="velocity"/> from
+        /// <paramref name="from"/>: a carrier, or a ball in the air.
+        /// </summary>
+        private Vector2 InterceptPoint(Vector2 from, Vector2 velocity)
+        {
             float speed = _topSpeed;
 
             if (speed <= 0.01f)
             {
-                return carrier.Position;
+                return from;
             }
 
             Vector2 origin = Position;
-            Vector2 carrierPosition = carrier.Position;
-            Vector2 carrierVelocity = carrier.Velocity;
+            Vector2 carrierPosition = from;
+            Vector2 carrierVelocity = velocity;
 
             Vector2 aim = carrierPosition;
 
@@ -2317,7 +2368,7 @@ namespace PoFootball.Agents
 
             if (!_play.CallIsLatched)
             {
-                discreteActions[0] = (int)ChooseCall();
+                discreteActions[0] = (int)PlannedCall();
                 return;
             }
 
@@ -2611,6 +2662,29 @@ namespace PoFootball.Agents
                 _play.Down, _play.YardsToGo, yardsToGoal, IsInFieldGoalRange());
         }
 
+        /// <summary>
+        /// This snap's scripted call, drawn on first asking and then held. It used
+        /// to be redrawn every decision until the latch took whichever came up at
+        /// DROPBACK_TICKS, so nothing before the latch could act on it.
+        /// </summary>
+        private Systems_PlayCall PlannedCall()
+        {
+            if (_plannedCallEpisode != _play.EpisodeIndex)
+            {
+                _plannedCallEpisode = _play.EpisodeIndex;
+                _plannedCall = ChooseCall();
+            }
+
+            return _plannedCall;
+        }
+
+        private static bool IsRunCall(Systems_PlayCall call)
+        {
+            return call == Systems_PlayCall.HandoffFullback
+                || call == Systems_PlayCall.HandoffHalfback
+                || call == Systems_PlayCall.KeepQuarterback;
+        }
+
         private Systems_PlayCall ChooseCall()
         {
             float yardsToGoal = _field == null
@@ -2875,6 +2949,12 @@ namespace PoFootball.Agents
 
         /// <summary>A loose ball this close is worth going for, metres.</summary>
         private const float LOOSE_BALL_CHASE_METRES = 15f;
+
+        /// <summary>How far past the man in front a run blocker aims: through him, upfield.</summary>
+        private const float RUN_BLOCK_DRIVE_METRES = 1.5f;
+
+        /// <summary>How far out of his own end zone a quarterback holding for a run stands.</summary>
+        private const float RUN_GOAL_LINE_CUSHION_METRES = 2.0f;
 
         /// <summary>A pitch in the air this close is worth going to meet, metres.</summary>
         private const float LATERAL_CHASE_METRES = 8f;

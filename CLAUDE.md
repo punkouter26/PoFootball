@@ -446,12 +446,18 @@ PoFootball.EditorTools.Editor_RealismEval.RunBatch` without `-quit`.
 last three were logged is judged on the first two) and records the verdict in that
 version's MANIFEST.md.
 
-The scripted players FAIL the new bands — four seeds, 2026-10-16, crowd rule in:
-6.41 yd/play and 0.24 TD/drive inside the old bands, but -1.45 yd/carry and 0.04
-first downs a play (`results/realism/realism-20261016-003418.json`). Their run game
-loses because the defensive line reaches the mesh before the back does; a shallower,
-downhill mesh was measured on the same seeds and changed nothing (-2.07 against
--1.71), so it was not kept.
+The scripted players FAIL the new bands. On revision 15, four fixed seeds:
+
+| scripted build | yd/play | TD/drive | yd/carry | completion | 1st downs/play |
+|---|---|---|---|---|---|
+| merge as committed (`realism-20261016-095716.json`) | 5.22 | 0.24 | -2.70 | 0.65 | 0.07 |
+| + line fires out, drives on runs; no dropback on a run | 8.63 | 0.30 | -0.37 | 0.61 | 0.08 |
+| + defenders aim at a pass's path (`realism-20261016-101114.json`) | 7.48 | 0.29 | -0.65 | 0.57 | 0.05 |
+
+The two heuristic changes fix real defects (a line that gave ground on every run,
+defenders converging on where a thrown ball HAD been) and were kept, but the
+scripted game is still a run game that loses ground and a pass game that goes the
+distance. A trained revision 15 brain, gated on these bands, is the way out.
 
 `Tools > PoFootball > Sim Speed > 8x` (editor-only, `Assets/Editor/Editor_SimSpeed.cs`)
 turns a full game from ~10 minutes into ~100 seconds. It raises `Time.timeScale`
