@@ -274,8 +274,14 @@ def inspect_onnx(path: Path) -> dict:
         if name.startswith("obs_") and len(dims) == 2 and isinstance(dims[1], int)
     )
 
-    continuous = None
+    # A brain with no continuous actions exports no `continuous_actions` output
+    # at all, so its absence IS the count: zero. Revision 16's DefenseCall is the
+    # first such brain, and reading the absence as None refused football_base22's
+    # perfectly good coordinator with `None != expected 0`. A malformed output
+    # that IS present still reads None and is still refused.
+    continuous = 0
     if "continuous_actions" in outputs:
+        continuous = None
         dims = outputs["continuous_actions"]
         if len(dims) == 2 and isinstance(dims[1], int):
             continuous = dims[1]
