@@ -149,6 +149,13 @@ namespace PoFootball.Rewards
         /// </summary>
         private static float FoulReward(in Systems_PlayResult result)
         {
+            // Priced from the fouls themselves when the result was read off a play
+            // (Systems_FoulPrice): what each would have cost in a game.
+            if (result.OffenseFoulCost >= 0f && result.DefenseFoulCost >= 0f)
+            {
+                return result.DefenseFoulCost - result.OffenseFoulCost;
+            }
+
             float extra = Systems_SimConstants.PERSONAL_FOUL_REWARD - Systems_SimConstants.FOUL_REWARD;
 
             float offenseCost = (result.OffenseFouls * Systems_SimConstants.FOUL_REWARD)

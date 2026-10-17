@@ -717,5 +717,56 @@ namespace PoFootball.Tests
             Assert.That(extraPoint, Is.LessThan(twoPoint));
             Assert.That(extraPoint, Is.GreaterThan(0f));
         }
+
+        // --- Foul prices (2026-10-16) ------------------------------------------
+
+        /// <summary>
+        /// Interfering with a receiver must never be cheaper than letting him catch
+        /// it: a game hands over the catch, the spot and a first down anyway.
+        /// </summary>
+        [Test]
+        public void PassInterference_CostsTheDefenseMoreThanTheCatchItStopped()
+        {
+            float lineOfScrimmage = 0f;
+            Systems_Foul interference = new Systems_Foul(
+                Systems_FoulType.DefensivePassInterference, Systems_TeamSide.Defense, 15,
+                lineOfScrimmage + (20f * Systems_FieldModel.YARD), 60);
+
+            float cost = Systems_FoulPrice.Of(interference, lineOfScrimmage, false, false);
+
+            Assert.That(
+                cost,
+                Is.GreaterThanOrEqualTo(
+                    Systems_SimConstants.COMPLETION_REWARD + Systems_SimConstants.FIRST_DOWN_REWARD
+                    + (20f * Systems_SimConstants.YARD_REWARD_SCALE) - 0.001f));
+        }
+
+        /// <summary>Holding that sprang a run past the sticks gives the first down back.</summary>
+        [Test]
+        public void OffensiveHoldingOnAPlayThatMovedTheChains_CostsTheFirstDown()
+        {
+            Systems_Foul holding = new Systems_Foul(
+                Systems_FoulType.OffensiveHolding, Systems_TeamSide.Offense, 2, 0f, 40);
+
+            float cost = Systems_FoulPrice.Of(holding, 0f, false, true);
+
+            Assert.That(
+                cost,
+                Is.GreaterThanOrEqualTo(Systems_SimConstants.FIRST_DOWN_REWARD + 0.1f - 0.001f));
+        }
+
+        /// <summary>No flag is cheaper than the old flat price.</summary>
+        [Test]
+        public void EveryFoul_CostsAtLeastTheFlatPrice()
+        {
+            foreach (Systems_FoulType type in System.Enum.GetValues(typeof(Systems_FoulType)))
+            {
+                foreach (Systems_TeamSide side in new[] { Systems_TeamSide.Offense, Systems_TeamSide.Defense })
+                {
+                    float cost = Systems_FoulPrice.Of(new Systems_Foul(type, side, 0, 0f, 0), 0f, false, false);
+                    Assert.That(cost, Is.GreaterThanOrEqualTo(Systems_SimConstants.FOUL_REWARD), $"{side} {type}");
+                }
+            }
+        }
     }
 }

@@ -1,3 +1,7 @@
+# ARCHIVED 2026-10-16: football_base18's config. The run was stopped at ~2.7M steps
+# because a flat 0.15 per flag made fouls pay (flag rate 4% -> 12%); its successor
+# is Config/FootballBase19.yaml (football_base19), same contract, fouls priced.
+#
 # PoFootball -- the first config against CONTRACT_REVISION 16.
 #
 # Pairs 1:1 with run-id `football_base18` (UNITY_RULES section 1).

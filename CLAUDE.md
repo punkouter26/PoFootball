@@ -59,7 +59,7 @@ Unity ML-Agents self-play.
 - Overwrite `.onnx` in place to preserve `.meta` GUIDs.
 - Headless: `--env --no-graphics` + explicit `--base-port` (envs take consecutive ports; collisions hang). 4–8 envs, leaving cores for torch. `--num-envs` changes how experience is batched — record it.
 - Telemetry over HTTP *and* `StatsRecorder` (`Agent_Telemetry`, a component on `/Systems` in `SCN_TRAIN_FOOTBALL` only). Kill TensorBoard before `--force`: it holds Windows handles and the wipe silently no-ops. Clean up trainer → envs → TensorBoard.
-- **Judge self-play on ELO, not mean reward** — *when self-play is actually running*. It is not, in any `FootballBase` config from base05 onward, so there is no `Self-play/ELO` for those; judge them on `Call/Entropy` and the play mix. The reason [docs/TRAINING_NOTES_base05.md](docs/TRAINING_NOTES_base05.md) gives for removing it — that ML-Agents self-play cannot model two different behaviors playing each other — is **wrong**: `GhostTrainer` handles one behavior per team, and the official `StrikersVsGoalie.yaml` is exactly that with `poca`. `Config/FootballSelf01.yaml` switches it back on as an experiment against the `football_base18` baseline; its header has the settings, the likely real cause of the base04 stall, and why its ELO is a trend and not a win rate.
+- **Judge self-play on ELO, not mean reward** — *when self-play is actually running*. It is not, in any `FootballBase` config from base05 onward, so there is no `Self-play/ELO` for those; judge them on `Call/Entropy` and the play mix. The reason [docs/TRAINING_NOTES_base05.md](docs/TRAINING_NOTES_base05.md) gives for removing it — that ML-Agents self-play cannot model two different behaviors playing each other — is **wrong**: `GhostTrainer` handles one behavior per team, and the official `StrikersVsGoalie.yaml` is exactly that with `poca`. `Config/FootballSelf01.yaml` switches it back on as an experiment against the `football_base19` baseline; its header has the settings, the likely real cause of the base04 stall, and why its ELO is a trend and not a win rate.
 
 ---
 
@@ -85,7 +85,7 @@ results/<run-id>/MANIFEST.md   one per run — records --num-envs, which is part
 ```
 
 **`Assets/Agents/Football_v02` is promoted but REFUSED, so every player runs
-`Heuristic` until a revision 16 run (`football_base18`) is promoted.** v02 came from
+`Heuristic` until a revision 16 run (`football_base19`) is promoted.** v02 came from
 `football_base14` (contract revision 12, 2026-10-03), a run cut short to 1.2M steps
 with a quarterback only 32k steps old and a defense that never learned to pursue
 (`results/football_base14/training_report.html`). It FAILED the realism gate at 6.80
@@ -123,7 +123,11 @@ To promote: train against a config for the CURRENT contract revision, run
 Editor. That last step is not optional — the Python side copies `.onnx` files but
 cannot write the ScriptableObject that lists them.
 
-**THE CURRENT REVISION IS 16, AND `Config/FootballBase18.yaml` IS ITS CONFIG.**
+**THE CURRENT REVISION IS 16, AND `Config/FootballBase19.yaml` IS ITS CONFIG.**
+(`FootballBase18`, archived, was its first: `football_base18` kept the front spread
+but its flag rate climbed from 4% to 12% of plays, because training priced a flag
+at a flat 0.15 while a completion pays 0.45. `Systems_FoulPrice` now charges each
+flag what it would give away in a game; a reward change, so still revision 16.)
 Revision 16 (2026-10-16) gives the defense's front A BRAIN OF ITS OWN. Revision 15
 read it off a second branch of the Defense brain, sampled from the middle
 linebacker alone, and `football_base17` called the zero blitz on 37% of plays at
@@ -344,7 +348,7 @@ run that ended in a tackle), a block no longer outpays the time cost, and there 
 no pursuit reward while the ball is in the air.
 
 Every config for an older contract is in `Config/archive/`, including
-FootballBase06-12 and 14-17, FootballLong01 and the six `experiments/`
+FootballBase06-12 and 14-18, FootballLong01 and the six `experiments/`
 variants. Until a revision 16 run is promoted, every player is a heuristic.
 
 **Judge balance on fixed seeds.** Games with a pinned seed (`Systems_GameLifetimeScope
@@ -357,7 +361,7 @@ Note that `m_Model` references serialized in the scenes are dead either way:
 `Agent_BrainRegistry` at `Awake`, overwriting whatever the scene held.
 
 Heuristic-only is a supported, playable state, not a bug — but nothing you watch
-right now is a trained policy. **To change that, train and promote `football_base18`**
+right now is a trained policy. **To change that, train and promote `football_base19`**
 — see above.
 
 **Scenes.** `SCN_MENU` (front end) → `SCN_GAME` (a scored game) and
@@ -415,7 +419,7 @@ recreate `.venv` (the two commands at the top of `requirements.txt`).
 
 # In-editor smoke test: start the trainer, then press Play.
 $env:CUDA_VISIBLE_DEVICES = "-1"     # MANDATORY on this machine. See below.
-mlagents-learn Config\FootballBase18.yaml --run-id=football_base18
+mlagents-learn Config\FootballBase19.yaml --run-id=football_base19
 
 # Headless sweep — envs take CONSECUTIVE ports from --base-port.
 # REBUILD Builds/FootballEnv FIRST whenever the contract revision moved:
@@ -424,7 +428,7 @@ mlagents-learn Config\FootballBase18.yaml --run-id=football_base18
 # stale env is NOT always refused by the handshake. That rebuild is on you.
 # --num-envs=4: measured 257.7 / 255.1 / 236.3 steps/s at 2 / 4 / 12 envs
 # (rl_optimization_log.md); the trainer is the bottleneck.
-mlagents-learn Config\FootballBase18.yaml --run-id=football_base18 `
+mlagents-learn Config\FootballBase19.yaml --run-id=football_base19 `
   --env=Builds\FootballEnv\PoFootball.exe --no-graphics `
   --base-port=5400 --num-envs=4
 
@@ -518,7 +522,7 @@ for `cpu`, the `else` branch only sets the dtype — it never puts the default d
 back. Hiding the GPU is what fixes it. Use `-1`; an empty string is ignored on Windows.
 
 `Config/archive/FootballBase06.yaml` (long superseded — the live config is
-`FootballBase18.yaml`, four behaviors, revision 16) carried **six** behaviors. The quarterback has its own brain
+`FootballBase19.yaml`, four behaviors, revision 16) carried **six** behaviors. The quarterback has its own brain
 — it is the only one with discrete actions, and while it shared `OffenseSkill`
 with the backs and receivers its play-call gradient was diluted five to one and
 its entropy bonus could not be raised without injecting noise into four other

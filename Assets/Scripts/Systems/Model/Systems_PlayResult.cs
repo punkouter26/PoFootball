@@ -38,6 +38,16 @@ namespace PoFootball.Models
         public readonly int DefensePersonalFouls;
 
         /// <summary>
+        /// What the offense's flags on this play would have cost it in a game, in
+        /// reward units (Systems_FoulPrice). Negative means "not priced": the flat
+        /// FOUL_REWARD per count, for callers that only know the counts.
+        /// </summary>
+        public readonly float OffenseFoulCost;
+
+        /// <summary>The defense's, likewise.</summary>
+        public readonly float DefenseFoulCost;
+
+        /// <summary>
         /// For a kick play that ended with the receivers holding the ball: the yard
         /// line they will start from, measured from their own goal line.
         /// </summary>
@@ -88,8 +98,12 @@ namespace PoFootball.Models
             int defenseFouls,
             int defensePersonalFouls,
             float receivingYardLine,
-            float kickNetYards)
+            float kickNetYards,
+            float offenseFoulCost = -1f,
+            float defenseFoulCost = -1f)
         {
+            OffenseFoulCost = offenseFoulCost;
+            DefenseFoulCost = defenseFoulCost;
             Outcome = outcome;
             Kind = kind;
             NetYards = netYards;
@@ -112,21 +126,32 @@ namespace PoFootball.Models
             int offensePersonal = 0;
             int defenseFouls = 0;
             int defensePersonal = 0;
+            float offenseCost = 0f;
+            float defenseCost = 0f;
+
+            bool reachedLine = !play.PossessionChanged
+                && play.Outcome != Systems_PlayOutcome.Incompletion
+                && play.DeadBallSpot.y >= play.LineToGainY - 0.01f;
 
             for (int index = 0; index < play.FoulCount; index++)
             {
                 Systems_Foul foul = play.GetFoul(index);
                 bool personal = foul.Type.IsPersonalFoul();
 
+                float cost = Systems_FoulPrice.Of(
+                    foul, play.LineOfScrimmageY, play.PassCompleted, reachedLine);
+
                 if (foul.Side == Systems_TeamSide.Offense)
                 {
                     offenseFouls++;
                     offensePersonal += personal ? 1 : 0;
+                    offenseCost += cost;
                 }
                 else
                 {
                     defenseFouls++;
                     defensePersonal += personal ? 1 : 0;
+                    defenseCost += cost;
                 }
             }
 
@@ -150,10 +175,6 @@ namespace PoFootball.Models
 
             float kickNetYards = (startY - play.LineOfScrimmageY) / Systems_FieldModel.YARD;
 
-            bool reachedLine = !play.PossessionChanged
-                && play.Outcome != Systems_PlayOutcome.Incompletion
-                && play.DeadBallSpot.y >= play.LineToGainY - 0.01f;
-
             return new Systems_PlayResult(
                 play.Outcome,
                 play.Kind,
@@ -167,7 +188,9 @@ namespace PoFootball.Models
                 defenseFouls,
                 defensePersonal,
                 receivingYardLine,
-                kickNetYards);
+                kickNetYards,
+                offenseCost,
+                defenseCost);
         }
     }
 }

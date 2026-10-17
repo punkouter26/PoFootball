@@ -1,4 +1,4 @@
-# PoFootball -- FootballBase18 with ML-Agents self-play switched back on.
+# PoFootball -- FootballBase19 with ML-Agents self-play switched back on.
 #
 # Pairs 1:1 with run-id `football_self01`. Contract revision 16 (was written for the
 # other machine's revision 14 and updated since), the same env build.
