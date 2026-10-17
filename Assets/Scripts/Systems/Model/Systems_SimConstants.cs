@@ -1434,6 +1434,12 @@ namespace PoFootball.Models
         /// <summary>Chance an official flags a block in the back he could see.</summary>
         public const float BLOCK_IN_BACK_CALL_CHANCE = 0.15f;
 
+        /// <summary>
+        /// Depth either side of the line of the close-line zone, yards: between the
+        /// tackles and this close, a block from behind is legal (NFL Rule 12-1-3).
+        /// </summary>
+        public const float CLOSE_LINE_YARDS = 3f;
+
         /// <summary>Contact on a returner with the kick this close to him is kick-catch interference.</summary>
         public const float KICK_CATCH_INTERFERENCE_RANGE = 5f;
 

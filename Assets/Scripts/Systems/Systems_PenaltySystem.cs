@@ -51,6 +51,7 @@ namespace PoFootball.Systems
         private readonly int[] _lastContactTick = new int[PAIRS];
         private readonly bool[] _holdingJudged = new bool[PAIRS];
         private readonly bool[] _contactJudged = new bool[PAIRS];
+        private readonly bool[] _backJudged = new bool[PAIRS];
 
         public Systems_PenaltySystem(
             Systems_PlayModel play, Systems_BallModel ball, Systems_PlayerRegistry registry)
@@ -72,6 +73,7 @@ namespace PoFootball.Systems
                 _lastContactTick[pair] = -100;
                 _holdingJudged[pair] = false;
                 _contactJudged[pair] = false;
+                _backJudged[pair] = false;
             }
         }
 
@@ -300,13 +302,28 @@ namespace PoFootball.Systems
 
         /// <summary>
         /// A blocker on the side with the ball hitting an opponent squarely from
-        /// behind — measured against the way the man hit was running.
+        /// behind — measured against the way the man hit was FACING.
         /// </summary>
+        /// <remarks>
+        /// WHY (2026-10-17). This read the victim's VELOCITY, and in a trained
+        /// game it was 35 of 37 flags and 11-12% of all plays (football_base19 at
+        /// 1.3M steps): a defensive back backpedalling in coverage moves away from
+        /// the receiver blocking him while facing him, so every stalk block on a
+        /// chest read as a hit in the back. Two more things made it worse. Every
+        /// new collision of the same pair drew again, and two bodies leaning on
+        /// each other bounce into a fresh collision many times a play, so one
+        /// block was judged a dozen times; it is judged once a pair a play now.
+        /// And it flagged linemen in close-line play, where a block from behind is
+        /// legal (NFL Rule 12-1-3): between the tackles and within three yards of
+        /// the line.
+        /// </remarks>
         private void TryBlockInTheBack(
             int pair, Systems_IPlayerHandle offense, Systems_IPlayerHandle defense,
             float closingSpeed)
         {
-            if (!_ball.IsHeld || closingSpeed < Systems_SimConstants.BLOCK_IN_BACK_MIN_SPEED)
+            if (_backJudged[pair]
+                || !_ball.IsHeld
+                || closingSpeed < Systems_SimConstants.BLOCK_IN_BACK_MIN_SPEED)
             {
                 return;
             }
@@ -316,23 +333,36 @@ namespace PoFootball.Systems
             Systems_IPlayerHandle blocker = holder == Systems_TeamSide.Offense ? offense : defense;
             Systems_IPlayerHandle victim = holder == Systems_TeamSide.Offense ? defense : offense;
 
-            if (blocker.IsCarrier || victim.IsCarrier || victim.Velocity.sqrMagnitude < 1f)
+            if (blocker.IsCarrier || victim.IsCarrier || victim.Velocity.sqrMagnitude < 1f
+                || (IsCloseLinePlay(blocker) && IsCloseLinePlay(victim)))
             {
                 return;
             }
 
-            Vector2 victimHeading = victim.Velocity.normalized;
             Vector2 fromBlocker = (victim.Position - blocker.Position).normalized;
 
-            if (Vector2.Dot(victimHeading, fromBlocker) < Systems_SimConstants.BLOCK_IN_BACK_COS)
+            if (Vector2.Dot(victim.Facing, fromBlocker) < Systems_SimConstants.BLOCK_IN_BACK_COS)
             {
                 return;
             }
 
             _contactJudged[pair] = true;
+            _backJudged[pair] = true;
 
             Flag(Systems_SimConstants.BLOCK_IN_BACK_CALL_CHANCE,
                 Systems_FoulType.IllegalBlockInTheBack, holder, blocker.Id, blocker.Position.y);
+        }
+
+        /// <summary>
+        /// Inside the close-line zone: between the tackles and within
+        /// CLOSE_LINE_YARDS of the line of scrimmage, where blocks from behind are
+        /// legal.
+        /// </summary>
+        private bool IsCloseLinePlay(Systems_IPlayerHandle player)
+        {
+            return Mathf.Abs(player.Position.x) <= Systems_SimConstants.TACKLE_BOX_HALF_WIDTH
+                && Mathf.Abs(player.Position.y - _play.LineOfScrimmageY)
+                    <= Systems_SimConstants.CLOSE_LINE_YARDS * Systems_FieldModel.YARD;
         }
 
         /// <summary>

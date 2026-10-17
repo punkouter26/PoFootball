@@ -298,6 +298,8 @@ namespace PoFootball.Agents
 
         public Vector2 Velocity => _rigidbody == null ? Vector2.zero : _rigidbody.linearVelocity;
 
+        public Vector2 Facing => _transform == null ? Vector2.up : (Vector2)_transform.up;
+
         public float Fatigue => _fatigue;
 
         public bool IsCarrier => _isCarrier;

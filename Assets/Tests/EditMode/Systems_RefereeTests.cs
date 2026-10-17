@@ -33,6 +33,9 @@ namespace PoFootball.Tests
 
             public Vector2 Velocity { get; set; }
 
+
+            public Vector2 Facing { get; set; } = Vector2.up;
+
             public bool IsCarrier { get; private set; }
 
             /// <summary>
@@ -1606,6 +1609,95 @@ namespace PoFootball.Tests
             _referee.ReportContactWithCarrier(11, Systems_SimConstants.TACKLE_CLOSING_SPEED + 1f);
 
             Assert.That(_play.Outcome, Is.EqualTo(Systems_PlayOutcome.Sack));
+        }
+
+        // --- Block in the back (2026-10-17) ------------------------------------
+
+        /// <summary>
+        /// Plays, each with one blocker bumping one defender over and over, in which
+        /// the officials flagged a block in the back. The defender moves AWAY from
+        /// the blocker in every case; only which way he faces, and where, changes.
+        /// </summary>
+        private int BlockInTheBackFlags(Vector2 blockerAt, Vector2 victimFacing, int plays)
+        {
+            int blockerId = SlotOf(Systems_PlayerRole.WideReceiver);
+            int victimId = SlotOf(Systems_PlayerRole.Cornerback);
+            int flagged = 0;
+
+            for (int playIndex = 0; playIndex < plays; playIndex++)
+            {
+                _play.BeginEpisode(0f, _quarterback.Position.y, 1, Systems_GameRules.YARDS_TO_GAIN);
+                _play.Snap();
+                _penalties.BeginPlay();
+
+                StubPlayer blocker = Player(blockerId);
+                StubPlayer victim = Player(victimId);
+                Vector2 line = new Vector2(0f, _play.LineOfScrimmageY);
+
+                blocker.Position = line + blockerAt;
+                victim.Position = blocker.Position + new Vector2(0f, 1f);
+                victim.Velocity = new Vector2(0f, 3f);
+                victim.Facing = victimFacing;
+
+                for (int bump = 0; bump < 20; bump++)
+                {
+                    _penalties.ReportContact(
+                        blockerId, victimId, Systems_SimConstants.BLOCK_IN_BACK_MIN_SPEED + 2f, true);
+                }
+
+                flagged += _play.HasFoul(Systems_TeamSide.Offense, Systems_FoulType.IllegalBlockInTheBack) ? 1 : 0;
+            }
+
+            return flagged;
+        }
+
+        private int SlotOf(Systems_PlayerRole role)
+        {
+            for (int slot = 0; slot < Systems_PlayerRegistry.CAPACITY; slot++)
+            {
+                if (_registry.Get(slot).Role == role)
+                {
+                    return slot;
+                }
+            }
+
+            Assert.Fail($"no {role} in the formation");
+            return -1;
+        }
+
+        /// <summary>
+        /// A corner backpedalling in coverage moves away from the receiver blocking
+        /// him while FACING him. That is a block on his chest. It was judged by his
+        /// velocity until 2026-10-17 and was most of football_base19's flags.
+        /// </summary>
+        [Test]
+        public void BlockingABackpedallingDefenderInTheChest_IsLegal()
+        {
+            int flagged = BlockInTheBackFlags(new Vector2(12f, 8f), Vector2.down, 100);
+
+            Assert.That(flagged, Is.Zero);
+        }
+
+        /// <summary>
+        /// One look a block, however many times the two bodies bounce into a new
+        /// collision: at BLOCK_IN_BACK_CALL_CHANCE a play, not one roll a bump.
+        /// Twenty rolls a play flagged ~96 plays in 100.
+        /// </summary>
+        [Test]
+        public void ABlockInTheBack_IsJudgedOnceAPlay_NotOnEveryBump()
+        {
+            int flagged = BlockInTheBackFlags(new Vector2(12f, 8f), Vector2.up, 100);
+
+            Assert.That(flagged, Is.InRange(3, 40));
+        }
+
+        /// <summary>Between the tackles and within three yards of the line, it is legal (NFL Rule 12-1-3).</summary>
+        [Test]
+        public void ABlockFromBehindInCloseLinePlay_IsLegal()
+        {
+            int flagged = BlockInTheBackFlags(new Vector2(1f, 0.5f), Vector2.up, 100);
+
+            Assert.That(flagged, Is.Zero);
         }
 
         [Test]

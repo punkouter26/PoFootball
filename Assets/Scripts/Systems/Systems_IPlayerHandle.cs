@@ -31,6 +31,14 @@ namespace PoFootball.Systems
         Vector2 Velocity { get; }
 
         /// <summary>
+        /// The unit vector the body faces. Not its velocity: a defensive back
+        /// backpedalling in coverage moves away from a receiver while facing him,
+        /// and an official calling a block in the back judges which side of the
+        /// man was hit, not which way he was drifting.
+        /// </summary>
+        Vector2 Facing { get; }
+
+        /// <summary>
         /// Accumulated exertion in [0, 1], where 1 is the maximum penalty the
         /// simulation applies. Exposed for presentation only — a tired player is
         /// drawn desaturated, which is the one piece of internal agent state a

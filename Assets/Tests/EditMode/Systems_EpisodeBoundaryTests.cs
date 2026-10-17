@@ -33,6 +33,9 @@ namespace PoFootball.Tests
 
             public Vector2 Velocity { get; set; }
 
+
+            public Vector2 Facing { get; set; } = Vector2.up;
+
             public bool IsCarrier { get; private set; }
 
             public float Fatigue => 0f;
@@ -90,6 +93,9 @@ namespace PoFootball.Tests
             public Vector2 Position { get; set; }
 
             public Vector2 Velocity { get; set; }
+
+
+            public Vector2 Facing { get; set; } = Vector2.up;
 
             public bool IsCarrier { get; private set; }
 
