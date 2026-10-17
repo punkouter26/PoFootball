@@ -1,0 +1,166 @@
+# PoFootball -- CONTRACT_REVISION 16, with the DEFENSE BRAIN RETRAINED FROM SCRATCH.
+#
+# Pairs 1:1 with run-id `football_base23` (UNITY_RULES section 1).
+#
+# Launch (CUDA_VISIBLE_DEVICES=-1 is MANDATORY on this machine -- see CLAUDE.md).
+# NO --initialize-from: each behavior names its own init_path below, and Defense
+# deliberately has none.
+#   $env:CUDA_VISIBLE_DEVICES = "-1"
+#   mlagents-learn Config/FootballBase23.yaml --run-id=football_base23 `
+#     --env=Builds/FootballEnv/PoFootball.exe --no-graphics `
+#     --base-port=5400 --num-envs=4
+#
+# WHY. football_base22 (FootballBase22, archived) was promoted as Football_v03 and
+# FAILED the realism gate on all five bands (results/realism/realism-20261017-112731.json:
+# 8.21 yards a play, 0.42 TDs a drive, 8.89 a carry, 0.87 completions, 0.10 first
+# downs a play). Replaying it in the Editor, the cause was one passive Defense
+# brain: with a carrier 10+ yards downfield the eleven defenders' mean drive
+# output was 0.10 (41% of it backwards), they faced the carrier no more than away
+# from him, and moved at 13-15% of their top speed -- 37 touchdowns averaging 45
+# yards against 2 carriers ever tackled past ten yards. Even with the ball at the
+# line they moved ~1 m/s: no sacks in three million steps, 89% of throws complete.
+#
+# That defense was learned while standing off PAID: until 2026-10-17 a stall was
+# priced above a tackle for the defense and the 600-tick ceiling whistled every
+# breakaway dead, and the brain spent ~5M steps (base19-21) fitting that. base22's
+# three million steps under the corrected rules moved touchdowns only from 16% of
+# plays to 10%. So the Defense brain starts from scratch here, under the rules as
+# they now are, while Offense, Quarterback and DefenseCall keep base22's weights.
+# Expect the defense to be beaten badly for the first million steps or so.
+#
+# Same hyperparameters, FullGame only, a ten-hour window (8M / 800k / 16k).
+#
+# WHAT TO READ IN THIS RUN:
+#   Play/FlagRate           should stay near 4-5% and fall; base18 and base19 reached 12%.
+#   DefenseCall/<front>     the series base17 collapsed on. It should stay spread
+#                           and move with the situation, not settle on one front.
+#   Play/TimeExpiredRate    near 0 once anybody tackles (the crowd rule).
+#   Call/Entropy, Call/PassDeep, Call/Punt, Call/FieldGoal
+#   Kick/PuntNetYards       40 is par.  Play/FlagRate should fall.
+#   Play/NetYards counts a kickoff's distance once FullGame starts; it is not game
+#   yards per play.
+#
+# THE TRAINER SETTINGS are FootballBase17's -- time_horizon 124, the 7.5M / 750k
+# ten-hour budget, the lessons at 1.5M and 3.4M Offense steps -- plus DefenseCall.
+#
+# AFTER IT FINISHES:
+#   .venv\Scripts\python.exe Tools\promote_brain.py --run football_base19 `
+#     --version 03 --num-envs 4
+#   then Unity: Tools > PoFootball > Build Brain Table, Evaluate Realism (4 fixed
+#   seeds), and promote_brain.py --version 03 --check-realism <report>.
+
+behaviors:
+  # MA-POCA for the two ten- and eleven-man groups; see archive/FootballBase11.yaml
+  # for why, and Systems_BrainGroup for why there are three behaviours, not six.
+  Offense: &football_brain
+    trainer_type: poca
+    init_path: results/football_base22/Offense/checkpoint.pt
+
+    hyperparameters:
+      batch_size: 1024
+      buffer_size: 20480
+      learning_rate: 3.0e-4
+      beta: 5.0e-3
+      epsilon: 0.2
+      lambd: 0.95
+      num_epoch: 3
+      learning_rate_schedule: constant
+      beta_schedule: constant
+      epsilon_schedule: constant
+
+    network_settings:
+      normalize: false            # Sensor_FootballState emits [-1, 1] already;
+                                  # Systems_ContractTests asserts this stays off.
+      hidden_units: 256
+      num_layers: 2
+      vis_encode_type: simple
+
+    reward_signals:
+      extrinsic:
+        gamma: 0.99
+        strength: 1.0
+
+    keep_checkpoints: 20
+    checkpoint_interval: 100000
+    max_steps: 8000000              # a ten-hour window at ~0.8M Offense steps an hour
+
+    # One whole play: (MAX_PHYSICS_TICKS 600 + PRESNAP_TICKS 20) / DECISION_PERIOD 5.
+    # Pinned by Systems_ContractTests.
+    time_horizon: 124
+
+    summary_freq: 50000
+    threaded: false               # deterministic ordering (UNITY_RULES section 2)
+
+  Defense:
+    <<: *football_brain
+    init_path: null                 # FROM SCRATCH -- see the header
+
+  Quarterback:
+    <<: *football_brain
+    init_path: results/football_base22/Quarterback/checkpoint.pt
+    trainer_type: ppo
+    max_steps: 800000
+    checkpoint_interval: 10000      # the QB steps 10x slower; at 100000 a stop before 100k lost the whole brain
+    hyperparameters:
+      batch_size: 256
+      buffer_size: 2048
+      learning_rate: 3.0e-4
+      beta: 5.0e-2                # ten times the movement brains; see Base11
+      epsilon: 0.2
+      lambd: 0.95
+      num_epoch: 5
+      learning_rate_schedule: constant
+      beta_schedule: constant
+      epsilon_schedule: constant
+
+  # Revision 16: the defensive coordinator. No body, one decision a play (the
+  # front), so its own small net and its own exploration bonus -- ten times the
+  # movement brains', as the quarterback's is. In football_base17 the front sat on
+  # the Defense brain's 5e-3 and collapsed onto the zero blitz by 2M steps.
+  DefenseCall:
+    <<: *football_brain
+    init_path: results/football_base22/DefenseCall/checkpoint.pt
+    trainer_type: ppo
+    max_steps: 16000                # ~one decision a play; ~1.5k an hour
+    checkpoint_interval: 1000
+    summary_freq: 1000
+    time_horizon: 8                 # every episode is one step
+    hyperparameters:
+      batch_size: 64
+      buffer_size: 640
+      learning_rate: 3.0e-4
+      beta: 5.0e-2
+      epsilon: 0.2
+      lambd: 0.95
+      num_epoch: 5
+      learning_rate_schedule: constant
+      beta_schedule: constant
+      epsilon_schedule: constant
+    network_settings:
+      normalize: false
+      hidden_units: 64
+      num_layers: 2
+      vis_encode_type: simple
+
+environment_parameters:
+  # FullGame only: the offense's weights finished OpenFieldEarlyDowns in base21. Kickoffs and tries are drawn only in this lesson
+  # (Systems_RandomSpotProvider).
+  spot_lesson: 2.0
+
+env_settings:
+  # --env, --num-envs and --base-port go on the command line (see the header).
+  # Record --num-envs in the run's MANIFEST.md; promote_brain.py does it for you.
+  seed: 1
+
+engine_settings:
+  time_scale: 20                  # physics stays at dt=0.02; this only speeds the clock
+  quality_level: 0
+  target_frame_rate: -1
+  capture_frame_rate: 60
+
+torch_settings:
+  device: cpu                     # Not sufficient alone: launch with
+                                  # CUDA_VISIBLE_DEVICES=-1 (see CLAUDE.md).
+
+checkpoint_settings:
+  results_dir: results
