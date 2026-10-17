@@ -446,6 +446,25 @@ namespace PoFootball.Systems
             // every trainer config. See Systems_PlayModel.MAX_PHYSICS_TICKS.
             if (_play.PhysicsTick >= Systems_PlayModel.MAX_PHYSICS_TICKS)
             {
+                // A BREAKAWAY IS A TOUCHDOWN, NOT A TACKLE. The ceiling is the
+                // same in a played game, and it whistled carriers who were running
+                // free for the goal: football_base21 at 1.2M steps hit it on 53
+                // plays in 590 of a full game, every one a carrier 40-62 m past
+                // the line, at 4-6 m/s, with nobody within 17-54 m. Priced as a
+                // tackle on the spot, that taught the defense that a breakaway is
+                // not worth chasing. The official projects the run instead: if no
+                // opponent, at his top speed, can reach the carrier's path to the
+                // goal before the carrier at the forward speed he is actually
+                // running, he is gone.
+                if (IsGoneForTheGoal(carrier))
+                {
+                    Vector2 goal = new Vector2(position.x, GoalLineYOf(carrier.Side));
+                    _play.SetBallY(goal.y);
+                    _scorePublisher.Publish(new Systems_ScoreMessage(carrier.Id, _play.NetYards));
+                    EndPlay(Systems_PlayOutcome.Touchdown, goal, carrier.Side);
+                    return;
+                }
+
                 EndMapped(Systems_PlayOutcome.TimeExpired, position, carrier.Side);
                 return;
             }
@@ -1145,6 +1164,66 @@ namespace PoFootball.Systems
         }
 
         /// <summary>Whether a carrier on this side at this Y has crossed the goal line he attacks.</summary>
+        /// <summary>
+        /// Whether nobody can catch the carrier before the goal line: he is running
+        /// at BREAKAWAY_MIN_SPEED or more toward it, and no opponent, running at his
+        /// role's top speed, reaches any point of the straight path to the goal
+        /// within BREAKAWAY_REACH_METRES before the carrier gets there. The
+        /// carrier is judged at the pace he is actually running, so a jog is
+        /// caught; the defenders at the pace they COULD run, so giving up the
+        /// chase buys them nothing.
+        /// </summary>
+        private bool IsGoneForTheGoal(Systems_IPlayerHandle carrier)
+        {
+            float direction = carrier.Side == Systems_TeamSide.Offense ? 1f : -1f;
+            float forwardSpeed = carrier.Velocity.y * direction;
+
+            if (forwardSpeed < Systems_SimConstants.BREAKAWAY_MIN_SPEED)
+            {
+                return false;
+            }
+
+            Vector2 start = carrier.Position;
+            float distance = (GoalLineYOf(carrier.Side) - start.y) * direction;
+
+            for (int slot = 0; slot < Systems_PlayerRegistry.CAPACITY; slot++)
+            {
+                Systems_IPlayerHandle opponent = _registry.Get(slot);
+
+                if (opponent == null || opponent.Side == carrier.Side)
+                {
+                    continue;
+                }
+
+                float speed = Systems_RoleTable.TopSpeedOf(opponent.Role);
+
+                for (int sample = 0; sample <= Systems_SimConstants.BREAKAWAY_PATH_SAMPLES; sample++)
+                {
+                    float along = distance * sample / Systems_SimConstants.BREAKAWAY_PATH_SAMPLES;
+                    Vector2 point = start + new Vector2(0f, along * direction);
+                    float carrierTime = along / forwardSpeed;
+                    float opponentTime = Mathf.Max(
+                        0f,
+                        Vector2.Distance(opponent.Position, point)
+                            - Systems_SimConstants.BREAKAWAY_REACH_METRES) / speed;
+
+                    if (opponentTime <= carrierTime)
+                    {
+                        return false;
+                    }
+                }
+            }
+
+            return true;
+        }
+
+        private static float GoalLineYOf(Systems_TeamSide side)
+        {
+            return side == Systems_TeamSide.Offense
+                ? Systems_FieldModel.ATTACKING_GOAL_LINE_Y
+                : Systems_FieldModel.OWN_GOAL_LINE_Y;
+        }
+
         private static bool HasScored(Systems_TeamSide side, float y)
         {
             return side == Systems_TeamSide.Offense

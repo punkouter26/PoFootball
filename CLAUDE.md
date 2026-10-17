@@ -85,7 +85,7 @@ results/<run-id>/MANIFEST.md   one per run — records --num-envs, which is part
 ```
 
 **`Assets/Agents/Football_v02` is promoted but REFUSED, so every player runs
-`Heuristic` until a revision 16 run (`football_base21`) is promoted.** v02 came from
+`Heuristic` until a revision 16 run (`football_base22`) is promoted.** v02 came from
 `football_base14` (contract revision 12, 2026-10-03), a run cut short to 1.2M steps
 with a quarterback only 32k steps old and a defense that never learned to pursue
 (`results/football_base14/training_report.html`). It FAILED the realism gate at 6.80
@@ -123,7 +123,7 @@ To promote: train against a config for the CURRENT contract revision, run
 Editor. That last step is not optional — the Python side copies `.onnx` files but
 cannot write the ScriptableObject that lists them.
 
-**THE CURRENT REVISION IS 16, AND `Config/FootballBase21.yaml` IS ITS CONFIG.**
+**THE CURRENT REVISION IS 16, AND `Config/FootballBase22.yaml` IS ITS CONFIG.**
 (`FootballBase18`, archived, was its first: `football_base18` kept the front spread
 but its flag rate climbed from 4% to 12% of plays, because training priced a flag
 at a flat 0.15 while a completion pays 0.45. `Systems_FoulPrice` now charges each
@@ -151,8 +151,16 @@ lateral to a lineman turned the kickoff into a kicking-team run that kept the
 ball — 20-25 of 44-56 expired plays in a full game, none of them ever kicked.
 `Systems_BallSystem.IsKickoffNotYetKicked` refuses it in the rule and the mask.
 `football_base21` (`FootballBase21`) continues from base20's weights the same
-way. Steps restart at zero on each `--initialize-from`; add 1.63M (base19) and
-1.58M (base20) Offense steps to read a total.)
+way. Its ceiling plays came back to ~6% once FullGame began, and none was a stall:
+every one a carrier 40-62 m past the line, running at 4-6 m/s with nobody within
+17-54 m — a breakaway the 600-tick ceiling (which a PLAYED GAME has too) whistled
+dead in midfield and priced as a tackle, so a breakaway was not worth chasing. At
+the ceiling the official now projects the run (`Systems_Referee.IsGoneForTheGoal`):
+if no opponent, at his top speed, reaches the carrier's path before the carrier at
+the pace he is actually running, it is a touchdown. `football_base22`
+(`FootballBase22`, FullGame only) continues from base21's weights. Steps restart at
+zero on each `--initialize-from`; add 1.63M (base19), 1.58M (base20) and 1.40M
+(base21) Offense steps to read a total.)
 Revision 16 (2026-10-16) gives the defense's front A BRAIN OF ITS OWN. Revision 15
 read it off a second branch of the Defense brain, sampled from the middle
 linebacker alone, and `football_base17` called the zero blitz on 37% of plays at
@@ -373,7 +381,7 @@ run that ended in a tackle), a block no longer outpays the time cost, and there 
 no pursuit reward while the ball is in the air.
 
 Every config for an older contract is in `Config/archive/`, including
-FootballBase06-12 and 14-20, FootballLong01 and the six `experiments/`
+FootballBase06-12 and 14-21, FootballLong01 and the six `experiments/`
 variants. Until a revision 16 run is promoted, every player is a heuristic.
 
 **Judge balance on fixed seeds.** Games with a pinned seed (`Systems_GameLifetimeScope
@@ -386,7 +394,7 @@ Note that `m_Model` references serialized in the scenes are dead either way:
 `Agent_BrainRegistry` at `Awake`, overwriting whatever the scene held.
 
 Heuristic-only is a supported, playable state, not a bug — but nothing you watch
-right now is a trained policy. **To change that, train and promote `football_base21`**
+right now is a trained policy. **To change that, train and promote `football_base22`**
 — see above.
 
 **Scenes.** `SCN_MENU` (front end) → `SCN_GAME` (a scored game) and
@@ -444,7 +452,7 @@ recreate `.venv` (the two commands at the top of `requirements.txt`).
 
 # In-editor smoke test: start the trainer, then press Play.
 $env:CUDA_VISIBLE_DEVICES = "-1"     # MANDATORY on this machine. See below.
-mlagents-learn Config\FootballBase21.yaml --run-id=football_base21
+mlagents-learn Config\FootballBase22.yaml --run-id=football_base22
 
 # Headless sweep — envs take CONSECUTIVE ports from --base-port.
 # REBUILD Builds/FootballEnv FIRST whenever the contract revision moved:
@@ -453,8 +461,8 @@ mlagents-learn Config\FootballBase21.yaml --run-id=football_base21
 # stale env is NOT always refused by the handshake. That rebuild is on you.
 # --num-envs=4: measured 257.7 / 255.1 / 236.3 steps/s at 2 / 4 / 12 envs
 # (rl_optimization_log.md); the trainer is the bottleneck.
-mlagents-learn Config\FootballBase21.yaml --run-id=football_base21 `
-  --initialize-from=football_base20 `
+mlagents-learn Config\FootballBase22.yaml --run-id=football_base22 `
+  --initialize-from=football_base21 `
   --env=Builds\FootballEnv\PoFootball.exe --no-graphics `
   --base-port=5400 --num-envs=4
 
@@ -548,7 +556,7 @@ for `cpu`, the `else` branch only sets the dtype — it never puts the default d
 back. Hiding the GPU is what fixes it. Use `-1`; an empty string is ignored on Windows.
 
 `Config/archive/FootballBase06.yaml` (long superseded — the live config is
-`FootballBase21.yaml`, four behaviors, revision 16) carried **six** behaviors. The quarterback has its own brain
+`FootballBase22.yaml`, four behaviors, revision 16) carried **six** behaviors. The quarterback has its own brain
 — it is the only one with discrete actions, and while it shared `OffenseSkill`
 with the backs and receivers its play-call gradient was diluted five to one and
 its entropy bonus could not be raised without injecting noise into four other

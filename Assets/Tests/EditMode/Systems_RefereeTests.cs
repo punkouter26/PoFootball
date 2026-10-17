@@ -733,6 +733,43 @@ namespace PoFootball.Tests
             Assert.That(_play.Outcome, Is.EqualTo(Systems_PlayOutcome.TimeExpired));
         }
 
+        /// <summary>
+        /// A carrier running free for the goal when the ceiling comes is gone: a
+        /// touchdown, not a tackle where he happened to be.
+        /// </summary>
+        [Test]
+        public void ABreakawayNobodyCanCatch_AtTheCeiling_IsATouchdown()
+        {
+            MoveEveryoneFarAway();
+            _quarterback.Position = new Vector2(0f, Systems_FieldModel.ATTACKING_GOAL_LINE_Y - 20f);
+            _quarterback.Velocity = new Vector2(0f, 6f);
+
+            for (int tick = 0; tick < Systems_PlayModel.MAX_PHYSICS_TICKS; tick++)
+            {
+                _referee.FixedTick();
+            }
+
+            Assert.That(_play.Outcome, Is.EqualTo(Systems_PlayOutcome.Touchdown));
+        }
+
+        /// <summary>A corner between him and the goal still has him: a tackle on the spot.</summary>
+        [Test]
+        public void ABreakawayWithADefenderAhead_AtTheCeiling_IsNotATouchdown()
+        {
+            MoveEveryoneFarAway();
+            _quarterback.Position = new Vector2(0f, Systems_FieldModel.ATTACKING_GOAL_LINE_Y - 20f);
+            _quarterback.Velocity = new Vector2(0f, 6f);
+            Player(SlotOf(Systems_PlayerRole.Cornerback)).Position =
+                new Vector2(8f, Systems_FieldModel.ATTACKING_GOAL_LINE_Y - 8f);
+
+            for (int tick = 0; tick < Systems_PlayModel.MAX_PHYSICS_TICKS; tick++)
+            {
+                _referee.FixedTick();
+            }
+
+            Assert.That(_play.Outcome, Is.EqualTo(Systems_PlayOutcome.TimeExpired));
+        }
+
         /// <summary>Acceptance criterion #4.</summary>
         [Test]
         public void CrossingTheGoalLine_ScoresExactlyOnce()

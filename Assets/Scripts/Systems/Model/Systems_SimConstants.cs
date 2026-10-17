@@ -1440,6 +1440,19 @@ namespace PoFootball.Models
         /// </summary>
         public const float CLOSE_LINE_YARDS = 3f;
 
+        /// <summary>
+        /// At the tick ceiling, a carrier running at least this fast toward the goal,
+        /// m/s, whom nobody can catch is ruled to have scored
+        /// (Systems_Referee.IsGoneForTheGoal). Under it he is not going anywhere.
+        /// </summary>
+        public const float BREAKAWAY_MIN_SPEED = 3f;
+
+        /// <summary>How close a pursuer must get to the carrier's path to stop him, m.</summary>
+        public const float BREAKAWAY_REACH_METRES = 1.5f;
+
+        /// <summary>Points along the carrier's path to the goal that a pursuer is tested against.</summary>
+        public const int BREAKAWAY_PATH_SAMPLES = 10;
+
         /// <summary>Contact on a returner with the kick this close to him is kick-catch interference.</summary>
         public const float KICK_CATCH_INTERFERENCE_RANGE = 5f;
 
