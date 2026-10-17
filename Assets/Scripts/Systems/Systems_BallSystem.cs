@@ -759,7 +759,7 @@ namespace PoFootball.Systems
         /// </summary>
         public bool TryLateral(Systems_IPlayerHandle carrier, Vector2 aim)
         {
-            if (!_ball.IsHeld || _ball.CarrierId != carrier.Id)
+            if (!_ball.IsHeld || _ball.CarrierId != carrier.Id || IsKickoffNotYetKicked())
             {
                 return false;
             }
@@ -790,6 +790,20 @@ namespace PoFootball.Systems
                 Systems_PassKind.Lateral);
 
             return true;
+        }
+
+        /// <summary>
+        /// A KICKOFF IS KICKED. Until it is, the kicker may not hand it to anybody:
+        /// the kicking team only ever recovers a kickoff, it never runs one. Until
+        /// 2026-10-17 he could pitch it to a lineman, the automatic kick waits for
+        /// the kicker alone, and the kicking team carried the "kickoff" downfield
+        /// and kept it -- 20 of 44 expired plays in a full game on
+        /// football_base20's 1.3M checkpoints, every one never kicked. Punts and
+        /// placekicks keep the pitch: a fake is football.
+        /// </summary>
+        public bool IsKickoffNotYetKicked()
+        {
+            return _play.Kind == Systems_PlayKind.Kickoff && !_play.WasKicked;
         }
 
         private Systems_BallEvent UpdateLateral()

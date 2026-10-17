@@ -197,6 +197,18 @@ namespace PoFootball.Rewards
                 case Systems_PlayOutcome.Touchdown:
                     return Systems_SimConstants.TOUCHDOWN_REWARD + completionBonus;
 
+                // PRICED EXACTLY AS A TACKLE ON THE SAME SPOT, first-down bonus and
+                // all. It was -TACKLE_REWARD alone — a tackle without the first down —
+                // so that an offense could not stall past the sticks to collect it.
+                // But the reward is zero-sum, so a stall priced worse for the offense
+                // is priced BETTER for the defense, and football_base20 found it:
+                // defenders shadowing a carrier who was past the line to gain, 13 to
+                // 29 metres off him, never tackling, until the 600-tick ceiling, on
+                // 6.8% of training plays by 1.2M steps. Earlier still it was half a
+                // tackle, cheaper for the offense, and a quarter of football_base12's
+                // plays ended there. Equal to a tackle is the only price neither side
+                // can prefer; the time cost breaks the tie toward finishing the play.
+                case Systems_PlayOutcome.TimeExpired:
                 case Systems_PlayOutcome.Tackle:
                 case Systems_PlayOutcome.Sack:
                 case Systems_PlayOutcome.Downed:
@@ -212,16 +224,6 @@ namespace PoFootball.Rewards
                 case Systems_PlayOutcome.OutOfBounds:
                     return (-Systems_SimConstants.TACKLE_REWARD * 0.5f)
                         + completionBonus + firstDownBonus;
-
-                // PRICED AS A TACKLE, NOT AS HALF OF ONE. It shared the line above
-                // with OutOfBounds until FootballBase14, which made holding the ball
-                // until MAX_PHYSICS_TICKS the cheaper way to lose a down: -0.25 and
-                // about -0.12 of time cost against -0.50 for being brought down on
-                // the same spot. Play/TimeExpiredRate was still 24% at the end of
-                // football_base12's seven million steps and 24% two million into
-                // base13. A play nobody resolved is the defense's down.
-                case Systems_PlayOutcome.TimeExpired:
-                    return -Systems_SimConstants.TACKLE_REWARD + completionBonus;
 
                 case Systems_PlayOutcome.Incompletion:
                     return -Systems_SimConstants.INCOMPLETION_PENALTY;

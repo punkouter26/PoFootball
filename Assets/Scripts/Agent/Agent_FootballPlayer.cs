@@ -786,6 +786,7 @@ namespace PoFootball.Agents
                 && _ball.IsHeld
                 && _ball.CarrierId == _formationSlotIndex
                 && _ballSystem != null
+                && !_ballSystem.IsKickoffNotYetKicked()
                 && _ballSystem.ResolveLateralTarget(this, Vector2.zero) != null;
         }
 

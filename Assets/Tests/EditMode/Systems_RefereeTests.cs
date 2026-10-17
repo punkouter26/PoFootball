@@ -1334,6 +1334,45 @@ namespace PoFootball.Tests
             Assert.That(_ball.IsLoose || _ball.IsHeld, Is.True, "a blocked kick is a live ball");
         }
 
+        /// <summary>
+        /// A kicker who reaches the line before his run-up is over kicks it there.
+        /// He used to cross it holding the ball, and the kicking team kept it.
+        /// </summary>
+        [Test]
+        public void AKickerWhoReachesTheLineEarly_KicksItThere()
+        {
+            float ownThirtyFive = Systems_FieldModel.OWN_GOAL_LINE_Y
+                + (Systems_GameRules.KICKOFF_YARD_LINE * Systems_FieldModel.YARD);
+
+            BeginKick(Systems_PlayKind.Kickoff, ownThirtyFive, 0.3f);
+            _quarterback.Position = new Vector2(0f, ownThirtyFive + 0.2f);
+
+            _referee.FixedTick();
+
+            Assert.That(_play.PhysicsTick, Is.LessThan(Systems_SimConstants.KICKOFF_RUNUP_TICKS), "test premise");
+            Assert.That(_play.WasKicked, Is.True);
+            Assert.That(_quarterback.IsCarrier, Is.False);
+        }
+
+        /// <summary>
+        /// The kicker may not pitch a kickoff to a team-mate before he kicks it. He
+        /// could, and the kicking team ran the "kickoff" downfield and kept it.
+        /// </summary>
+        [Test]
+        public void AKickoffCannotBePitchedBeforeItIsKicked()
+        {
+            float ownThirtyFive = Systems_FieldModel.OWN_GOAL_LINE_Y
+                + (Systems_GameRules.KICKOFF_YARD_LINE * Systems_FieldModel.YARD);
+
+            BeginKick(Systems_PlayKind.Kickoff, ownThirtyFive, 3f);
+
+            StubPlayer lineman = Player(2);
+            lineman.Position = _quarterback.Position + new Vector2(-2f, -1f);
+
+            Assert.That(_ballSystem.TryLateral(_quarterback, Vector2.zero), Is.False);
+            Assert.That(_ball.CarrierId, Is.EqualTo(Systems_Formation.QUARTERBACK_SLOT_INDEX));
+        }
+
         [Test]
         public void AKickoffIntoTheEndZone_IsATouchback()
         {

@@ -80,7 +80,7 @@ namespace PoFootball.Tests
         }
 
         [Test]
-        public void ReachingTheLineToGain_PaysOnATackleButNeverOnAStall()
+        public void ReachingTheLineToGain_PaysOnATackle()
         {
             float converted = Reward_Terminal.For(
                 Systems_TeamSide.Offense, Systems_PlayOutcome.Tackle, 11f, false, true);
@@ -90,13 +90,31 @@ namespace PoFootball.Tests
             Assert.That(
                 converted - stopped,
                 Is.EqualTo(Systems_SimConstants.FIRST_DOWN_REWARD).Within(1e-6f));
+        }
 
-            Assert.That(
-                Reward_Terminal.For(
-                    Systems_TeamSide.Offense, Systems_PlayOutcome.TimeExpired, 11f, false, true),
-                Is.EqualTo(Reward_Terminal.For(
-                    Systems_TeamSide.Offense, Systems_PlayOutcome.TimeExpired, 11f, false, false)),
-                "a play that ran out the clock was paid for the first down it stalled past");
+        /// <summary>
+        /// Zero-sum: a stall priced below a tackle for the offense is priced above
+        /// one for the defense, and football_base20's defenders shadowed carriers
+        /// past the sticks without tackling them. Exactly a tackle, on every spot,
+        /// with and without the first down, is the only price neither side prefers.
+        /// </summary>
+        [Test]
+        public void RunningOutTheClock_IsPricedExactlyAsATackleOnTheSameSpot()
+        {
+            foreach (float netYards in new[] { -3f, 4f, 11f })
+            {
+                foreach (bool reachedLine in new[] { false, true })
+                {
+                    foreach (Systems_TeamSide side in new[] { Systems_TeamSide.Offense, Systems_TeamSide.Defense })
+                    {
+                        Assert.That(
+                            Reward_Terminal.For(side, Systems_PlayOutcome.TimeExpired, netYards, false, reachedLine),
+                            Is.EqualTo(Reward_Terminal.For(side, Systems_PlayOutcome.Tackle, netYards, false, reachedLine))
+                                .Within(1e-6f),
+                            $"{side} {netYards} yards, line reached {reachedLine}");
+                    }
+                }
+            }
         }
 
         /// <summary>

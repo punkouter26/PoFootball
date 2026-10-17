@@ -308,15 +308,36 @@ namespace PoFootball.Systems
                 return;
             }
 
+            Systems_IPlayerHandle kicker = CurrentCarrier();
+
+            if (kicker == null)
+            {
+                return;
+            }
+
+            bool atTheLine = kicker.Position.y >= _play.LineOfScrimmageY;
+
+            // A KICKOFF IS KICKED. The kicker reaching the line ends his approach
+            // whatever the clock says, and he cannot carry it past: the kicking
+            // team may recover a kickoff but never advance one. Until 2026-10-17 a
+            // kicker who outran KICKOFF_RUNUP_TICKS crossed the line, became "a
+            // runner now" with the ball, and the kicking team kept it wherever the
+            // 600-tick ceiling found him: 25 of 56 expired plays in a full game on
+            // football_base20's 1.2M checkpoints.
+            if (_play.Kind == Systems_PlayKind.Kickoff && atTheLine)
+            {
+                _ballSystem.Kick(kicker);
+                return;
+            }
+
             if (_play.PhysicsTick < OperationTicks(_play.Kind))
             {
                 return;
             }
 
-            Systems_IPlayerHandle kicker = CurrentCarrier();
-
-            // Past the line he cannot kick it; he is a runner now.
-            if (kicker == null || kicker.Position.y > _play.LineOfScrimmageY)
+            // Past the line a punter or holder cannot kick it; he is a runner now —
+            // a fake.
+            if (kicker.Position.y > _play.LineOfScrimmageY)
             {
                 return;
             }
